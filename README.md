@@ -34,3 +34,26 @@
 | `DEV_PLAYBOOK.yaml` | AI 开发剧本 | 开发指南 |
 
 ## 🎯 效果
+
+传统方式：人 → 反复解释 → AI → 反复修改 → 勉强能用
+Kontext：需求 → Kontext → 上下文包 → 任何AI → 一次成型
+
+
+- ✅ GPT-3.5 + Kontext ≈ GPT-4o 裸跑的代码质量  
+- ✅ 新加入项目的 AI（新对话/新工具）零学习成本
+- ✅ 代码风格 100% 一致，不再需要反复纠正
+- ✅ 支持任何 AI 工具：Cursor / Copilot / Claude / ChatGPT / 本地模型
+
+## 🏗️ 适用场景
+
+- [x] Web 全栈应用
+- [x] RAG / LLM 应用
+- [x] Agent 系统
+- [x] API 服务
+- [x] CLI 工具
+- [x] Python 库开发
+- [ ] 移动端（规划中）
+
+## 🚀 Quick Start
+
+（后续补充）

@@ -12,7 +12,7 @@ type Config struct {
 // ConfigFromEnv 从环境变量读取 LLM 配置。
 // KONTEXT_LLM_BASE_URL: API 地址（默认 https://api.openai.com/v1）
 // KONTEXT_LLM_API_KEY: API 密钥（必填）
-// KONTEXT_LLM_MODEL: 模型名称（默认 gpt-4o）
+// KONTEXT_LLM_MODEL: 模型名称（默认 gpt-5.4）
 func ConfigFromEnv() (*Config, error) {
 	cfg := &Config{
 		BaseURL: os.Getenv("KONTEXT_LLM_BASE_URL"),
@@ -23,7 +23,7 @@ func ConfigFromEnv() (*Config, error) {
 		cfg.BaseURL = "https://api.openai.com/v1"
 	}
 	if cfg.Model == "" {
-		cfg.Model = "gpt-4o"
+		cfg.Model = "gpt-5.4"
 	}
 	return cfg, nil
 }

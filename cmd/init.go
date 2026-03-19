@@ -135,18 +135,20 @@ func runScanInit() error {
 		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
 	}
 
-	fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
-	fmt.Println("正在扫描项目源码...")
+	fmt.Printf("使用 LLM: %s (模型: %s)\n\n", llmCfg.BaseURL, llmCfg.Model)
 
-	// 1. 扫描目录树
+	// ===== 阶段 1：扫描目录树 =====
+	fmt.Println("📁 阶段 1/4：扫描项目目录...")
 	projectDir := "."
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
 	if err != nil {
 		return fmt.Errorf("扫描项目目录失败: %w", err)
 	}
-	fmt.Printf("  发现 %d 个文件\n", len(allFiles))
+	printProgress(len(allFiles), len(allFiles), "扫描文件")
+	fmt.Printf("   发现 %d 个文件\n\n", len(allFiles))
 
-	// 2. 识别并读取依赖/配置文件
+	// ===== 阶段 2：识别并读取配置文件 =====
+	fmt.Println("📄 阶段 2/4：识别配置/依赖文件...")
 	configFileNames := map[string]bool{
 		"go.mod": true, "go.sum": false, "package.json": true, "tsconfig.json": true,
 		"Cargo.toml": true, "pyproject.toml": true, "requirements.txt": true,
@@ -155,9 +157,19 @@ func runScanInit() error {
 		"docker-compose.yaml": true, ".gitignore": true, "CMakeLists.txt": true,
 	}
 	configFiles := make(map[string]string)
+	configCount := 0
 	for _, f := range allFiles {
 		base := filepath.Base(f)
 		if configFileNames[base] {
+			configCount++
+		}
+	}
+	processed := 0
+	for _, f := range allFiles {
+		base := filepath.Base(f)
+		if configFileNames[base] {
+			processed++
+			printProgressWithFile(processed, configCount, "读取配置", f)
 			fullPath := filepath.Join(projectDir, f)
 			data, readErr := os.ReadFile(fullPath)
 			if readErr == nil {
@@ -165,9 +177,11 @@ func runScanInit() error {
 			}
 		}
 	}
-	fmt.Printf("  识别到 %d 个配置/依赖文件\n", len(configFiles))
+	clearLine()
+	fmt.Printf("   识别到 %d 个配置/依赖文件\n\n", len(configFiles))
 
-	// 3. 筛选关键源码文件并读取代码片段
+	// ===== 阶段 3：读取源码文件 =====
+	fmt.Println("💻 阶段 3/4：读取源码文件...")
 	var sourceFiles []string
 	for _, f := range allFiles {
 		if _, isConfig := configFiles[f]; isConfig {
@@ -180,10 +194,24 @@ func runScanInit() error {
 	if len(sourceFiles) > 30 {
 		sourceFiles = sourceFiles[:30]
 	}
-	snippets := fileutil.ReadCodeSnippets(projectDir, sourceFiles, 50)
-	fmt.Printf("  读取 %d 个源码文件片段\n", len(snippets))
 
-	// 4. 渲染 prompt
+	snippets := make(map[string]string, len(sourceFiles))
+	for i, f := range sourceFiles {
+		printProgressWithFile(i+1, len(sourceFiles), "读取源码", f)
+		fullPath := filepath.Join(projectDir, f)
+		content, err := readFirstNLines(fullPath, 50)
+		if err == nil {
+			snippets[f] = content
+		}
+	}
+	clearLine()
+	fmt.Printf("   读取 %d 个源码文件片段\n\n", len(snippets))
+
+	// ===== 阶段 4：调用 LLM 生成 =====
+	fmt.Println("🤖 阶段 4/4：调用 LLM 分析并生成配置...")
+	fmt.Println("   （此步骤可能需要 30~60 秒，请耐心等待）")
+
+	// 渲染 prompt
 	treeStr := strings.Join(allFiles, "\n")
 	userMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
 		"DirectoryTree": treeStr,
@@ -194,22 +222,24 @@ func runScanInit() error {
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
-	// 5. 调用 LLM 生成
-	fmt.Println("正在调用 LLM 分析项目并生成配置（可能需要 30~60 秒，请耐心等待）...")
-
+	// 启动加载动画
 	done := make(chan struct{})
+	startTime := time.Now()
 	go func() {
 		dots := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		phases := []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"}
 		i := 0
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-done:
-				fmt.Print("\r\033[K") // 清除进度行
+				clearLine()
 				return
 			case <-ticker.C:
-				fmt.Printf("\r  %s 正在生成中...", dots[i%len(dots)])
+				elapsed := time.Since(startTime).Seconds()
+				phase := phases[int(elapsed/15)%len(phases)]
+				fmt.Printf("\r   %s %s... (%.0f秒)", dots[i%len(dots)], phase, elapsed)
 				i++
 			}
 		}
@@ -218,11 +248,64 @@ func runScanInit() error {
 	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
 	close(done)
 	if err != nil {
+		fmt.Println()
 		return err
 	}
 
-	// 6. 校验并写入
+	elapsed := time.Since(startTime).Seconds()
+	fmt.Printf("\r   ✓ LLM 生成完成 (耗时 %.1f 秒)\n\n", elapsed)
+
+	// 校验并写入
 	return generator.WriteGeneratedYAML(generated)
+}
+
+// printProgress 打印进度条
+func printProgress(current, total int, label string) {
+	width := 30
+	percent := float64(current) / float64(total)
+	filled := int(percent * float64(width))
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+	fmt.Printf("\r   [%s] %3.0f%% %s", bar, percent*100, label)
+}
+
+// printProgressWithFile 打印带文件名的进度条
+func printProgressWithFile(current, total int, label, filename string) {
+	width := 20
+	percent := float64(current) / float64(total)
+	filled := int(percent * float64(width))
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+
+	// 截断过长的文件名
+	displayName := filename
+	if len(displayName) > 35 {
+		displayName = "..." + displayName[len(displayName)-32:]
+	}
+
+	fmt.Printf("\r   [%s] %3.0f%% %s: %-35s", bar, percent*100, label, displayName)
+}
+
+// clearLine 清除当前行
+func clearLine() {
+	fmt.Print("\r\033[K")
+}
+
+// readFirstNLines 读取文件的前 n 行
+func readFirstNLines(path string, n int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() && len(lines) < n {
+		lines = append(lines, scanner.Text())
+	}
+
+	return strings.Join(lines, "\n"), nil
 }
 
 // isSourceFile 判断文件是否为源码文件。

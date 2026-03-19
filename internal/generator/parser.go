@@ -46,3 +46,15 @@ func ParseGeneratedYAML(raw string) (*GeneratedYAML, error) {
 
 	return &result, nil
 }
+
+// ParseAnalyzedFiles 解析文件识别阶段 LLM 的 JSON 响应。
+func ParseAnalyzedFiles(raw string) (*AnalyzedFiles, error) {
+	cleaned := stripCodeBlock(raw)
+
+	var result AnalyzedFiles
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}

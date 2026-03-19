@@ -14,3 +14,9 @@ type GeneratedYAML struct {
 	ArchitectureMap string `json:"architecture_map"`
 	Conventions     string `json:"conventions"`
 }
+
+// AnalyzedFiles 是 LLM 在扫描阶段识别出的关键文件列表。
+type AnalyzedFiles struct {
+	ConfigFiles []string `json:"config_files"`
+	SourceFiles []string `json:"source_files"`
+}

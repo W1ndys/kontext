@@ -161,66 +161,63 @@ func runScanInit() error {
 	fmt.Printf("使用 LLM: %s (模型: %s)\n\n", llmCfg.BaseURL, llmCfg.Model)
 
 	// ===== 阶段 1：扫描目录树 =====
-	fmt.Println("📁 阶段 1/4：扫描项目目录...")
+	fmt.Println("📁 阶段 1/5：扫描项目目录...")
 	projectDir := "."
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
 	if err != nil {
 		return fmt.Errorf("扫描项目目录失败: %w", err)
 	}
 	printProgress(len(allFiles), len(allFiles), "扫描文件")
-	fmt.Printf("   发现 %d 个文件\n\n", len(allFiles))
+	fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
 
-	// ===== 阶段 2：识别并读取配置文件 =====
-	fmt.Println("📄 阶段 2/4：识别配置/依赖文件...")
-	configFileNames := map[string]bool{
-		"go.mod": true, "go.sum": false, "package.json": true, "tsconfig.json": true,
-		"Cargo.toml": true, "pyproject.toml": true, "requirements.txt": true,
-		"pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
-		"Makefile": true, "Dockerfile": true, "docker-compose.yml": true,
-		"docker-compose.yaml": true, ".gitignore": true, "CMakeLists.txt": true,
+	// ===== 阶段 2：LLM 智能识别关键文件 =====
+	fmt.Println("🧠 阶段 2/5：AI 分析目录结构，识别关键文件...")
+
+	treeStr := strings.Join(allFiles, "\n")
+	analyzeUserMsg, err := generator.RenderTemplate(templates.InitScanAnalyzeUser, map[string]interface{}{
+		"DirectoryTree": treeStr,
+	})
+	if err != nil {
+		return fmt.Errorf("渲染文件识别模板失败: %w", err)
 	}
+
+	// 启动加载动画
+	done := make(chan struct{})
+	analyzeStart := time.Now()
+	go spinnerAnimation(done, analyzeStart, []string{"分析目录结构", "识别配置文件", "筛选核心源码"})
+
+	analyzed, err := generator.AnalyzeProjectFiles(client, templates.InitScanAnalyzeSystem, analyzeUserMsg)
+	close(done)
+	if err != nil {
+		fmt.Println()
+		fmt.Println("   ⚠ AI 文件识别失败，回退到本地规则识别...")
+		analyzed = localAnalyzeFiles(allFiles)
+	} else {
+		analyzeElapsed := time.Since(analyzeStart).Seconds()
+		fmt.Printf("\r   ✓ AI 识别完成 (耗时 %.1f 秒)\n", analyzeElapsed)
+	}
+
+	fmt.Printf("   识别到 %d 个配置文件 + %d 个关键源码文件\n\n", len(analyzed.ConfigFiles), len(analyzed.SourceFiles))
+
+	// ===== 阶段 3：读取配置/依赖文件 =====
+	fmt.Println("📄 阶段 3/5：读取配置/依赖文件...")
 	configFiles := make(map[string]string)
-	configCount := 0
-	for _, f := range allFiles {
-		base := filepath.Base(f)
-		if configFileNames[base] {
-			configCount++
-		}
-	}
-	processed := 0
-	for _, f := range allFiles {
-		base := filepath.Base(f)
-		if configFileNames[base] {
-			processed++
-			printProgressWithFile(processed, configCount, "读取配置", f)
-			fullPath := filepath.Join(projectDir, f)
-			data, readErr := os.ReadFile(fullPath)
-			if readErr == nil {
-				configFiles[f] = string(data)
-			}
+	for i, f := range analyzed.ConfigFiles {
+		printProgressWithFile(i+1, len(analyzed.ConfigFiles), "读取配置", f)
+		fullPath := filepath.Join(projectDir, f)
+		data, readErr := os.ReadFile(fullPath)
+		if readErr == nil {
+			configFiles[f] = string(data)
 		}
 	}
 	clearLine()
-	fmt.Printf("   识别到 %d 个配置/依赖文件\n\n", len(configFiles))
+	fmt.Printf("   成功读取 %d 个配置文件\n\n", len(configFiles))
 
-	// ===== 阶段 3：读取源码文件 =====
-	fmt.Println("💻 阶段 3/4：读取源码文件...")
-	var sourceFiles []string
-	for _, f := range allFiles {
-		if _, isConfig := configFiles[f]; isConfig {
-			continue
-		}
-		if isSourceFile(f) {
-			sourceFiles = append(sourceFiles, f)
-		}
-	}
-	if len(sourceFiles) > 30 {
-		sourceFiles = sourceFiles[:30]
-	}
-
-	snippets := make(map[string]string, len(sourceFiles))
-	for i, f := range sourceFiles {
-		printProgressWithFile(i+1, len(sourceFiles), "读取源码", f)
+	// ===== 阶段 4：读取源码文件 =====
+	fmt.Println("💻 阶段 4/5：读取关键源码文件...")
+	snippets := make(map[string]string, len(analyzed.SourceFiles))
+	for i, f := range analyzed.SourceFiles {
+		printProgressWithFile(i+1, len(analyzed.SourceFiles), "读取源码", f)
 		fullPath := filepath.Join(projectDir, f)
 		content, err := readFirstNLines(fullPath, 50)
 		if err == nil {
@@ -228,14 +225,13 @@ func runScanInit() error {
 		}
 	}
 	clearLine()
-	fmt.Printf("   读取 %d 个源码文件片段\n\n", len(snippets))
+	fmt.Printf("   成功读取 %d 个源码文件片段\n\n", len(snippets))
 
-	// ===== 阶段 4：调用 LLM 生成 =====
-	fmt.Println("🤖 阶段 4/4：调用 LLM 分析并生成配置...")
+	// ===== 阶段 5：调用 LLM 生成配置 =====
+	fmt.Println("🤖 阶段 5/5：调用 LLM 分析并生成配置...")
 	fmt.Println("   （此步骤可能需要 30~60 秒，请耐心等待）")
 
 	// 渲染 prompt
-	treeStr := strings.Join(allFiles, "\n")
 	userMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
 		"DirectoryTree": treeStr,
 		"ConfigFiles":   configFiles,
@@ -246,40 +242,80 @@ func runScanInit() error {
 	}
 
 	// 启动加载动画
-	done := make(chan struct{})
-	startTime := time.Now()
-	go func() {
-		dots := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		phases := []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"}
-		i := 0
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				clearLine()
-				return
-			case <-ticker.C:
-				elapsed := time.Since(startTime).Seconds()
-				phase := phases[int(elapsed/15)%len(phases)]
-				fmt.Printf("\r   %s %s... (%.0f秒)", dots[i%len(dots)], phase, elapsed)
-				i++
-			}
-		}
-	}()
+	done2 := make(chan struct{})
+	genStart := time.Now()
+	go spinnerAnimation(done2, genStart, []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"})
 
 	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
-	close(done)
+	close(done2)
 	if err != nil {
 		fmt.Println()
 		return err
 	}
 
-	elapsed := time.Since(startTime).Seconds()
-	fmt.Printf("\r   ✓ LLM 生成完成 (耗时 %.1f 秒)\n\n", elapsed)
+	genElapsed := time.Since(genStart).Seconds()
+	fmt.Printf("\r   ✓ LLM 生成完成 (耗时 %.1f 秒)\n\n", genElapsed)
 
 	// 校验并写入
 	return generator.WriteGeneratedYAML(generated)
+}
+
+// spinnerAnimation 显示旋转加载动画，phases 为轮换展示的阶段文案。
+func spinnerAnimation(done <-chan struct{}, startTime time.Time, phases []string) {
+	dots := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	i := 0
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			clearLine()
+			return
+		case <-ticker.C:
+			elapsed := time.Since(startTime).Seconds()
+			phase := phases[int(elapsed/15)%len(phases)]
+			fmt.Printf("\r   %s %s... (%.0f秒)", dots[i%len(dots)], phase, elapsed)
+			i++
+		}
+	}
+}
+
+// localAnalyzeFiles 使用本地规则识别文件（作为 LLM 识别的回退方案）。
+func localAnalyzeFiles(allFiles []string) *generator.AnalyzedFiles {
+	configFileNames := map[string]bool{
+		"go.mod": true, "go.sum": true, "package.json": true, "tsconfig.json": true,
+		"Cargo.toml": true, "pyproject.toml": true, "requirements.txt": true,
+		"pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
+		"Makefile": true, "Dockerfile": true, "docker-compose.yml": true,
+		"docker-compose.yaml": true, ".gitignore": true, "CMakeLists.txt": true,
+		".eslintrc.json": true, ".prettierrc": true, "webpack.config.js": true,
+		"vite.config.ts": true, "vite.config.js": true,
+	}
+
+	result := &generator.AnalyzedFiles{}
+	configSet := make(map[string]bool)
+
+	for _, f := range allFiles {
+		base := filepath.Base(f)
+		if configFileNames[base] {
+			result.ConfigFiles = append(result.ConfigFiles, f)
+			configSet[f] = true
+		}
+	}
+
+	for _, f := range allFiles {
+		if configSet[f] {
+			continue
+		}
+		if isSourceFile(f) {
+			result.SourceFiles = append(result.SourceFiles, f)
+		}
+		if len(result.SourceFiles) >= 30 {
+			break
+		}
+	}
+
+	return result
 }
 
 // printProgress 打印进度条

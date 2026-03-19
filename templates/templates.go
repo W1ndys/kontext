@@ -25,3 +25,9 @@ var InitScanSystem string // InitScanSystem 是扫描模式的系统提示词
 
 //go:embed init_scan_user.tmpl
 var InitScanUser string // InitScanUser 是扫描模式的用户消息模板
+
+//go:embed init_scan_analyze_system.tmpl
+var InitScanAnalyzeSystem string // InitScanAnalyzeSystem 是扫描模式文件识别阶段的系统提示词
+
+//go:embed init_scan_analyze_user.tmpl
+var InitScanAnalyzeUser string // InitScanAnalyzeUser 是扫描模式文件识别阶段的用户消息模板

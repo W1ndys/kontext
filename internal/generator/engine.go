@@ -232,6 +232,35 @@ func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*G
 	}
 }
 
+// AnalyzeProjectFiles 调用 LLM 分析项目目录树，识别关键文件。
+func AnalyzeProjectFiles(client llm.Client, systemPrompt, userMsg string) (*AnalyzedFiles, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	// 优先尝试结构化输出
+	var structured AnalyzedFiles
+	if _, err := client.ChatStructured(req, "analyzed_files", &structured); err == nil {
+		return &structured, nil
+	}
+
+	// 回退到传统 JSON 解析
+	resp, err := client.Chat(req)
+	if err != nil {
+		return nil, fmt.Errorf("调用 LLM 分析文件失败: %w", err)
+	}
+
+	result, err := ParseAnalyzedFiles(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("解析 LLM 文件识别结果失败: %w", err)
+	}
+
+	return result, nil
+}
+
 func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{

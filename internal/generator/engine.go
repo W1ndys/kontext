@@ -261,6 +261,35 @@ func AnalyzeProjectFiles(client llm.Client, systemPrompt, userMsg string) (*Anal
 	return result, nil
 }
 
+// SelectKeyFiles 调用 LLM 根据文件概要选择重点文件。
+func SelectKeyFiles(client llm.Client, systemPrompt, userMsg string) (*SelectedFiles, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	// 优先尝试结构化输出
+	var structured SelectedFiles
+	if _, err := client.ChatStructured(req, "selected_files", &structured); err == nil {
+		return &structured, nil
+	}
+
+	// 回退到传统 JSON 解析
+	resp, err := client.Chat(req)
+	if err != nil {
+		return nil, fmt.Errorf("调用 LLM 选择重点文件失败: %w", err)
+	}
+
+	result, err := ParseSelectedFiles(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("解析 LLM 重点文件选择结果失败: %w", err)
+	}
+
+	return result, nil
+}
+
 func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{

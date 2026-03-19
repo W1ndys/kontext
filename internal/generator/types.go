@@ -20,3 +20,9 @@ type AnalyzedFiles struct {
 	ConfigFiles []string `json:"config_files"`
 	SourceFiles []string `json:"source_files"`
 }
+
+// SelectedFiles 是 LLM 选择的重点文件列表。
+type SelectedFiles struct {
+	KeyFiles []string          `json:"key_files"`
+	Reasons  map[string]string `json:"reasons"`
+}

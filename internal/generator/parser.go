@@ -58,3 +58,15 @@ func ParseAnalyzedFiles(raw string) (*AnalyzedFiles, error) {
 
 	return &result, nil
 }
+
+// ParseSelectedFiles 解析重点文件选择阶段 LLM 的 JSON 响应。
+func ParseSelectedFiles(raw string) (*SelectedFiles, error) {
+	cleaned := stripCodeBlock(raw)
+
+	var result SelectedFiles
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}

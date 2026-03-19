@@ -8,11 +8,12 @@ type InterviewResponse struct {
 	Summary  string   `json:"summary"`  // type=done 时的需求摘要
 }
 
-// GeneratedYAML 是 LLM 在生成阶段返回的三个 YAML 文件内容。
+// GeneratedYAML 是 LLM 在生成阶段返回的配置文件内容。
 type GeneratedYAML struct {
-	ProjectManifest string `json:"project_manifest"`
-	ArchitectureMap string `json:"architecture_map"`
-	Conventions     string `json:"conventions"`
+	ProjectManifest string            `json:"project_manifest"`
+	ArchitectureMap string            `json:"architecture_map"`
+	Conventions     string            `json:"conventions"`
+	ModuleContracts map[string]string `json:"module_contracts"` // 键为模块名（如 "cmd"），值为 YAML 内容
 }
 
 // AnalyzedFiles 是 LLM 在扫描阶段识别出的关键文件列表。

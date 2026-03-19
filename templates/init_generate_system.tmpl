@@ -3,7 +3,17 @@
 你必须严格以 JSON 格式回复，不要添加任何 markdown 代码块标记或其他内容。
 
 返回格式：
-{"project_manifest": "YAML内容", "architecture_map": "YAML内容", "conventions": "YAML内容"}
+{
+  "project_manifest": "YAML内容",
+  "architecture_map": "YAML内容",
+  "conventions": "YAML内容",
+  "module_contracts": {
+    "模块名": "该模块的CONTRACT YAML内容",
+    "另一个模块名": "该模块的CONTRACT YAML内容"
+  }
+}
+
+注意：module_contracts 的键是模块名（如 "cmd"、"config"、"packer"），不需要带 _CONTRACT 后缀。
 
 ## PROJECT_MANIFEST.yaml 的 schema
 
@@ -73,9 +83,41 @@ ai_rules:
     reason: "原因"
 ```
 
+## module_contracts 中每个模块 CONTRACT 的 schema
+
+```yaml
+module:
+  name: "模块名称"
+  path: "模块路径"  # 如 cmd/ 或 internal/config/
+  purpose: |
+    模块的核心职责描述
+
+owns:
+  - "该模块负责的功能点1"
+  - "该模块负责的功能点2"
+
+not_responsible_for:
+  - "该模块明确不负责的功能"
+
+depends_on:
+  - module: "依赖的模块名"
+    reason: "依赖原因"
+
+public_interface:
+  - name: "对外暴露的函数/类型名"
+    signature: "函数签名或类型定义"
+    description: "功能描述"
+
+modification_rules:
+  - rule: "修改该模块时必须遵守的规则"
+    reason: "原因"
+```
+
 ## 注意事项
 
 - YAML 内容必须是合法的 YAML 格式
 - 根据用户的具体需求填充实际内容，不要使用占位符
 - 生成的内容应该对 AI 开发助手有实际指导价值
+- **为每个核心模块生成对应的 CONTRACT 文件**
+- 模块契约应明确模块边界、职责划分和依赖关系
 - 使用中文

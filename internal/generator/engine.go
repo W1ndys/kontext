@@ -150,6 +150,13 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 		return fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", err)
 	}
 
+	// 校验模块契约
+	for name, content := range generated.ModuleContracts {
+		if err := ValidateYAML(content); err != nil {
+			return fmt.Errorf("生成的 %s_CONTRACT.yaml 不合法: %w", name, err)
+		}
+	}
+
 	// 写入文件
 	kontextDir := ".kontext"
 	dirs := []string{
@@ -163,6 +170,7 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 		}
 	}
 
+	// 写入核心配置文件
 	files := map[string]string{
 		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): generated.ProjectManifest,
 		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): generated.ArchitectureMap,
@@ -174,6 +182,20 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 			return fmt.Errorf("写入 %s 失败: %w", path, err)
 		}
 		fmt.Printf("  已创建: %s\n", path)
+	}
+
+	// 写入模块契约文件
+	if len(generated.ModuleContracts) > 0 {
+		fmt.Println()
+		fmt.Printf("  模块契约 (%d 个):\n", len(generated.ModuleContracts))
+		for name, content := range generated.ModuleContracts {
+			filename := fmt.Sprintf("%s_CONTRACT.yaml", name)
+			path := filepath.Join(kontextDir, "module_contracts", filename)
+			if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+				return fmt.Errorf("写入 %s 失败: %w", path, err)
+			}
+			fmt.Printf("    已创建: %s\n", path)
+		}
 	}
 
 	fmt.Println("\n.kontext/ 初始化完成！")

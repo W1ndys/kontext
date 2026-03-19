@@ -70,3 +70,27 @@ func ParseSelectedFiles(raw string) (*SelectedFiles, error) {
 
 	return &result, nil
 }
+
+// ParseSingleFileYAML 解析分步生成单个文件的 JSON 响应。
+func ParseSingleFileYAML(raw string) (*SingleFileYAML, error) {
+	cleaned := stripCodeBlock(raw)
+
+	var result SingleFileYAML
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// ParseModuleContractYAML 解析单个模块契约生成的 JSON 响应。
+func ParseModuleContractYAML(raw string) (*ModuleContractYAML, error) {
+	cleaned := stripCodeBlock(raw)
+
+	var result ModuleContractYAML
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}

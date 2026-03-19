@@ -27,3 +27,14 @@ type SelectedFiles struct {
 	KeyFiles []string          `json:"key_files"`
 	Reasons  map[string]string `json:"reasons"`
 }
+
+// SingleFileYAML 是分步生成单个文件时的响应结构。
+type SingleFileYAML struct {
+	Content string `json:"content"` // YAML 内容
+}
+
+// ModuleContractYAML 是单个模块契约生成的响应结构。
+type ModuleContractYAML struct {
+	ModuleName string `json:"module_name"` // 模块名
+	Content    string `json:"content"`     // YAML 内容
+}

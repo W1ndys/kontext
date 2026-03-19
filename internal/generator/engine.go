@@ -7,9 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
@@ -360,4 +363,234 @@ func RenderTemplate(tmpl string, data interface{}) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// GenerateSingleYAML 通用单文件生成函数，用于分步生成配置文件。内置重试机制。
+func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			time.Sleep(backoff)
+		}
+
+		// 优先尝试结构化输出
+		var structured SingleFileYAML
+		if _, err := client.ChatStructured(req, "single_file_yaml", &structured); err == nil {
+			if structured.Content != "" {
+				return structured.Content, nil
+			}
+		}
+
+		// 回退到传统解析
+		resp, err := client.Chat(req)
+		if err != nil {
+			lastErr = fmt.Errorf("调用 LLM 生成配置失败 (尝试 %d/%d): %w", attempt+1, maxRetries, err)
+			continue
+		}
+
+		// 尝试解析 JSON 响应
+		parsed, err := ParseSingleFileYAML(resp.Content)
+		if err == nil && parsed.Content != "" {
+			return parsed.Content, nil
+		}
+
+		// JSON 解析失败，尝试直接提取 YAML 内容
+		yamlContent := extractYAMLFromResponse(resp.Content)
+		if yamlContent != "" {
+			return yamlContent, nil
+		}
+
+		// 如果响应不为空但解析失败，可能直接就是内容
+		if resp.Content != "" {
+			return resp.Content, nil
+		}
+
+		lastErr = fmt.Errorf("LLM 返回内容为空 (尝试 %d/%d)", attempt+1, maxRetries)
+	}
+
+	return "", lastErr
+}
+
+// GenerateModuleContract 生成单个模块的契约文件，支持自动重试。
+func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, moduleName string) (*ModuleContractYAML, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// 指数退避
+			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+			time.Sleep(backoff)
+		}
+
+		// 优先尝试结构化输出
+		var structured ModuleContractYAML
+		if _, err := client.ChatStructured(req, "module_contract_yaml", &structured); err == nil {
+			// 如果 LLM 返回的模块名为空，使用传入的模块名
+			if structured.ModuleName == "" {
+				structured.ModuleName = moduleName
+			}
+			return &structured, nil
+		}
+
+		// 回退到传统解析
+		resp, err := client.Chat(req)
+		if err != nil {
+			lastErr = fmt.Errorf("调用 LLM 生成模块契约失败 (尝试 %d/%d): %w", attempt+1, maxRetries, err)
+			continue
+		}
+
+		// 尝试解析 JSON 响应
+		parsed, err := ParseModuleContractYAML(resp.Content)
+		if err == nil {
+			if parsed.ModuleName == "" {
+				parsed.ModuleName = moduleName
+			}
+			return parsed, nil
+		}
+
+		// JSON 解析失败，尝试直接提取 YAML 内容
+		yamlContent := extractYAMLFromResponse(resp.Content)
+		if yamlContent != "" {
+			return &ModuleContractYAML{
+				ModuleName: moduleName,
+				Content:    yamlContent,
+			}, nil
+		}
+
+		lastErr = fmt.Errorf("解析模块契约响应失败 (尝试 %d/%d): %w", attempt+1, maxRetries, err)
+	}
+
+	return nil, lastErr
+}
+
+// extractYAMLFromResponse 尝试从 LLM 响应中提取 YAML 内容。
+// 处理各种可能的格式：纯 YAML、markdown 代码块包裹的 YAML 等。
+func extractYAMLFromResponse(content string) string {
+	content = strings.TrimSpace(content)
+
+	// 尝试提取 markdown 代码块中的内容
+	// 匹配 ```yaml ... ``` 或 ``` ... ```
+	patterns := []string{
+		"(?s)```yaml\\s*\\n(.+?)\\n```",
+		"(?s)```\\s*\\n(.+?)\\n```",
+	}
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		if matches := re.FindStringSubmatch(content); len(matches) >= 2 {
+			return strings.TrimSpace(matches[1])
+		}
+	}
+
+	// 检查是否以 YAML 常见开头开始（module:, name:, 等）
+	if strings.HasPrefix(content, "module:") ||
+		strings.HasPrefix(content, "# ") ||
+		strings.HasPrefix(content, "---") {
+		return content
+	}
+
+	return ""
+}
+
+// ModuleContractResult 是并行生成模块契约的单个结果。
+type ModuleContractResult struct {
+	ModuleName string
+	Content    string
+	Error      error
+	Duration   float64 // 耗时（秒）
+}
+
+// GenerateModuleContracts 并行生成多个模块契约，限制最大并发数。
+func GenerateModuleContracts(
+	client llm.Client,
+	systemPrompt string,
+	modules []string,
+	userMsgGenerator func(moduleName string) (string, error),
+	maxConcurrency int,
+	onProgress func(result ModuleContractResult),
+) (map[string]string, []error) {
+	if maxConcurrency <= 0 {
+		maxConcurrency = 3
+	}
+
+	results := make(map[string]string)
+	var errors []error
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	sem := make(chan struct{}, maxConcurrency)
+
+	for _, mod := range modules {
+		wg.Add(1)
+		go func(moduleName string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			startTime := time.Now()
+
+			userMsg, err := userMsgGenerator(moduleName)
+			if err != nil {
+				result := ModuleContractResult{
+					ModuleName: moduleName,
+					Error:      fmt.Errorf("生成用户消息失败: %w", err),
+					Duration:   time.Since(startTime).Seconds(),
+				}
+				mu.Lock()
+				errors = append(errors, result.Error)
+				mu.Unlock()
+				if onProgress != nil {
+					onProgress(result)
+				}
+				return
+			}
+
+			contract, err := GenerateModuleContract(client, systemPrompt, userMsg, moduleName)
+
+			mu.Lock()
+			elapsed := time.Since(startTime).Seconds()
+			if err != nil {
+				errors = append(errors, fmt.Errorf("模块 %s: %w", moduleName, err))
+				if onProgress != nil {
+					onProgress(ModuleContractResult{
+						ModuleName: moduleName,
+						Error:      err,
+						Duration:   elapsed,
+					})
+				}
+			} else {
+				// 使用传入的模块名作为 key，确保一致性
+				results[moduleName] = contract.Content
+				if onProgress != nil {
+					onProgress(ModuleContractResult{
+						ModuleName: moduleName,
+						Content:    contract.Content,
+						Duration:   elapsed,
+					})
+				}
+			}
+			mu.Unlock()
+		}(mod)
+	}
+
+	wg.Wait()
+	return results, errors
 }

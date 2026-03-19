@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/w1ndys/kontext/internal/fileutil"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // Bundle 聚合了 .kontext/ 目录下所有加载的配置数据。

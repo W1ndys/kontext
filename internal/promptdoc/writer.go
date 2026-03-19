@@ -3,14 +3,11 @@ package promptdoc
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"time"
 
+	"github.com/gosimple/slug"
 	"github.com/w1ndys/kontext/internal/fileutil"
 )
-
-var nonAlphaNum = regexp.MustCompile(`[^a-z0-9]+`)
 
 // GenerateFilename 根据任务描述生成文件名，格式为 "20060102-150405_任务摘要.md"。
 func GenerateFilename(task string) string {
@@ -24,9 +21,10 @@ func GenerateFilename(task string) string {
 
 // slugify 将字符串转换为 URL 友好的 slug 格式。
 func slugify(s string) string {
-	s = strings.ToLower(s)
-	s = nonAlphaNum.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
+	s = slug.Make(s)
+	if s == "" {
+		return "prompt"
+	}
 	return s
 }
 

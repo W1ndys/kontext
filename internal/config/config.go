@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/w1ndys/kontext/internal/llm"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // FileConfig 表示 ~/.kontext/config.yaml 的顶层结构。

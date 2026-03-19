@@ -39,7 +39,24 @@ type GenerateResponse struct {
 	Content string
 }
 
+// Message 表示一条聊天消息，用于多轮对话。
+type Message struct {
+	Role    string // "system", "user", "assistant"
+	Content string
+}
+
+// ChatRequest 是多轮对话请求，包含完整的消息历史。
+type ChatRequest struct {
+	Messages []Message
+}
+
+// ChatResponse 是多轮对话的响应。
+type ChatResponse struct {
+	Content string
+}
+
 // Client 是 LLM 交互的统一接口。
 type Client interface {
 	Generate(req *GenerateRequest) (*GenerateResponse, error)
+	Chat(req *ChatRequest) (*ChatResponse, error)
 }

@@ -104,3 +104,61 @@ func (c *openaiClient) Generate(req *GenerateRequest) (*GenerateResponse, error)
 		Content: chatResp.Choices[0].Message.Content,
 	}, nil
 }
+
+// Chat 支持多轮对话，接受完整的消息历史。
+func (c *openaiClient) Chat(req *ChatRequest) (*ChatResponse, error) {
+	msgs := make([]chatMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = chatMessage{Role: m.Role, Content: m.Content}
+	}
+
+	body := chatRequest{
+		Model:    c.cfg.Model,
+		Messages: msgs,
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	url := c.cfg.BaseURL + "/chat/completions"
+	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建 HTTP 请求失败: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("调用 LLM API 失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("LLM API 返回状态码 %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var chatResp chatResponse
+	if err := json.Unmarshal(respBody, &chatResp); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if chatResp.Error != nil {
+		return nil, fmt.Errorf("LLM API 错误: %s", chatResp.Error.Message)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		return nil, fmt.Errorf("LLM API 未返回任何结果")
+	}
+
+	return &ChatResponse{
+		Content: chatResp.Choices[0].Message.Content,
+	}, nil
+}

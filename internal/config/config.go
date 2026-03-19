@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/w1ndys/kontext/internal/llm"
 	"go.yaml.in/yaml/v4"
@@ -20,6 +22,7 @@ type LLMConfig struct {
 	BaseURL string `yaml:"base_url"`
 	APIKey  string `yaml:"api_key"`
 	Model   string `yaml:"model"`
+	Timeout int    `yaml:"timeout"` // 超时时间（秒），0 表示使用默认值
 }
 
 // GlobalConfigPath 返回全局配置文件路径 ~/.kontext/config.yaml。
@@ -54,6 +57,11 @@ func Load() (*LLMConfig, error) {
 	}
 	if v := os.Getenv("KONTEXT_LLM_MODEL"); v != "" {
 		cfg.Model = v
+	}
+	if v := os.Getenv("KONTEXT_LLM_TIMEOUT"); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			cfg.Timeout = seconds
+		}
 	}
 
 	// 3. 默认值兜底
@@ -97,10 +105,15 @@ func Save(cfg *LLMConfig) error {
 
 // ToLLMConfig 将 LLMConfig 转换为 llm.Config。
 func (c *LLMConfig) ToLLMConfig() *llm.Config {
+	var timeout time.Duration
+	if c.Timeout > 0 {
+		timeout = time.Duration(c.Timeout) * time.Second
+	}
 	return &llm.Config{
 		BaseURL: c.BaseURL,
 		APIKey:  c.APIKey,
 		Model:   c.Model,
+		Timeout: timeout,
 	}
 }
 

@@ -1,18 +1,35 @@
 package llm
 
-import "os"
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+// DefaultTimeout 是 LLM API 调用的默认超时时间。
+const DefaultTimeout = 300 * time.Second // 5 分钟
 
 // Config 保存 LLM 客户端的配置信息。
 type Config struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	Timeout time.Duration // API 调用超时时间，0 表示使用默认值
+}
+
+// GetTimeout 返回配置的超时时间，如果未设置则返回默认值。
+func (c *Config) GetTimeout() time.Duration {
+	if c.Timeout <= 0 {
+		return DefaultTimeout
+	}
+	return c.Timeout
 }
 
 // ConfigFromEnv 从环境变量读取 LLM 配置。
 // KONTEXT_LLM_BASE_URL: API 地址（默认 https://api.openai.com/v1）
 // KONTEXT_LLM_API_KEY: API 密钥（必填）
 // KONTEXT_LLM_MODEL: 模型名称（默认 gpt-5.4）
+// KONTEXT_LLM_TIMEOUT: 超时时间（秒，默认 300）
 func ConfigFromEnv() (*Config, error) {
 	cfg := &Config{
 		BaseURL: os.Getenv("KONTEXT_LLM_BASE_URL"),
@@ -24,6 +41,12 @@ func ConfigFromEnv() (*Config, error) {
 	}
 	if cfg.Model == "" {
 		cfg.Model = "gpt-5.4"
+	}
+	// 解析超时设置
+	if timeoutStr := os.Getenv("KONTEXT_LLM_TIMEOUT"); timeoutStr != "" {
+		if seconds, err := strconv.Atoi(timeoutStr); err == nil && seconds > 0 {
+			cfg.Timeout = time.Duration(seconds) * time.Second
+		}
 	}
 	return cfg, nil
 }

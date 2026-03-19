@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -51,13 +52,15 @@ var configSetCmd = &cobra.Command{
   llm.base_url   API 地址
   llm.api_key    API 密钥
   llm.model      模型名称
+  llm.timeout    超时时间（秒）
 
 ---
 
 Set a configuration value. Supported keys:
   llm.base_url   API endpoint URL
   llm.api_key    API key
-  llm.model      Model name`,
+  llm.model      Model name
+  llm.timeout    Timeout in seconds`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigSet(args[0], args[1])
@@ -189,8 +192,14 @@ func runConfigSet(key, value string) error {
 		cfg.APIKey = value
 	case "llm.model":
 		cfg.Model = value
+	case "llm.timeout":
+		seconds, err := strconv.Atoi(value)
+		if err != nil || seconds <= 0 {
+			return fmt.Errorf("超时时间必须是正整数（秒）")
+		}
+		cfg.Timeout = seconds
 	default:
-		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model", key)
+		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout", key)
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -216,8 +225,14 @@ func runConfigGet(key string) error {
 		value = cfg.APIKey
 	case "llm.model":
 		value = cfg.Model
+	case "llm.timeout":
+		if cfg.Timeout > 0 {
+			value = strconv.Itoa(cfg.Timeout)
+		} else {
+			value = fmt.Sprintf("%d (默认)", int(llm.DefaultTimeout.Seconds()))
+		}
 	default:
-		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model", key)
+		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout", key)
 	}
 
 	fmt.Println(value)
@@ -234,6 +249,11 @@ func runConfigList() error {
 	fmt.Printf("llm.base_url = %s\n", cfg.BaseURL)
 	fmt.Printf("llm.api_key  = %s\n", maskKey(cfg.APIKey))
 	fmt.Printf("llm.model    = %s\n", cfg.Model)
+	if cfg.Timeout > 0 {
+		fmt.Printf("llm.timeout  = %d 秒\n", cfg.Timeout)
+	} else {
+		fmt.Printf("llm.timeout  = %d 秒 (默认)\n", int(llm.DefaultTimeout.Seconds()))
+	}
 	return nil
 }
 

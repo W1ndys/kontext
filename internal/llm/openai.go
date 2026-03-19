@@ -34,7 +34,7 @@ func newOpenAIClient(cfg *Config) *openaiClient {
 
 // Generate 调用 LLM API 生成内容。
 func (c *openaiClient) Generate(req *GenerateRequest) (*GenerateResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
 	defer cancel()
 
 	resp, err := c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
@@ -56,7 +56,7 @@ func (c *openaiClient) Generate(req *GenerateRequest) (*GenerateResponse, error)
 
 // Chat 支持多轮对话，接受完整的消息历史。
 func (c *openaiClient) Chat(req *ChatRequest) (*ChatResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
 	defer cancel()
 
 	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{})
@@ -81,7 +81,7 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 		return nil, fmt.Errorf("生成 JSON Schema 失败: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
 	defer cancel()
 
 	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{

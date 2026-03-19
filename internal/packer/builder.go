@@ -63,10 +63,15 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 	if len(ctx.Contracts) > 0 {
 		var parts []string
 		for _, c := range ctx.Contracts {
-			parts = append(parts, fmt.Sprintf("### %s\n- 描述: %s\n- 拥有: %s\n- 依赖: %s",
-				c.Module, c.Description,
+			// 构建依赖列表
+			var deps []string
+			for _, d := range c.DependsOn {
+				deps = append(deps, d.Module)
+			}
+			parts = append(parts, fmt.Sprintf("### %s\n- 职责: %s\n- 拥有: %s\n- 依赖: %s",
+				c.Module.Name, c.Module.Purpose,
 				strings.Join(c.Owns, ", "),
-				strings.Join(c.DependsOn, ", ")))
+				strings.Join(deps, ", ")))
 		}
 		data.Contracts = strings.Join(parts, "\n\n")
 	}

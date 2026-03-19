@@ -16,7 +16,7 @@ func MatchContracts(task string, contracts []schema.ModuleContract) []schema.Mod
 
 	var matched []schema.ModuleContract
 	for _, c := range contracts {
-		searchable := strings.ToLower(c.Module + " " + c.Description + " " + strings.Join(c.Owns, " "))
+		searchable := strings.ToLower(c.Module.Name + " " + c.Module.Purpose + " " + strings.Join(c.Owns, " "))
 		for _, kw := range keywords {
 			if strings.Contains(searchable, kw) {
 				matched = append(matched, c)

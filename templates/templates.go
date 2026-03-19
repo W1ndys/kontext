@@ -37,3 +37,15 @@ var InitScanSelectSystem string // InitScanSelectSystem 是扫描模式重点文
 
 //go:embed init_scan_select_user.tmpl
 var InitScanSelectUser string // InitScanSelectUser 是扫描模式重点文件选择阶段的用户消息模板
+
+//go:embed init_scan_manifest_system.tmpl
+var InitScanManifestSystem string // InitScanManifestSystem 是分步生成 PROJECT_MANIFEST 的系统提示词
+
+//go:embed init_scan_architecture_system.tmpl
+var InitScanArchitectureSystem string // InitScanArchitectureSystem 是分步生成 ARCHITECTURE_MAP 的系统提示词
+
+//go:embed init_scan_conventions_system.tmpl
+var InitScanConventionsSystem string // InitScanConventionsSystem 是分步生成 CONVENTIONS 的系统提示词
+
+//go:embed init_scan_contract_system.tmpl
+var InitScanContractSystem string // InitScanContractSystem 是分步生成单个模块契约的系统提示词

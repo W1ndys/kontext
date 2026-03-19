@@ -4,10 +4,15 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
+	"github.com/w1ndys/kontext/internal/llm"
 )
 
 var configCmd = &cobra.Command{
@@ -100,6 +105,13 @@ func runInteractiveConfig() error {
 		cfg.BaseURL = strings.TrimSpace(input)
 	}
 
+	// 规范化 Base URL 并提示
+	normalized, changed, hint := config.NormalizeBaseURLWithHint(cfg.BaseURL)
+	if changed {
+		fmt.Printf("  ⚠ URL 已自动修正: %s → %s（%s）\n", cfg.BaseURL, normalized, hint)
+		cfg.BaseURL = normalized
+	}
+
 	// API Key
 	display := maskKey(cfg.APIKey)
 	fmt.Printf("API 密钥 [%s]: ", display)
@@ -107,10 +119,46 @@ func runInteractiveConfig() error {
 		cfg.APIKey = strings.TrimSpace(input)
 	}
 
-	// Model
-	fmt.Printf("模型名称 [%s]: ", cfg.Model)
-	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
-		cfg.Model = strings.TrimSpace(input)
+	// 验证 API Key 并获取模型列表
+	if cfg.APIKey != "" {
+		fmt.Println("\n正在验证 API Key...")
+		llmCfg := &llm.Config{
+			BaseURL: cfg.BaseURL,
+			APIKey:  cfg.APIKey,
+			Model:   cfg.Model,
+		}
+		client, err := llm.NewClient(llmCfg)
+		if err != nil {
+			fmt.Printf("  ✗ 创建客户端失败: %v\n", err)
+		} else {
+			models, err := client.ListModels()
+			if err != nil {
+				fmt.Printf("  ✗ API Key 验证失败: %v\n", err)
+				fmt.Println("  提示: 请检查 API Key 是否正确，或者 API 地址是否可访问")
+			} else {
+				fmt.Printf("  ✓ API Key 验证成功！发现 %d 个可用模型\n\n", len(models))
+
+				// 排序模型列表
+				sort.Strings(models)
+
+				// 使用交互式列表选择模型
+				if len(models) > 0 {
+					selected, err := runModelSelector(models, cfg.Model)
+					if err != nil {
+						fmt.Printf("  模型选择器出错: %v，将使用当前模型 %s\n", err, cfg.Model)
+					} else if selected != "" {
+						cfg.Model = selected
+						fmt.Printf("  已选择: %s\n", cfg.Model)
+					}
+				}
+			}
+		}
+	} else {
+		// Model（没有 API Key 时使用手动输入）
+		fmt.Printf("模型名称 [%s]: ", cfg.Model)
+		if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+			cfg.Model = strings.TrimSpace(input)
+		}
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -131,6 +179,11 @@ func runConfigSet(key, value string) error {
 
 	switch key {
 	case "llm.base_url":
+		normalized, changed, hint := config.NormalizeBaseURLWithHint(value)
+		if changed {
+			fmt.Printf("  ⚠ URL 已自动修正: %s → %s（%s）\n", value, normalized, hint)
+			value = normalized
+		}
 		cfg.BaseURL = value
 	case "llm.api_key":
 		cfg.APIKey = value
@@ -193,4 +246,112 @@ func maskKey(key string) string {
 		return "****"
 	}
 	return key[:4] + "****" + key[len(key)-4:]
+}
+
+// ===== Bubble Tea 模型选择器 =====
+
+// modelItem 实现 list.Item 接口
+type modelItem struct {
+	name      string
+	isCurrent bool
+}
+
+func (i modelItem) Title() string {
+	if i.isCurrent {
+		return i.name + " (当前)"
+	}
+	return i.name
+}
+func (i modelItem) Description() string { return "" }
+func (i modelItem) FilterValue() string { return i.name }
+
+// modelSelector 是 Bubble Tea 的 Model
+type modelSelector struct {
+	list     list.Model
+	selected string
+	quitting bool
+}
+
+func (m modelSelector) Init() tea.Cmd {
+	return nil
+}
+
+func (m modelSelector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "enter":
+			if item, ok := m.list.SelectedItem().(modelItem); ok {
+				m.selected = item.name
+			}
+			m.quitting = true
+			return m, tea.Quit
+		case "q", "esc", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		}
+	case tea.WindowSizeMsg:
+		m.list.SetWidth(msg.Width)
+		m.list.SetHeight(msg.Height - 2)
+	}
+
+	var cmd tea.Cmd
+	m.list, cmd = m.list.Update(msg)
+	return m, cmd
+}
+
+func (m modelSelector) View() string {
+	if m.quitting {
+		return ""
+	}
+	return "\n" + m.list.View()
+}
+
+var listTitleStyle = lipgloss.NewStyle().MarginLeft(2).Bold(true)
+
+// runModelSelector 启动交互式模型选择器，返回选中的模型名。
+// 如果用户按 ESC/q 取消则返回空字符串。
+func runModelSelector(models []string, currentModel string) (string, error) {
+	items := make([]list.Item, len(models))
+
+	// 找到当前模型并置顶
+	currentIdx := -1
+	for i, m := range models {
+		if m == currentModel {
+			currentIdx = i
+			break
+		}
+	}
+
+	idx := 0
+	if currentIdx >= 0 {
+		items[0] = modelItem{name: models[currentIdx], isCurrent: true}
+		idx = 1
+	}
+	for i, m := range models {
+		if i == currentIdx {
+			continue
+		}
+		items[idx] = modelItem{name: m, isCurrent: false}
+		idx++
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+
+	l := list.New(items, delegate, 60, 15)
+	l.Title = "选择模型（↑↓ 移动，/ 搜索，Enter 确认，Esc 跳过）"
+	l.Styles.Title = listTitleStyle
+	l.SetFilteringEnabled(true)
+	l.SetShowStatusBar(true)
+
+	m := modelSelector{list: l}
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+
+	result := finalModel.(modelSelector)
+	return result.selected, nil
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/w1ndys/kontext/internal/config"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/packer"
 )
@@ -18,15 +19,16 @@ var packCmd = &cobra.Command{
 		projectDir := "."
 
 		// 加载 LLM 配置
-		cfg, err := llm.ConfigFromEnv()
+		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("加载 LLM 配置失败: %w", err)
 		}
 
-		fmt.Printf("使用 LLM: %s (模型: %s)\n", cfg.BaseURL, cfg.Model)
+		llmCfg := cfg.ToLLMConfig()
+		fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
 
 		// 创建 LLM 客户端
-		client, err := llm.NewClient(cfg)
+		client, err := llm.NewClient(llmCfg)
 		if err != nil {
 			return err
 		}

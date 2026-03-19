@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/w1ndys/kontext/internal/config"
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
@@ -52,21 +53,22 @@ func runAIInit(description string) error {
 	}
 
 	// 加载 LLM 配置
-	cfg, err := llm.ConfigFromEnv()
+	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("读取 LLM 配置失败: %w", err)
 	}
 
 	if cfg.APIKey == "" {
-		return fmt.Errorf("AI 交互式初始化需要设置环境变量 KONTEXT_LLM_API_KEY\n\n示例：\n  export KONTEXT_LLM_API_KEY=your-api-key\n  export KONTEXT_LLM_BASE_URL=https://api.openai.com/v1  # 可选\n  export KONTEXT_LLM_MODEL=gpt-4o                        # 可选")
+		return fmt.Errorf("AI 交互式初始化需要配置 API Key\n\n方式一：运行 kontext config 进行交互式配置\n方式二：设置环境变量 export KONTEXT_LLM_API_KEY=your-api-key")
 	}
 
-	client, err := llm.NewClient(cfg)
+	llmCfg := cfg.ToLLMConfig()
+	client, err := llm.NewClient(llmCfg)
 	if err != nil {
 		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
 	}
 
-	fmt.Printf("使用 LLM: %s (模型: %s)\n", cfg.BaseURL, cfg.Model)
+	fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
 	fmt.Println("正在分析项目需求...")
 
 	return generator.RunInteractiveInit(client, description)

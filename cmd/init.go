@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
@@ -194,8 +195,28 @@ func runScanInit() error {
 	}
 
 	// 5. 调用 LLM 生成
-	fmt.Println("正在分析项目并生成配置...")
+	fmt.Println("正在调用 LLM 分析项目并生成配置（可能需要 30~60 秒，请耐心等待）...")
+
+	done := make(chan struct{})
+	go func() {
+		dots := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				fmt.Print("\r\033[K") // 清除进度行
+				return
+			case <-ticker.C:
+				fmt.Printf("\r  %s 正在生成中...", dots[i%len(dots)])
+				i++
+			}
+		}
+	}()
+
 	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
+	close(done)
 	if err != nil {
 		return err
 	}

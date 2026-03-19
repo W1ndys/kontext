@@ -14,7 +14,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/templates"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 const maxRounds = 10
@@ -36,7 +36,7 @@ func RunInteractiveInit(client llm.Client, description string) error {
 func runInterview(client llm.Client, description string, input io.Reader, output io.Writer) (string, string, error) {
 	// 构建初始消息
 	systemPrompt := templates.InitInterviewSystem
-	userMsg, err := renderTemplate(templates.InitInterviewUser, map[string]string{
+	userMsg, err := RenderTemplate(templates.InitInterviewUser, map[string]string{
 		"Description": description,
 	})
 	if err != nil {
@@ -54,14 +54,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 	scanner := bufio.NewScanner(input)
 
 	for round := 1; round <= maxRounds; round++ {
-		// 调用 LLM
-		resp, err := client.Chat(&llm.ChatRequest{Messages: messages})
-		if err != nil {
-			return "", "", fmt.Errorf("调用 LLM 失败: %w", err)
-		}
-
-		// 解析响应
-		interview, err := ParseInterviewResponse(resp.Content)
+		resp, interview, err := interviewStep(client, messages)
 		if err != nil {
 			return "", "", fmt.Errorf("解析 LLM 响应失败: %w", err)
 		}
@@ -111,12 +104,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 		Content: "已达到最大提问次数，请根据目前收集到的信息生成需求摘要。请以 JSON 格式回复：{\"type\": \"done\", \"summary\": \"...\"}",
 	})
 
-	resp, err := client.Chat(&llm.ChatRequest{Messages: messages})
-	if err != nil {
-		return "", "", fmt.Errorf("调用 LLM 生成摘要失败: %w", err)
-	}
-
-	interview, err := ParseInterviewResponse(resp.Content)
+	resp, interview, err := interviewStep(client, messages)
 	if err != nil {
 		return "", "", fmt.Errorf("解析摘要响应失败: %w", err)
 	}
@@ -133,7 +121,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 // generateAndWrite 调用 LLM 生成 YAML 并写入文件。
 func generateAndWrite(client llm.Client, summary, conversation string) error {
 	systemPrompt := templates.InitGenerateSystem
-	userMsg, err := renderTemplate(templates.InitGenerateUser, map[string]string{
+	userMsg, err := RenderTemplate(templates.InitGenerateUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
 	})
@@ -141,45 +129,24 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		return fmt.Errorf("渲染生成模板失败: %w", err)
 	}
 
-	resp, err := client.Chat(&llm.ChatRequest{
-		Messages: []llm.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userMsg},
-		},
-	})
+	generated, err := GenerateStructuredYAML(client, systemPrompt, userMsg)
 	if err != nil {
-		return fmt.Errorf("调用 LLM 生成配置失败: %w", err)
+		return err
 	}
 
-	generated, err := ParseGeneratedYAML(resp.Content)
-	if err != nil {
-		// 重试一次，附带错误信息
-		retryMsg := fmt.Sprintf("上次生成的 JSON 格式不正确，错误: %s\n请重新生成，确保返回合法的 JSON。", err.Error())
-		resp, err = client.Chat(&llm.ChatRequest{
-			Messages: []llm.Message{
-				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: userMsg},
-				{Role: "assistant", Content: resp.Content},
-				{Role: "user", Content: retryMsg},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("重试调用 LLM 失败: %w", err)
-		}
-		generated, err = ParseGeneratedYAML(resp.Content)
-		if err != nil {
-			return fmt.Errorf("LLM 生成的 JSON 格式不正确: %w", err)
-		}
-	}
+	return WriteGeneratedYAML(generated)
+}
 
+// WriteGeneratedYAML 校验 GeneratedYAML 并写入 .kontext/ 目录。
+func WriteGeneratedYAML(generated *GeneratedYAML) error {
 	// 校验 YAML 合法性
-	if err := validateYAML(generated.ProjectManifest); err != nil {
+	if err := ValidateYAML(generated.ProjectManifest); err != nil {
 		return fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", err)
 	}
-	if err := validateYAML(generated.ArchitectureMap); err != nil {
+	if err := ValidateYAML(generated.ArchitectureMap); err != nil {
 		return fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", err)
 	}
-	if err := validateYAML(generated.Conventions); err != nil {
+	if err := ValidateYAML(generated.Conventions); err != nil {
 		return fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", err)
 	}
 
@@ -213,14 +180,97 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 	return nil
 }
 
-// validateYAML 校验字符串是否为合法的 YAML。
-func validateYAML(content string) error {
+// ValidateYAML 校验字符串是否为合法的 YAML。
+func ValidateYAML(content string) error {
 	var out interface{}
 	return yaml.Unmarshal([]byte(content), &out)
 }
 
-// renderTemplate 渲染 Go 模板。
-func renderTemplate(tmpl string, data interface{}) (string, error) {
+func interviewStep(
+	client llm.Client,
+	messages []llm.Message,
+) (*llm.ChatResponse, *InterviewResponse, error) {
+	req := &llm.ChatRequest{Messages: messages}
+
+	var structured InterviewResponse
+	resp, err := client.ChatStructured(req, "interview_response", &structured)
+	if err == nil {
+		return resp, &structured, nil
+	}
+
+	resp, chatErr := client.Chat(req)
+	if chatErr != nil {
+		return nil, nil, fmt.Errorf("结构化输出失败: %v；回退调用失败: %w", err, chatErr)
+	}
+
+	parsed, parseErr := ParseInterviewResponse(resp.Content)
+	if parseErr != nil {
+		return nil, nil, fmt.Errorf("结构化输出失败: %v；回退解析失败: %w", err, parseErr)
+	}
+
+	return resp, parsed, nil
+}
+
+// GenerateStructuredYAML 调用 LLM 生成结构化 YAML，优先使用结构化输出，失败时回退到传统 JSON 模式。
+func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	var structured GeneratedYAML
+	if _, err := client.ChatStructured(req, "generated_yaml", &structured); err == nil {
+		return &structured, nil
+	} else {
+		generated, legacyErr := generateLegacyYAML(client, systemPrompt, userMsg)
+		if legacyErr != nil {
+			return nil, fmt.Errorf("结构化输出失败: %v；回退到传统 JSON 模式也失败: %w", err, legacyErr)
+		}
+		return generated, nil
+	}
+}
+
+func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
+	resp, err := client.Chat(&llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("调用 LLM 生成配置失败: %w", err)
+	}
+
+	generated, err := ParseGeneratedYAML(resp.Content)
+	if err == nil {
+		return generated, nil
+	}
+
+	retryMsg := fmt.Sprintf("上次生成的 JSON 格式不正确，错误: %s\n请重新生成，确保返回合法的 JSON。", err.Error())
+	resp, err = client.Chat(&llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+			{Role: "assistant", Content: resp.Content},
+			{Role: "user", Content: retryMsg},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("重试调用 LLM 失败: %w", err)
+	}
+
+	generated, err = ParseGeneratedYAML(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("LLM 生成的 JSON 格式不正确: %w", err)
+	}
+
+	return generated, nil
+}
+
+// RenderTemplate 渲染 Go 模板。
+func RenderTemplate(tmpl string, data interface{}) (string, error) {
 	t, err := template.New("").Parse(tmpl)
 	if err != nil {
 		return "", err

@@ -197,34 +197,45 @@ func runScanInit() error {
 		fmt.Printf("\r   ✓ AI 识别完成 (耗时 %.1f 秒)\n", analyzeElapsed)
 	}
 
-	fmt.Printf("   识别到 %d 个配置文件 + %d 个关键源码文件\n\n", len(analyzed.ConfigFiles), len(analyzed.SourceFiles))
+	fmt.Printf("   识别到 %d 个配置文件 + %d 个关键源码文件\n", len(analyzed.ConfigFiles), len(analyzed.SourceFiles))
+	printFileListWithTitle("配置文件", analyzed.ConfigFiles, 8)
+	printFileListWithTitle("关键源码", analyzed.SourceFiles, 10)
+	fmt.Println()
 
 	// ===== 阶段 3：读取配置/依赖文件 =====
 	fmt.Println("📄 阶段 3/6：读取配置/依赖文件...")
 	configFiles := make(map[string]string)
+	var readConfigFiles []string
 	for i, f := range analyzed.ConfigFiles {
 		printProgressWithFile(i+1, len(analyzed.ConfigFiles), "读取配置", f)
 		fullPath := filepath.Join(projectDir, f)
 		data, readErr := os.ReadFile(fullPath)
 		if readErr == nil {
 			configFiles[f] = string(data)
+			readConfigFiles = append(readConfigFiles, f)
 		}
 	}
 	clearLine()
-	fmt.Printf("   成功读取 %d 个配置文件\n\n", len(configFiles))
+	fmt.Printf("   ✓ 成功读取 %d 个配置文件\n", len(configFiles))
+	printFileList(readConfigFiles, 10)
+	fmt.Println()
 
 	// ===== 阶段 4：提取源码概要 =====
 	fmt.Println("📝 阶段 4/6：提取源码文件概要...")
 	fileSummaries := make(map[string]string)
+	var extractedFiles []string
 	for i, f := range analyzed.SourceFiles {
 		printProgressWithFile(i+1, len(analyzed.SourceFiles), "提取概要", f)
 		summary, extractErr := fileutil.ExtractFileSummary(filepath.Join(projectDir, f))
 		if extractErr == nil {
 			fileSummaries[f] = summary
+			extractedFiles = append(extractedFiles, f)
 		}
 	}
 	clearLine()
-	fmt.Printf("   提取 %d 个文件概要\n\n", len(fileSummaries))
+	fmt.Printf("   ✓ 提取 %d 个文件概要\n", len(fileSummaries))
+	printFileList(extractedFiles, 10)
+	fmt.Println()
 
 	// ===== 阶段 5：LLM 选择重点文件 =====
 	fmt.Println("🎯 阶段 5/6：AI 分析概要，选择重点文件...")
@@ -253,7 +264,9 @@ func runScanInit() error {
 		selectElapsed := time.Since(selectStart).Seconds()
 		fmt.Printf("\r   ✓ AI 选择完成 (耗时 %.1f 秒)\n", selectElapsed)
 	}
-	fmt.Printf("   选择 %d 个重点文件深入分析\n\n", len(selected.KeyFiles))
+	fmt.Printf("   ✓ 选择 %d 个重点文件深入分析\n", len(selected.KeyFiles))
+	printFileList(selected.KeyFiles, 10)
+	fmt.Println()
 
 	// ===== 阶段 6：读取重点文件 + LLM 生成配置 =====
 	fmt.Println("🤖 阶段 6/6：读取重点文件并生成配置...")
@@ -261,12 +274,16 @@ func runScanInit() error {
 
 	// 读取重点文件全文（最多 200 行）
 	keyFileContents := make(map[string]string)
+	var readKeyFiles []string
 	for _, f := range selected.KeyFiles {
 		content, readErr := readFirstNLines(filepath.Join(projectDir, f), 200)
 		if readErr == nil {
 			keyFileContents[f] = content
+			readKeyFiles = append(readKeyFiles, f)
 		}
 	}
+	fmt.Printf("   读取 %d 个重点文件内容\n", len(readKeyFiles))
+	printFileList(readKeyFiles, 8)
 
 	// 其他文件只保留概要
 	otherSummaries := make(map[string]string)
@@ -400,6 +417,46 @@ func clearLine() {
 	fmt.Print("\r\033[K")
 }
 
+// printFileList 打印文件列表（带缩进和树形结构）
+// maxShow 为最多显示的文件数，超过则显示省略提示
+func printFileList(files []string, maxShow int) {
+	if len(files) == 0 {
+		return
+	}
+
+	showCount := len(files)
+	if maxShow > 0 && showCount > maxShow {
+		showCount = maxShow
+	}
+
+	for i := 0; i < showCount; i++ {
+		prefix := "├──"
+		if i == showCount-1 && (maxShow <= 0 || len(files) <= maxShow) {
+			prefix = "└──"
+		}
+		fmt.Printf("      %s %s\n", prefix, files[i])
+	}
+
+	if maxShow > 0 && len(files) > maxShow {
+		fmt.Printf("      └── ... 等 %d 个文件\n", len(files)-maxShow)
+	}
+}
+
+// printFileListWithTitle 打印带标题的文件列表
+func printFileListWithTitle(title string, files []string, maxShow int) {
+	if len(files) == 0 {
+		return
+	}
+	fmt.Printf("      %s (%d 个):\n", title, len(files))
+	for i, f := range files {
+		if maxShow > 0 && i >= maxShow {
+			fmt.Printf("         ... 等 %d 个文件\n", len(files)-maxShow)
+			break
+		}
+		fmt.Printf("         • %s\n", f)
+	}
+}
+
 // readFirstNLines 读取文件的前 n 行
 func readFirstNLines(path string, n int) (string, error) {
 	f, err := os.Open(path)
@@ -462,7 +519,7 @@ func runStaticInitWithOverwrite() error {
 		}
 	}
 
-	// 写入默认模板文件
+	// 写入核心配置文件
 	templateFiles := map[string]string{
 		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): defaultManifest,
 		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): defaultArchitecture,
@@ -476,12 +533,29 @@ func runStaticInitWithOverwrite() error {
 		fmt.Printf("  已创建: %s\n", path)
 	}
 
+	// 写入默认模块契约文件
+	contractFiles := map[string]string{
+		filepath.Join(kontextDir, "module_contracts", "example_CONTRACT.yaml"): defaultContract,
+	}
+
+	fmt.Println()
+	fmt.Println("  模块契约:")
+	for path, content := range contractFiles {
+		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+			return fmt.Errorf("写入 %s 失败: %w", path, err)
+		}
+		fmt.Printf("    已创建: %s\n", path)
+	}
+
 	fmt.Println("\n.kontext/ 初始化完成！")
 	fmt.Println("后续步骤：")
 	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.yaml 填写项目信息")
 	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.yaml 填写架构信息")
 	fmt.Println("  3. 编辑 .kontext/CONVENTIONS.yaml 填写编码规范")
-	fmt.Println("  4. 运行 'kontext validate' 校验配置是否正确")
+	fmt.Println("  4. 为每个核心模块创建 .kontext/module_contracts/<模块名>_CONTRACT.yaml")
+	fmt.Println("  5. 运行 'kontext validate' 校验配置是否正确")
+	fmt.Println()
+	fmt.Println("提示: 使用 'kontext init --scan' 可自动扫描项目源码生成完整配置")
 
 	return nil
 }
@@ -571,4 +645,37 @@ ai_rules:
     reason: "先理解上下文再做变更"
   - rule: "严格遵守模块契约中定义的边界"
     reason: "维护架构完整性"
+`
+
+const defaultContract = `# .kontext/module_contracts/example_CONTRACT.yaml
+# 用途：定义单个模块的职责边界和依赖关系
+# 使用方法：为每个核心模块复制此模板，重命名为 <模块名>_CONTRACT.yaml
+
+module:
+  name: "example"
+  path: "internal/example/"
+  purpose: |
+    在这里描述模块的核心职责。
+    它负责哪些功能？解决什么问题？
+
+owns:
+  - "该模块负责的功能点 1"
+  - "该模块负责的功能点 2"
+
+not_responsible_for:
+  - "该模块明确不负责的功能"
+  - "应由其他模块处理的功能"
+
+depends_on:
+  - module: "其他模块名"
+    reason: "为什么依赖这个模块"
+
+public_interface:
+  - name: "ExampleFunc"
+    signature: "func ExampleFunc(param string) (Result, error)"
+    description: "函数功能描述"
+
+modification_rules:
+  - rule: "修改该模块时必须遵守的规则"
+    reason: "原因说明"
 `

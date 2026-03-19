@@ -19,15 +19,14 @@ import (
 var scanFlag bool
 
 var initCmd = &cobra.Command{
-	Use:   "init [描述/description]",
-	Short: "初始化 .kontext/ 目录（可选 AI 交互式生成） / Initialize .kontext/ directory (optional AI interactive generation)",
+	Use:   "init",
+	Short: "初始化 .kontext/ 目录 / Initialize .kontext/ directory",
 	Long: `初始化 .kontext/ 目录并写入配置文件。
 
-无参数时写入静态模板：
+交互式初始化（默认）：
   kontext init
-
-提供项目描述时启动 AI 交互式初始化：
-  kontext init "我想做一个博客系统"
+  - 输入项目描述启动 AI 交互式生成
+  - 直接回车使用静态模板
 
 自动扫描项目源码并生成：
   kontext init --scan
@@ -36,23 +35,19 @@ var initCmd = &cobra.Command{
 
 Initialize the .kontext/ directory and write configuration files.
 
-Without arguments, write static templates:
+Interactive initialization (default):
   kontext init
-
-With a project description, start AI interactive initialization:
-  kontext init "I want to build a blog system"
+  - Enter project description for AI interactive generation
+  - Press Enter directly to use static templates
 
 Auto-scan project source code and generate:
   kontext init --scan`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if scanFlag {
 			return runScanInit()
 		}
-		if len(args) == 1 {
-			return runAIInit(args[0])
-		}
-		return runStaticInit()
+		return runInteractiveInit()
 	},
 }
 
@@ -60,13 +55,18 @@ func init() {
 	initCmd.Flags().BoolVar(&scanFlag, "scan", false, "自动扫描项目源码生成配置 / Auto-scan project source code to generate config")
 }
 
-// runAIInit 启动 AI 交互式初始化流程。
-func runAIInit(description string) error {
+// runInteractiveInit 交互式初始化，询问用户项目描述。
+func runInteractiveInit() error {
 	kontextDir := ".kontext"
 
 	// 检查是否已存在
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
-		fmt.Print(".kontext/ 已存在，是否覆盖？[y/N] ")
+		fmt.Println(".kontext/ 已存在。")
+		fmt.Println()
+		fmt.Println("如需重新生成，可使用以下方式：")
+		fmt.Println("  kontext init --scan  - 自动扫描项目源码生成（会提示是否覆盖）")
+		fmt.Println()
+		fmt.Print("是否覆盖现有配置？[y/N] ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
 			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
@@ -79,6 +79,29 @@ func runAIInit(description string) error {
 		}
 	}
 
+	fmt.Println("Kontext 项目初始化")
+	fmt.Println(strings.Repeat("-", 40))
+	fmt.Println()
+	fmt.Println("请输入项目描述，AI 将根据描述生成配置文件。")
+	fmt.Println("（直接回车将使用默认模板）")
+	fmt.Println()
+	fmt.Print("项目描述: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	description := strings.TrimSpace(input)
+
+	if description == "" {
+		fmt.Println()
+		fmt.Println("未输入描述，将使用默认模板...")
+		return runStaticInitWithOverwrite()
+	}
+
+	return runAIInit(description)
+}
+
+// runAIInit 启动 AI 交互式初始化流程（由 runInteractiveInit 调用，已处理过目录检查）。
+func runAIInit(description string) error {
 	// 加载 LLM 配置
 	cfg, err := config.Load()
 	if err != nil {
@@ -321,18 +344,25 @@ func isSourceFile(path string) bool {
 	return sourceExts[ext]
 }
 
-// runStaticInit 执行原有的静态模板初始化。
+// runStaticInit 执行原有的静态模板初始化（带目录检查）。
 func runStaticInit() error {
 	kontextDir := ".kontext"
 
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
 		fmt.Println(".kontext/ 已存在，跳过初始化。")
 		fmt.Println()
-		fmt.Println("如需重新生成，可使用以下方式（会提示是否覆盖）：")
-		fmt.Println("  kontext init \"项目描述\"  - AI 交互式生成")
-		fmt.Println("  kontext init --scan      - 自动扫描项目源码生成")
+		fmt.Println("如需重新生成，可使用以下方式：")
+		fmt.Println("  kontext init        - 交互式初始化（会提示是否覆盖）")
+		fmt.Println("  kontext init --scan - 自动扫描项目源码生成（会提示是否覆盖）")
 		return nil
 	}
+
+	return runStaticInitWithOverwrite()
+}
+
+// runStaticInitWithOverwrite 执行静态模板初始化（无目录检查，直接覆盖）。
+func runStaticInitWithOverwrite() error {
+	kontextDir := ".kontext"
 
 	// 创建目录结构
 	dirs := []string{
@@ -354,10 +384,6 @@ func runStaticInit() error {
 	}
 
 	for path, content := range templateFiles {
-		if fileutil.FileExists(path) {
-			fmt.Printf("  跳过: %s (已存在)\n", path)
-			continue
-		}
 		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
 			return fmt.Errorf("写入 %s 失败: %w", path, err)
 		}

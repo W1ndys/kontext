@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,7 +17,11 @@ import (
 	"github.com/w1ndys/kontext/templates"
 )
 
-var scanFlag bool
+var (
+	scanFlag   bool
+	freshFlag  bool
+	resumeFlag bool
+)
 
 var initCmd = &cobra.Command{
 	Use:   "init",
@@ -30,6 +35,8 @@ var initCmd = &cobra.Command{
 
 自动扫描项目源码并生成：
   kontext init --scan
+  kontext init --scan --fresh    # 忽略缓存，强制从头开始
+  kontext init --scan --resume   # 强制使用缓存继续（不询问）
 
 ---
 
@@ -41,7 +48,9 @@ Interactive initialization (default):
   - Press Enter directly to use static templates
 
 Auto-scan project source code and generate:
-  kontext init --scan`,
+  kontext init --scan
+  kontext init --scan --fresh    # Ignore cache, start from scratch
+  kontext init --scan --resume   # Force resume from cache (no prompt)`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if scanFlag {
@@ -53,6 +62,8 @@ Auto-scan project source code and generate:
 
 func init() {
 	initCmd.Flags().BoolVar(&scanFlag, "scan", false, "自动扫描项目源码生成配置 / Auto-scan project source code to generate config")
+	initCmd.Flags().BoolVar(&freshFlag, "fresh", false, "忽略缓存，强制从头开始 / Ignore cache, start from scratch")
+	initCmd.Flags().BoolVar(&resumeFlag, "resume", false, "强制使用缓存继续 / Force resume from cache")
 }
 
 // runInteractiveInit 交互式初始化，询问用户项目描述。
@@ -160,8 +171,10 @@ func runScanInit() error {
 
 	fmt.Printf("使用 LLM: %s (模型: %s)\n\n", llmCfg.BaseURL, llmCfg.Model)
 
+	totalStart := time.Now()
+
 	// ===== 阶段 1：扫描目录树 =====
-	fmt.Println("📁 阶段 1/6：扫描项目目录...")
+	fmt.Println("📁 阶段 1/8：扫描项目目录...")
 	projectDir := "."
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
 	if err != nil {
@@ -171,7 +184,7 @@ func runScanInit() error {
 	fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
 
 	// ===== 阶段 2：LLM 智能识别关键文件 =====
-	fmt.Println("🧠 阶段 2/6：AI 分析目录结构，识别关键文件...")
+	fmt.Println("🧠 阶段 2/8：AI 分析目录结构，识别关键文件...")
 
 	treeStr := strings.Join(allFiles, "\n")
 	analyzeUserMsg, err := generator.RenderTemplate(templates.InitScanAnalyzeUser, map[string]interface{}{
@@ -203,7 +216,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 3：读取配置/依赖文件 =====
-	fmt.Println("📄 阶段 3/6：读取配置/依赖文件...")
+	fmt.Println("📄 阶段 3/8：读取配置/依赖文件...")
 	configFiles := make(map[string]string)
 	var readConfigFiles []string
 	for i, f := range analyzed.ConfigFiles {
@@ -221,7 +234,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 4：提取源码概要 =====
-	fmt.Println("📝 阶段 4/6：提取源码文件概要...")
+	fmt.Println("📝 阶段 4/8：提取源码文件概要...")
 	fileSummaries := make(map[string]string)
 	var extractedFiles []string
 	for i, f := range analyzed.SourceFiles {
@@ -238,7 +251,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 5：LLM 选择重点文件 =====
-	fmt.Println("🎯 阶段 5/6：AI 分析概要，选择重点文件...")
+	fmt.Println("🎯 阶段 5/8：AI 分析概要，选择重点文件...")
 	selectUserMsg, err := generator.RenderTemplate(templates.InitScanSelectUser, map[string]interface{}{
 		"FileSummaries": fileSummaries,
 	})
@@ -268,11 +281,7 @@ func runScanInit() error {
 	printFileList(selected.KeyFiles, 10)
 	fmt.Println()
 
-	// ===== 阶段 6：读取重点文件 + LLM 生成配置 =====
-	fmt.Println("🤖 阶段 6/6：读取重点文件并生成配置...")
-	fmt.Println("   （此步骤可能需要 30~60 秒，请耐心等待）")
-
-	// 读取重点文件全文（最多 200 行）
+	// ===== 准备：读取重点文件内容，构建公共上下文 =====
 	keyFileContents := make(map[string]string)
 	var readKeyFiles []string
 	for _, f := range selected.KeyFiles {
@@ -282,8 +291,6 @@ func runScanInit() error {
 			readKeyFiles = append(readKeyFiles, f)
 		}
 	}
-	fmt.Printf("   读取 %d 个重点文件内容\n", len(readKeyFiles))
-	printFileList(readKeyFiles, 8)
 
 	// 其他文件只保留概要
 	otherSummaries := make(map[string]string)
@@ -297,8 +304,8 @@ func runScanInit() error {
 		}
 	}
 
-	// 渲染 prompt
-	userMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
+	// 构建公共用户消息（包含项目源码信息）
+	baseUserMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
 		"DirectoryTree":      treeStr,
 		"ConfigFiles":        configFiles,
 		"KeyFileContents":    keyFileContents,
@@ -308,23 +315,234 @@ func runScanInit() error {
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
-	// 启动加载动画
-	done3 := make(chan struct{})
-	genStart := time.Now()
-	go spinnerAnimation(done3, genStart, []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"})
+	// 创建 .kontext 目录结构
+	dirs := []string{
+		kontextDir,
+		filepath.Join(kontextDir, "module_contracts"),
+		filepath.Join(kontextDir, "prompts"),
+	}
+	for _, d := range dirs {
+		if err := fileutil.EnsureDir(d); err != nil {
+			return fmt.Errorf("创建目录 %s 失败: %w", d, err)
+		}
+	}
 
-	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
+	// ===== 阶段 6/8：生成项目清单 (PROJECT_MANIFEST) =====
+	fmt.Println("🤖 阶段 6/8：生成项目清单...")
+	manifestStart := time.Now()
+
+	done3 := make(chan struct{})
+	go spinnerAnimation(done3, manifestStart, []string{"分析项目信息", "生成项目清单"})
+
+	// 明确指定只生成 PROJECT_MANIFEST.yaml
+	manifestUserMsg := baseUserMsg + "\n\n请根据以上项目信息，只生成 PROJECT_MANIFEST.yaml 文件的内容。"
+	manifestContent, err := generator.GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
 	close(done3)
 	if err != nil {
 		fmt.Println()
-		return err
+		return fmt.Errorf("生成 PROJECT_MANIFEST.yaml 失败: %w", err)
 	}
 
-	genElapsed := time.Since(genStart).Seconds()
-	fmt.Printf("\r   ✓ LLM 生成完成 (耗时 %.1f 秒)\n\n", genElapsed)
+	// 校验 YAML 合法性
+	if valErr := generator.ValidateYAML(manifestContent); valErr != nil {
+		return fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", valErr)
+	}
 
-	// 校验并写入
-	return generator.WriteGeneratedYAML(generated)
+	// 立即写入磁盘
+	manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")
+	if err := fileutil.WriteFile(manifestPath, []byte(manifestContent)); err != nil {
+		return fmt.Errorf("写入 PROJECT_MANIFEST.yaml 失败: %w", err)
+	}
+
+	manifestElapsed := time.Since(manifestStart).Seconds()
+	fmt.Printf("\r   ✓ PROJECT_MANIFEST.yaml (%.1f 秒)\n\n", manifestElapsed)
+
+	// ===== 阶段 7/8：并行生成架构与规范 =====
+	fmt.Println("🏗️  阶段 7/8：生成架构与规范... (并行)")
+
+	// 构建包含 manifest 作为上下文的用户消息，明确指定只生成单个文件
+	archUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 ARCHITECTURE_MAP.yaml 文件的内容。不要生成其他文件。", manifestContent)
+	convUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 CONVENTIONS.yaml 文件的内容。不要生成其他文件。", manifestContent)
+
+	var archContent, convContent string
+	var archErr, convErr error
+	var archElapsed, convElapsed float64
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		start := time.Now()
+		archContent, archErr = generator.GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
+		archElapsed = time.Since(start).Seconds()
+	}()
+
+	go func() {
+		defer wg.Done()
+		start := time.Now()
+		convContent, convErr = generator.GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
+		convElapsed = time.Since(start).Seconds()
+	}()
+
+	// 等待并行任务完成，同时显示动画
+	done4 := make(chan struct{})
+	step7Start := time.Now()
+	go spinnerAnimation(done4, step7Start, []string{"生成架构图", "生成编码规范"})
+	wg.Wait()
+	close(done4)
+
+	// 处理结果
+	if archErr != nil {
+		return fmt.Errorf("生成 ARCHITECTURE_MAP.yaml 失败: %w", archErr)
+	}
+	if convErr != nil {
+		return fmt.Errorf("生成 CONVENTIONS.yaml 失败: %w", convErr)
+	}
+
+	// 校验
+	if valErr := generator.ValidateYAML(archContent); valErr != nil {
+		return fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", valErr)
+	}
+	if valErr := generator.ValidateYAML(convContent); valErr != nil {
+		return fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", valErr)
+	}
+
+	// 立即写入磁盘
+	archPath := filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml")
+	if err := fileutil.WriteFile(archPath, []byte(archContent)); err != nil {
+		return fmt.Errorf("写入 ARCHITECTURE_MAP.yaml 失败: %w", err)
+	}
+	fmt.Printf("   ✓ ARCHITECTURE_MAP.yaml (%.1f 秒)\n", archElapsed)
+
+	convPath := filepath.Join(kontextDir, "CONVENTIONS.yaml")
+	if err := fileutil.WriteFile(convPath, []byte(convContent)); err != nil {
+		return fmt.Errorf("写入 CONVENTIONS.yaml 失败: %w", err)
+	}
+	fmt.Printf("   ✓ CONVENTIONS.yaml (%.1f 秒)\n\n", convElapsed)
+
+	// ===== 阶段 8/8：并行生成模块契约 =====
+	// 从 ARCHITECTURE_MAP 中提取模块列表
+	modules := extractModulesFromArch(archContent, allFiles)
+	if len(modules) == 0 {
+		fmt.Println("📦 阶段 8/8：未检测到模块，跳过模块契约生成")
+	} else {
+		fmt.Printf("📦 阶段 8/8：生成模块契约... (%d 个模块并行)\n", len(modules))
+
+		contractContext := fmt.Sprintf(
+			"\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```",
+			manifestContent, archContent,
+		)
+
+		// 用于生成各模块用户消息的函数
+		userMsgGenerator := func(moduleName string) (string, error) {
+			return baseUserMsg + contractContext + fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.yaml 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
+		}
+
+		done5 := make(chan struct{})
+		step8Start := time.Now()
+		go spinnerAnimation(done5, step8Start, []string{"生成模块契约"})
+
+		contracts, contractErrors := generator.GenerateModuleContracts(
+			client,
+			templates.InitScanContractSystem,
+			modules,
+			userMsgGenerator,
+			3, // 最大并发数
+			nil,
+		)
+		close(done5)
+
+		// 打印每个模块的结果
+		for _, mod := range modules {
+			if content, ok := contracts[mod]; ok {
+				// 校验并写入
+				if valErr := generator.ValidateYAML(content); valErr != nil {
+					fmt.Printf("   ⚠ %s_CONTRACT.yaml 不合法，跳过\n", mod)
+					continue
+				}
+				filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
+				path := filepath.Join(kontextDir, "module_contracts", filename)
+				if writeErr := fileutil.WriteFile(path, []byte(content)); writeErr != nil {
+					fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filename, writeErr)
+					continue
+				}
+				fmt.Printf("   ✓ %s_CONTRACT.yaml\n", mod)
+			}
+		}
+
+		if len(contractErrors) > 0 {
+			fmt.Printf("   ⚠ %d 个模块契约生成失败\n", len(contractErrors))
+			for _, e := range contractErrors {
+				fmt.Printf("      - %v\n", e)
+			}
+		}
+	}
+
+	totalElapsed := time.Since(totalStart).Seconds()
+
+	fmt.Printf("\n✅ .kontext/ 初始化完成！总耗时 %.1f 秒\n\n", totalElapsed)
+
+	fmt.Println("已创建:")
+	fmt.Printf("  %s\n", filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"))
+	fmt.Printf("  %s\n", filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"))
+	fmt.Printf("  %s\n", filepath.Join(kontextDir, "CONVENTIONS.yaml"))
+
+	// 列出已创建的模块契约
+	contractDir := filepath.Join(kontextDir, "module_contracts")
+	if entries, err := os.ReadDir(contractDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_CONTRACT.yaml") {
+				fmt.Printf("  %s\n", filepath.Join(contractDir, entry.Name()))
+			}
+		}
+	}
+
+	return nil
+}
+
+// extractModulesFromArch 从 ARCHITECTURE_MAP 的 YAML 内容和文件列表中提取模块名列表。
+func extractModulesFromArch(archContent string, allFiles []string) []string {
+	// 从文件列表中提取顶层目录和 internal/ 下的子目录作为模块
+	moduleSet := make(map[string]bool)
+
+	for _, f := range allFiles {
+		parts := strings.Split(filepath.ToSlash(f), "/")
+		if len(parts) < 2 {
+			continue
+		}
+
+		// internal/ 下的子目录作为模块
+		if parts[0] == "internal" && len(parts) >= 2 {
+			moduleSet[parts[1]] = true
+		}
+
+		// cmd/ 目录作为模块
+		if parts[0] == "cmd" {
+			moduleSet["cmd"] = true
+		}
+
+		// pkg/ 下的子目录作为模块
+		if parts[0] == "pkg" && len(parts) >= 2 {
+			moduleSet[parts[1]] = true
+		}
+
+		// templates/ 目录作为模块
+		if parts[0] == "templates" {
+			moduleSet["templates"] = true
+		}
+	}
+
+	// 排除不需要的目录
+	delete(moduleSet, "testdata")
+	delete(moduleSet, "vendor")
+
+	var modules []string
+	for mod := range moduleSet {
+		modules = append(modules, mod)
+	}
+
+	return modules
 }
 
 // spinnerAnimation 显示旋转加载动画，phases 为轮换展示的阶段文案。

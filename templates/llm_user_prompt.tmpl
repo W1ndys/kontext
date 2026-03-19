@@ -1,0 +1,43 @@
+## Task
+
+{{.Task}}
+
+## Project Summary
+
+- **Name**: {{.ProjectName}}
+- **Description**: {{.ProjectOneLine}}
+- **Type**: {{.ProjectType}}
+- **Tech Stack**: {{.TechStack}}
+- **Phase**: {{.Phase}}
+
+{{if .BusinessContext}}## Business Context
+
+{{.BusinessContext}}
+{{end}}
+
+{{if .Architecture}}## Architecture
+
+{{.Architecture}}
+{{end}}
+
+{{if .Conventions}}## Coding Conventions
+
+{{.Conventions}}
+{{end}}
+
+{{if .Contracts}}## Module Contracts
+
+{{.Contracts}}
+{{end}}
+
+{{if .DirectoryTree}}## Directory Structure
+
+```
+{{.DirectoryTree}}
+```
+{{end}}
+
+{{if .RelevantCode}}## Relevant Source Code
+
+{{.RelevantCode}}
+{{end}}

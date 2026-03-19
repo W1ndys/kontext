@@ -161,7 +161,7 @@ func runScanInit() error {
 	fmt.Printf("使用 LLM: %s (模型: %s)\n\n", llmCfg.BaseURL, llmCfg.Model)
 
 	// ===== 阶段 1：扫描目录树 =====
-	fmt.Println("📁 阶段 1/5：扫描项目目录...")
+	fmt.Println("📁 阶段 1/6：扫描项目目录...")
 	projectDir := "."
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
 	if err != nil {
@@ -171,7 +171,7 @@ func runScanInit() error {
 	fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
 
 	// ===== 阶段 2：LLM 智能识别关键文件 =====
-	fmt.Println("🧠 阶段 2/5：AI 分析目录结构，识别关键文件...")
+	fmt.Println("🧠 阶段 2/6：AI 分析目录结构，识别关键文件...")
 
 	treeStr := strings.Join(allFiles, "\n")
 	analyzeUserMsg, err := generator.RenderTemplate(templates.InitScanAnalyzeUser, map[string]interface{}{
@@ -200,7 +200,7 @@ func runScanInit() error {
 	fmt.Printf("   识别到 %d 个配置文件 + %d 个关键源码文件\n\n", len(analyzed.ConfigFiles), len(analyzed.SourceFiles))
 
 	// ===== 阶段 3：读取配置/依赖文件 =====
-	fmt.Println("📄 阶段 3/5：读取配置/依赖文件...")
+	fmt.Println("📄 阶段 3/6：读取配置/依赖文件...")
 	configFiles := make(map[string]string)
 	for i, f := range analyzed.ConfigFiles {
 		printProgressWithFile(i+1, len(analyzed.ConfigFiles), "读取配置", f)
@@ -213,41 +213,91 @@ func runScanInit() error {
 	clearLine()
 	fmt.Printf("   成功读取 %d 个配置文件\n\n", len(configFiles))
 
-	// ===== 阶段 4：读取源码文件 =====
-	fmt.Println("💻 阶段 4/5：读取关键源码文件...")
-	snippets := make(map[string]string, len(analyzed.SourceFiles))
+	// ===== 阶段 4：提取源码概要 =====
+	fmt.Println("📝 阶段 4/6：提取源码文件概要...")
+	fileSummaries := make(map[string]string)
 	for i, f := range analyzed.SourceFiles {
-		printProgressWithFile(i+1, len(analyzed.SourceFiles), "读取源码", f)
-		fullPath := filepath.Join(projectDir, f)
-		content, err := readFirstNLines(fullPath, 50)
-		if err == nil {
-			snippets[f] = content
+		printProgressWithFile(i+1, len(analyzed.SourceFiles), "提取概要", f)
+		summary, extractErr := fileutil.ExtractFileSummary(filepath.Join(projectDir, f))
+		if extractErr == nil {
+			fileSummaries[f] = summary
 		}
 	}
 	clearLine()
-	fmt.Printf("   成功读取 %d 个源码文件片段\n\n", len(snippets))
+	fmt.Printf("   提取 %d 个文件概要\n\n", len(fileSummaries))
 
-	// ===== 阶段 5：调用 LLM 生成配置 =====
-	fmt.Println("🤖 阶段 5/5：调用 LLM 分析并生成配置...")
+	// ===== 阶段 5：LLM 选择重点文件 =====
+	fmt.Println("🎯 阶段 5/6：AI 分析概要，选择重点文件...")
+	selectUserMsg, err := generator.RenderTemplate(templates.InitScanSelectUser, map[string]interface{}{
+		"FileSummaries": fileSummaries,
+	})
+	if err != nil {
+		return fmt.Errorf("渲染重点文件选择模板失败: %w", err)
+	}
+
+	done2 := make(chan struct{})
+	selectStart := time.Now()
+	go spinnerAnimation(done2, selectStart, []string{"分析函数签名", "评估文件重要性", "筛选重点文件"})
+
+	selected, err := generator.SelectKeyFiles(client, templates.InitScanSelectSystem, selectUserMsg)
+	close(done2)
+	if err != nil {
+		fmt.Println()
+		fmt.Println("   ⚠ AI 选择失败，使用全部文件...")
+		maxFiles := len(analyzed.SourceFiles)
+		if maxFiles > 10 {
+			maxFiles = 10
+		}
+		selected = &generator.SelectedFiles{KeyFiles: analyzed.SourceFiles[:maxFiles]}
+	} else {
+		selectElapsed := time.Since(selectStart).Seconds()
+		fmt.Printf("\r   ✓ AI 选择完成 (耗时 %.1f 秒)\n", selectElapsed)
+	}
+	fmt.Printf("   选择 %d 个重点文件深入分析\n\n", len(selected.KeyFiles))
+
+	// ===== 阶段 6：读取重点文件 + LLM 生成配置 =====
+	fmt.Println("🤖 阶段 6/6：读取重点文件并生成配置...")
 	fmt.Println("   （此步骤可能需要 30~60 秒，请耐心等待）")
+
+	// 读取重点文件全文（最多 200 行）
+	keyFileContents := make(map[string]string)
+	for _, f := range selected.KeyFiles {
+		content, readErr := readFirstNLines(filepath.Join(projectDir, f), 200)
+		if readErr == nil {
+			keyFileContents[f] = content
+		}
+	}
+
+	// 其他文件只保留概要
+	otherSummaries := make(map[string]string)
+	keySet := make(map[string]bool)
+	for _, f := range selected.KeyFiles {
+		keySet[f] = true
+	}
+	for f, summary := range fileSummaries {
+		if !keySet[f] {
+			otherSummaries[f] = summary
+		}
+	}
 
 	// 渲染 prompt
 	userMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
-		"DirectoryTree": treeStr,
-		"ConfigFiles":   configFiles,
-		"CodeSnippets":  snippets,
+		"DirectoryTree":      treeStr,
+		"ConfigFiles":        configFiles,
+		"KeyFileContents":    keyFileContents,
+		"OtherFileSummaries": otherSummaries,
 	})
 	if err != nil {
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
 	// 启动加载动画
-	done2 := make(chan struct{})
+	done3 := make(chan struct{})
 	genStart := time.Now()
-	go spinnerAnimation(done2, genStart, []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"})
+	go spinnerAnimation(done3, genStart, []string{"分析项目结构", "识别技术栈", "生成配置文件", "校验输出格式"})
 
 	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
-	close(done2)
+	close(done3)
 	if err != nil {
 		fmt.Println()
 		return err

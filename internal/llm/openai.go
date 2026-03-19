@@ -1,164 +1,155 @@
 package llm
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
+
+	"github.com/invopop/jsonschema"
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // openaiClient 实现了兼容 OpenAI API 规范的 LLM 客户端。
 type openaiClient struct {
 	cfg    *Config
-	client *http.Client
+	client openai.Client
 }
 
-// chatRequest 是 OpenAI Chat Completions API 的请求体。
-type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
-}
-
-// chatMessage 是聊天消息，包含角色和内容。
-type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// chatResponse 是 OpenAI Chat Completions API 的响应体。
-type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content string `json:"content"`
-		} `json:"message"`
-	} `json:"choices"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error,omitempty"`
-}
-
-// newOpenAIClient 创建一个新的 OpenAI 兼容客户端，超时时间为 120 秒。
+// newOpenAIClient 创建一个新的 OpenAI 兼容客户端。
 func newOpenAIClient(cfg *Config) *openaiClient {
+	opts := []option.RequestOption{
+		option.WithAPIKey(cfg.APIKey),
+	}
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
 	return &openaiClient{
-		cfg: cfg,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		cfg:    cfg,
+		client: openai.NewClient(opts...),
 	}
 }
 
 // Generate 调用 LLM API 生成内容。
 func (c *openaiClient) Generate(req *GenerateRequest) (*GenerateResponse, error) {
-	body := chatRequest{
-		Model: c.cfg.Model,
-		Messages: []chatMessage{
-			{Role: "system", Content: req.SystemPrompt},
-			{Role: "user", Content: req.UserPrompt},
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	resp, err := c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model: shared.ChatModel(c.cfg.Model),
+		Messages: []openai.ChatCompletionMessageParamUnion{
+			openai.SystemMessage(req.SystemPrompt),
+			openai.UserMessage(req.UserPrompt),
 		},
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
-	}
-
-	url := c.cfg.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("创建 HTTP 请求失败: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(httpReq)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("调用 LLM API 失败: %w", err)
 	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LLM API 返回状态码 %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("LLM API 错误: %s", chatResp.Error.Message)
-	}
-
-	if len(chatResp.Choices) == 0 {
+	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("LLM API 未返回任何结果")
 	}
 
-	return &GenerateResponse{
-		Content: chatResp.Choices[0].Message.Content,
-	}, nil
+	return &GenerateResponse{Content: resp.Choices[0].Message.Content}, nil
 }
 
 // Chat 支持多轮对话，接受完整的消息历史。
 func (c *openaiClient) Chat(req *ChatRequest) (*ChatResponse, error) {
-	msgs := make([]chatMessage, len(req.Messages))
-	for i, m := range req.Messages {
-		msgs[i] = chatMessage{Role: m.Role, Content: m.Content}
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
 
-	body := chatRequest{
-		Model:    c.cfg.Model,
-		Messages: msgs,
-	}
-
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
-	}
-
-	url := c.cfg.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("创建 HTTP 请求失败: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{})
 	if err != nil {
 		return nil, fmt.Errorf("调用 LLM API 失败: %w", err)
 	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LLM API 返回状态码 %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	var chatResp chatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
-	}
-
-	if chatResp.Error != nil {
-		return nil, fmt.Errorf("LLM API 错误: %s", chatResp.Error.Message)
-	}
-
-	if len(chatResp.Choices) == 0 {
+	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("LLM API 未返回任何结果")
 	}
 
-	return &ChatResponse{
-		Content: chatResp.Choices[0].Message.Content,
-	}, nil
+	return &ChatResponse{Content: resp.Choices[0].Message.Content}, nil
+}
+
+// ChatStructured 使用 JSON Schema 约束模型输出，并反序列化到 out。
+func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error) {
+	if out == nil {
+		return nil, fmt.Errorf("结构化输出目标不能为空")
+	}
+
+	schema, err := generateJSONSchema(out)
+	if err != nil {
+		return nil, fmt.Errorf("生成 JSON Schema 失败: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{
+		OfJSONSchema: &shared.ResponseFormatJSONSchemaParam{
+			JSONSchema: shared.ResponseFormatJSONSchemaJSONSchemaParam{
+				Name:   schemaName,
+				Strict: openai.Bool(true),
+				Schema: schema,
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("调用结构化输出失败: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("LLM API 未返回任何结果")
+	}
+
+	content := resp.Choices[0].Message.Content
+	if err := json.Unmarshal([]byte(content), out); err != nil {
+		return nil, fmt.Errorf("解析结构化输出失败: %w", err)
+	}
+
+	return &ChatResponse{Content: content}, nil
+}
+
+func (c *openaiClient) createChatCompletion(
+	ctx context.Context,
+	req *ChatRequest,
+	responseFormat openai.ChatCompletionNewParamsResponseFormatUnion,
+) (*openai.ChatCompletion, error) {
+	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
+	for i, m := range req.Messages {
+		switch m.Role {
+		case "system":
+			msgs = append(msgs, openai.SystemMessage(m.Content))
+		case "user":
+			msgs = append(msgs, openai.UserMessage(m.Content))
+		case "assistant":
+			msgs = append(msgs, openai.AssistantMessage(m.Content))
+		default:
+			return nil, fmt.Errorf("不支持的消息角色[%d]: %s", i, m.Role)
+		}
+	}
+
+	return c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+		Model:          shared.ChatModel(c.cfg.Model),
+		Messages:       msgs,
+		ResponseFormat: responseFormat,
+	})
+}
+
+func generateJSONSchema(v any) (map[string]any, error) {
+	reflector := jsonschema.Reflector{
+		AllowAdditionalProperties: false,
+		DoNotReference:            true,
+	}
+
+	schema := reflector.Reflect(v)
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, err
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }

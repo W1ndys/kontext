@@ -10,8 +10,8 @@ import (
 )
 
 var packCmd = &cobra.Command{
-	Use:   `pack "<任务描述>"`,
-	Short: "将项目上下文打包为结构化的 Markdown Prompt 文档",
+	Use:   `pack "<任务描述/task description>"`,
+	Short: "将项目上下文打包为 Markdown Prompt 文档 / Pack project context into a structured Markdown prompt document",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		task := args[0]

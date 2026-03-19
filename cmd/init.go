@@ -15,15 +15,25 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init [描述]",
-	Short: "初始化 .kontext/ 目录（可选 AI 交互式生成）",
+	Use:   "init [描述/description]",
+	Short: "初始化 .kontext/ 目录（可选 AI 交互式生成） / Initialize .kontext/ directory (optional AI interactive generation)",
 	Long: `初始化 .kontext/ 目录并写入配置文件。
 
 无参数时写入静态模板：
   kontext init
 
 提供项目描述时启动 AI 交互式初始化：
-  kontext init "我想做一个博客系统"`,
+  kontext init "我想做一个博客系统"
+
+---
+
+Initialize the .kontext/ directory and write configuration files.
+
+Without arguments, write static templates:
+  kontext init
+
+With a project description, start AI interactive initialization:
+  kontext init "I want to build a blog system"`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) == 1 {

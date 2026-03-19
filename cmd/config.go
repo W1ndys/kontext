@@ -12,13 +12,25 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "管理全局 LLM 配置（~/.kontext/config.yaml）",
+	Short: "管理全局 LLM 配置 / Manage global LLM configuration (~/.kontext/config.yaml)",
 	Long: `管理 Kontext 的全局 LLM 配置。
 
 无参数时启动交互式配置引导：
   kontext config
 
 子命令：
+  kontext config set llm.model gpt-5.4
+  kontext config get llm.model
+  kontext config list
+
+---
+
+Manage Kontext global LLM configuration.
+
+Without arguments, start interactive configuration wizard:
+  kontext config
+
+Subcommands:
   kontext config set llm.model gpt-5.4
   kontext config get llm.model
   kontext config list`,
@@ -29,11 +41,18 @@ var configCmd = &cobra.Command{
 
 var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
-	Short: "设置配置项",
+	Short: "设置配置项 / Set a configuration value",
 	Long: `设置指定的配置项。支持的 key：
   llm.base_url   API 地址
   llm.api_key    API 密钥
-  llm.model      模型名称`,
+  llm.model      模型名称
+
+---
+
+Set a configuration value. Supported keys:
+  llm.base_url   API endpoint URL
+  llm.api_key    API key
+  llm.model      Model name`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigSet(args[0], args[1])
@@ -42,7 +61,7 @@ var configSetCmd = &cobra.Command{
 
 var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
-	Short: "获取配置项的值",
+	Short: "获取配置项的值 / Get a configuration value",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigGet(args[0])
@@ -51,7 +70,7 @@ var configGetCmd = &cobra.Command{
 
 var configListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "列出所有配置项（api_key 脱敏显示）",
+	Short: "列出所有配置项 / List all configuration values (api_key masked)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigList()
 	},

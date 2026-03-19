@@ -223,6 +223,10 @@ func runStaticInit() error {
 
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
 		fmt.Println(".kontext/ 已存在，跳过初始化。")
+		fmt.Println()
+		fmt.Println("如需重新生成，可使用以下方式（会提示是否覆盖）：")
+		fmt.Println("  kontext init \"项目描述\"  - AI 交互式生成")
+		fmt.Println("  kontext init --scan      - 自动扫描项目源码生成")
 		return nil
 	}
 

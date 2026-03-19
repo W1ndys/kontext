@@ -1,0 +1,35 @@
+请根据以下项目源码信息，生成三个 YAML 配置文件。
+
+## 项目目录树
+
+```
+{{.DirectoryTree}}
+```
+
+{{if .ConfigFiles}}
+## 依赖与配置文件
+
+{{range $path, $content := .ConfigFiles}}
+### {{$path}}
+
+```
+{{$content}}
+```
+
+{{end}}
+{{end}}
+
+{{if .CodeSnippets}}
+## 关键源码片段（每个文件前 50 行）
+
+{{range $path, $content := .CodeSnippets}}
+### {{$path}}
+
+```
+{{$content}}
+```
+
+{{end}}
+{{end}}
+
+请根据以上信息分析项目并生成配置。

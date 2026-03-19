@@ -19,3 +19,9 @@ var InitGenerateSystem string // InitGenerateSystem 是 AI 初始化生成阶段
 
 //go:embed init_generate_user.tmpl
 var InitGenerateUser string // InitGenerateUser 是 AI 初始化生成阶段的用户消息模板
+
+//go:embed init_scan_system.tmpl
+var InitScanSystem string // InitScanSystem 是扫描模式的系统提示词
+
+//go:embed init_scan_user.tmpl
+var InitScanUser string // InitScanUser 是扫描模式的用户消息模板

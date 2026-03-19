@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/w1ndys/kontext/internal/llm"
 	"go.yaml.in/yaml/v4"
@@ -63,6 +64,9 @@ func Load() (*LLMConfig, error) {
 		cfg.Model = "gpt-5.4"
 	}
 
+	// 4. 规范化 BaseURL
+	cfg.BaseURL = NormalizeBaseURL(cfg.BaseURL)
+
 	return cfg, nil
 }
 
@@ -98,4 +102,44 @@ func (c *LLMConfig) ToLLMConfig() *llm.Config {
 		APIKey:  c.APIKey,
 		Model:   c.Model,
 	}
+}
+
+// NormalizeBaseURL 规范化 API Base URL：
+// 1. 去除末尾的 /
+// 2. 如果不以 /v1 结尾，自动添加 /v1
+// 返回规范化后的 URL。
+func NormalizeBaseURL(url string) string {
+	// 去除末尾的斜杠
+	url = strings.TrimSuffix(url, "/")
+
+	// 检查是否以 /v1 结尾
+	if !strings.HasSuffix(url, "/v1") {
+		url = url + "/v1"
+	}
+
+	return url
+}
+
+// NormalizeBaseURLWithHint 规范化 API Base URL 并返回是否进行了自动修正。
+// 返回值: (规范化后的URL, 是否进行了修正, 修正说明)
+func NormalizeBaseURLWithHint(url string) (string, bool, string) {
+	original := url
+	var hints []string
+
+	// 去除末尾的斜杠
+	if strings.HasSuffix(url, "/") {
+		url = strings.TrimSuffix(url, "/")
+		hints = append(hints, "已去除末尾的 /")
+	}
+
+	// 检查是否以 /v1 结尾
+	if !strings.HasSuffix(url, "/v1") {
+		url = url + "/v1"
+		hints = append(hints, "已自动添加 /v1 后缀")
+	}
+
+	if len(hints) > 0 {
+		return url, true, strings.Join(hints, "，")
+	}
+	return original, false, ""
 }

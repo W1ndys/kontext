@@ -19,6 +19,36 @@
 {{end}}
 {{end}}
 
+{{if .KeyFileContents}}
+## 重点源码文件（完整内容）
+
+以下是 AI 识别的核心文件，包含完整实现细节：
+
+{{range $path, $content := .KeyFileContents}}
+### {{$path}}
+
+```
+{{$content}}
+```
+
+{{end}}
+{{end}}
+
+{{if .OtherFileSummaries}}
+## 其他源码文件（仅签名概要）
+
+以下是其他源码文件的概要信息（包含 import 和函数签名）：
+
+{{range $path, $summary := .OtherFileSummaries}}
+### {{$path}}
+
+```
+{{$summary}}
+```
+
+{{end}}
+{{end}}
+
 {{if .CodeSnippets}}
 ## 关键源码片段（每个文件前 50 行）
 

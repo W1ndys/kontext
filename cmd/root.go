@@ -17,6 +17,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(packCmd)
+	rootCmd.AddCommand(configCmd)
 }
 
 // Execute 是 CLI 的入口函数，由 main.go 调用。

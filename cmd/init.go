@@ -12,7 +12,10 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/templates"
 )
+
+var scanFlag bool
 
 var initCmd = &cobra.Command{
 	Use:   "init [描述/description]",
@@ -25,6 +28,9 @@ var initCmd = &cobra.Command{
 提供项目描述时启动 AI 交互式初始化：
   kontext init "我想做一个博客系统"
 
+自动扫描项目源码并生成：
+  kontext init --scan
+
 ---
 
 Initialize the .kontext/ directory and write configuration files.
@@ -33,14 +39,24 @@ Without arguments, write static templates:
   kontext init
 
 With a project description, start AI interactive initialization:
-  kontext init "I want to build a blog system"`,
+  kontext init "I want to build a blog system"
+
+Auto-scan project source code and generate:
+  kontext init --scan`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if scanFlag {
+			return runScanInit()
+		}
 		if len(args) == 1 {
 			return runAIInit(args[0])
 		}
 		return runStaticInit()
 	},
+}
+
+func init() {
+	initCmd.Flags().BoolVar(&scanFlag, "scan", false, "自动扫描项目源码生成配置 / Auto-scan project source code to generate config")
 }
 
 // runAIInit 启动 AI 交互式初始化流程。
@@ -82,6 +98,123 @@ func runAIInit(description string) error {
 	fmt.Println("正在分析项目需求...")
 
 	return generator.RunInteractiveInit(client, description)
+}
+
+// runScanInit 自动扫描项目源码并调用 LLM 生成 .kontext 配置。
+func runScanInit() error {
+	kontextDir := ".kontext"
+
+	// 检查是否已存在
+	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		fmt.Print(".kontext/ 已存在，是否覆盖？[y/N] ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("已取消。")
+				return nil
+			}
+		} else {
+			return nil
+		}
+	}
+
+	// 加载 LLM 配置
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("读取 LLM 配置失败: %w", err)
+	}
+	if cfg.APIKey == "" {
+		return fmt.Errorf("扫描模式需要配置 API Key\n\n方式一：运行 kontext config 进行交互式配置\n方式二：设置环境变量 export KONTEXT_LLM_API_KEY=your-api-key")
+	}
+
+	llmCfg := cfg.ToLLMConfig()
+	client, err := llm.NewClient(llmCfg)
+	if err != nil {
+		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
+	}
+
+	fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
+	fmt.Println("正在扫描项目源码...")
+
+	// 1. 扫描目录树
+	projectDir := "."
+	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
+	if err != nil {
+		return fmt.Errorf("扫描项目目录失败: %w", err)
+	}
+	fmt.Printf("  发现 %d 个文件\n", len(allFiles))
+
+	// 2. 识别并读取依赖/配置文件
+	configFileNames := map[string]bool{
+		"go.mod": true, "go.sum": false, "package.json": true, "tsconfig.json": true,
+		"Cargo.toml": true, "pyproject.toml": true, "requirements.txt": true,
+		"pom.xml": true, "build.gradle": true, "build.gradle.kts": true,
+		"Makefile": true, "Dockerfile": true, "docker-compose.yml": true,
+		"docker-compose.yaml": true, ".gitignore": true, "CMakeLists.txt": true,
+	}
+	configFiles := make(map[string]string)
+	for _, f := range allFiles {
+		base := filepath.Base(f)
+		if configFileNames[base] {
+			fullPath := filepath.Join(projectDir, f)
+			data, readErr := os.ReadFile(fullPath)
+			if readErr == nil {
+				configFiles[f] = string(data)
+			}
+		}
+	}
+	fmt.Printf("  识别到 %d 个配置/依赖文件\n", len(configFiles))
+
+	// 3. 筛选关键源码文件并读取代码片段
+	var sourceFiles []string
+	for _, f := range allFiles {
+		if _, isConfig := configFiles[f]; isConfig {
+			continue
+		}
+		if isSourceFile(f) {
+			sourceFiles = append(sourceFiles, f)
+		}
+	}
+	if len(sourceFiles) > 30 {
+		sourceFiles = sourceFiles[:30]
+	}
+	snippets := fileutil.ReadCodeSnippets(projectDir, sourceFiles, 50)
+	fmt.Printf("  读取 %d 个源码文件片段\n", len(snippets))
+
+	// 4. 渲染 prompt
+	treeStr := strings.Join(allFiles, "\n")
+	userMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
+		"DirectoryTree": treeStr,
+		"ConfigFiles":   configFiles,
+		"CodeSnippets":  snippets,
+	})
+	if err != nil {
+		return fmt.Errorf("渲染扫描模板失败: %w", err)
+	}
+
+	// 5. 调用 LLM 生成
+	fmt.Println("正在分析项目并生成配置...")
+	generated, err := generator.GenerateStructuredYAML(client, templates.InitScanSystem, userMsg)
+	if err != nil {
+		return err
+	}
+
+	// 6. 校验并写入
+	return generator.WriteGeneratedYAML(generated)
+}
+
+// isSourceFile 判断文件是否为源码文件。
+func isSourceFile(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	sourceExts := map[string]bool{
+		".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
+		".java": true, ".kt": true, ".rs": true, ".c": true, ".cpp": true, ".h": true,
+		".cs": true, ".rb": true, ".php": true, ".swift": true, ".m": true,
+		".scala": true, ".dart": true, ".lua": true, ".sh": true, ".bash": true,
+		".vue": true, ".svelte": true,
+	}
+	return sourceExts[ext]
 }
 
 // runStaticInit 执行原有的静态模板初始化。

@@ -134,6 +134,25 @@ func (c *openaiClient) createChatCompletion(
 	})
 }
 
+// ListModels 获取可用的模型列表。
+func (c *openaiClient) ListModels() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp := c.client.Models.ListAutoPaging(ctx)
+
+	var models []string
+	for resp.Next() {
+		model := resp.Current()
+		models = append(models, model.ID)
+	}
+	if err := resp.Err(); err != nil {
+		return nil, fmt.Errorf("获取模型列表失败: %w", err)
+	}
+
+	return models, nil
+}
+
 func generateJSONSchema(v any) (map[string]any, error) {
 	reflector := jsonschema.Reflector{
 		AllowAdditionalProperties: false,

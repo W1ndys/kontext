@@ -60,4 +60,5 @@ type Client interface {
 	Generate(req *GenerateRequest) (*GenerateResponse, error)
 	Chat(req *ChatRequest) (*ChatResponse, error)
 	ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error)
+	ListModels() ([]string, error)
 }

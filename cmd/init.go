@@ -1,63 +1,124 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/fileutil"
+	"github.com/w1ndys/kontext/internal/generator"
+	"github.com/w1ndys/kontext/internal/llm"
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "初始化 .kontext/ 目录并写入默认模板",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		kontextDir := ".kontext"
+	Use:   "init [描述]",
+	Short: "初始化 .kontext/ 目录（可选 AI 交互式生成）",
+	Long: `初始化 .kontext/ 目录并写入配置文件。
 
-		if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
-			fmt.Println(".kontext/ 已存在，跳过初始化。")
+无参数时写入静态模板：
+  kontext init
+
+提供项目描述时启动 AI 交互式初始化：
+  kontext init "我想做一个博客系统"`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 1 {
+			return runAIInit(args[0])
+		}
+		return runStaticInit()
+	},
+}
+
+// runAIInit 启动 AI 交互式初始化流程。
+func runAIInit(description string) error {
+	kontextDir := ".kontext"
+
+	// 检查是否已存在
+	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		fmt.Print(".kontext/ 已存在，是否覆盖？[y/N] ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+			if answer != "y" && answer != "yes" {
+				fmt.Println("已取消。")
+				return nil
+			}
+		} else {
 			return nil
 		}
+	}
 
-		// 创建目录结构
-		dirs := []string{
-			kontextDir,
-			filepath.Join(kontextDir, "module_contracts"),
-			filepath.Join(kontextDir, "prompts"),
-		}
-		for _, d := range dirs {
-			if err := fileutil.EnsureDir(d); err != nil {
-				return fmt.Errorf("创建目录 %s 失败: %w", d, err)
-			}
-		}
+	// 加载 LLM 配置
+	cfg, err := llm.ConfigFromEnv()
+	if err != nil {
+		return fmt.Errorf("读取 LLM 配置失败: %w", err)
+	}
 
-		// 写入默认模板文件
-		templates := map[string]string{
-			filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): defaultManifest,
-			filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): defaultArchitecture,
-			filepath.Join(kontextDir, "CONVENTIONS.yaml"):      defaultConventions,
-		}
+	if cfg.APIKey == "" {
+		return fmt.Errorf("AI 交互式初始化需要设置环境变量 KONTEXT_LLM_API_KEY\n\n示例：\n  export KONTEXT_LLM_API_KEY=your-api-key\n  export KONTEXT_LLM_BASE_URL=https://api.openai.com/v1  # 可选\n  export KONTEXT_LLM_MODEL=gpt-4o                        # 可选")
+	}
 
-		for path, content := range templates {
-			if fileutil.FileExists(path) {
-				fmt.Printf("  跳过: %s (已存在)\n", path)
-				continue
-			}
-			if err := fileutil.WriteFile(path, []byte(content)); err != nil {
-				return fmt.Errorf("写入 %s 失败: %w", path, err)
-			}
-			fmt.Printf("  已创建: %s\n", path)
-		}
+	client, err := llm.NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
+	}
 
-		fmt.Println("\n.kontext/ 初始化完成！")
-		fmt.Println("后续步骤：")
-		fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.yaml 填写项目信息")
-		fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.yaml 填写架构信息")
-		fmt.Println("  3. 编辑 .kontext/CONVENTIONS.yaml 填写编码规范")
-		fmt.Println("  4. 运行 'kontext validate' 校验配置是否正确")
+	fmt.Printf("使用 LLM: %s (模型: %s)\n", cfg.BaseURL, cfg.Model)
+	fmt.Println("正在分析项目需求...")
 
+	return generator.RunInteractiveInit(client, description)
+}
+
+// runStaticInit 执行原有的静态模板初始化。
+func runStaticInit() error {
+	kontextDir := ".kontext"
+
+	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		fmt.Println(".kontext/ 已存在，跳过初始化。")
 		return nil
-	},
+	}
+
+	// 创建目录结构
+	dirs := []string{
+		kontextDir,
+		filepath.Join(kontextDir, "module_contracts"),
+		filepath.Join(kontextDir, "prompts"),
+	}
+	for _, d := range dirs {
+		if err := fileutil.EnsureDir(d); err != nil {
+			return fmt.Errorf("创建目录 %s 失败: %w", d, err)
+		}
+	}
+
+	// 写入默认模板文件
+	templateFiles := map[string]string{
+		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): defaultManifest,
+		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): defaultArchitecture,
+		filepath.Join(kontextDir, "CONVENTIONS.yaml"):      defaultConventions,
+	}
+
+	for path, content := range templateFiles {
+		if fileutil.FileExists(path) {
+			fmt.Printf("  跳过: %s (已存在)\n", path)
+			continue
+		}
+		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+			return fmt.Errorf("写入 %s 失败: %w", path, err)
+		}
+		fmt.Printf("  已创建: %s\n", path)
+	}
+
+	fmt.Println("\n.kontext/ 初始化完成！")
+	fmt.Println("后续步骤：")
+	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.yaml 填写项目信息")
+	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.yaml 填写架构信息")
+	fmt.Println("  3. 编辑 .kontext/CONVENTIONS.yaml 填写编码规范")
+	fmt.Println("  4. 运行 'kontext validate' 校验配置是否正确")
+
+	return nil
 }
 
 const defaultManifest = `# .kontext/PROJECT_MANIFEST.yaml

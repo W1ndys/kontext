@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -74,17 +75,28 @@ func SaveStageResult(stage int, data interface{}) error {
 		return fmt.Errorf("序列化阶段 %d 结果失败: %w", stage, err)
 	}
 
-	filename := fmt.Sprintf("stage%d_result.json", stage)
-	path := filepath.Join(CacheDir, filename)
+	path := stageResultPath(stage)
+	return os.WriteFile(path, jsonData, 0644)
+}
+
+// SaveStageResultPart 保存某个阶段的附属结果到缓存文件。
+func SaveStageResultPart(stage int, part int, data interface{}) error {
+	if err := ensureCacheDir(); err != nil {
+		return err
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化阶段 %d-%d 结果失败: %w", stage, part, err)
+	}
+
+	path := stageResultPath(stage, part)
 	return os.WriteFile(path, jsonData, 0644)
 }
 
 // LoadStageResult 从缓存文件加载某个阶段的结果。
 func LoadStageResult(stage int, out interface{}) error {
-	filename := fmt.Sprintf("stage%d_result.json", stage)
-	path := filepath.Join(CacheDir, filename)
-
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(stageResultPath(stage))
 	if err != nil {
 		return fmt.Errorf("读取阶段 %d 缓存失败: %w", stage, err)
 	}
@@ -94,6 +106,29 @@ func LoadStageResult(stage int, out interface{}) error {
 	}
 
 	return nil
+}
+
+// LoadStageResultPart 从缓存文件加载某个阶段的附属结果。
+func LoadStageResultPart(stage int, part int, out interface{}) error {
+	data, err := os.ReadFile(stageResultPath(stage, part))
+	if err != nil {
+		return fmt.Errorf("读取阶段 %d-%d 缓存失败: %w", stage, part, err)
+	}
+
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("反序列化阶段 %d-%d 结果失败: %w", stage, part, err)
+	}
+
+	return nil
+}
+
+func stageResultPath(parts ...int) string {
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		segments = append(segments, fmt.Sprintf("%d", part))
+	}
+	filename := fmt.Sprintf("stage-%s_result.json", strings.Join(segments, "-"))
+	return filepath.Join(CacheDir, filename)
 }
 
 // IsCheckpointValid 检查缓存是否有效。

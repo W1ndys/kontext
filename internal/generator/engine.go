@@ -3,6 +3,7 @@ package generator
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -315,6 +316,55 @@ func SelectKeyFiles(client llm.Client, systemPrompt, userMsg string) (*SelectedF
 	return result, nil
 }
 
+// GenerateDependencyGraph 生成模块依赖关系图。
+func GenerateDependencyGraph(client llm.Client, systemPrompt, userMsg string) (*ModuleDependencyGraph, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	// 优先尝试结构化输出
+	var structured ModuleDependencyGraph
+	if _, err := client.ChatStructured(req, "module_dependency_graph", &structured); err == nil {
+		return &structured, nil
+	}
+
+	// 回退到传统 JSON 解析
+	resp, err := client.Chat(req)
+	if err != nil {
+		return nil, fmt.Errorf("调用 LLM 生成依赖图失败：%w", err)
+	}
+
+	result, err := ParseModuleDependencyGraph(resp.Content)
+	if err != nil {
+		return nil, fmt.Errorf("解析 LLM 依赖图结果失败：%w", err)
+	}
+
+	return result, nil
+}
+
+// ParseModuleDependencyGraph 解析模块依赖关系图的 JSON 响应。
+func ParseModuleDependencyGraph(content string) (*ModuleDependencyGraph, error) {
+	content = strings.TrimSpace(content)
+
+	// 尝试提取 JSON（去除 markdown 代码块）
+	if strings.HasPrefix(content, "```") {
+		re := regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.+?)\\n```")
+		if matches := re.FindStringSubmatch(content); len(matches) >= 2 {
+			content = strings.TrimSpace(matches[1])
+		}
+	}
+
+	var graph ModuleDependencyGraph
+	if err := json.Unmarshal([]byte(content), &graph); err != nil {
+		return nil, fmt.Errorf("解析 JSON 失败：%w", err)
+	}
+
+	return &graph, nil
+}
+
 func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{
@@ -510,6 +560,39 @@ func extractYAMLFromResponse(content string) string {
 	return ""
 }
 
+// FilterFilesByModule 筛选属于指定模块的文件。
+func FilterFilesByModule(files map[string]string, moduleName string) map[string]string {
+	result := make(map[string]string)
+	for path, content := range files {
+		if BelongsToModule(path, moduleName) {
+			result[path] = content
+		}
+	}
+	return result
+}
+
+// BelongsToModule 判断文件路径是否属于指定模块。
+func BelongsToModule(filePath, moduleName string) bool {
+	normalized := filepath.ToSlash(filePath)
+	parts := strings.Split(normalized, "/")
+
+	if len(parts) == 0 {
+		return false
+	}
+
+	// cmd/xxx.go → 属于 cmd 模块
+	if parts[0] == moduleName {
+		return true
+	}
+
+	// internal/config/xxx.go → 属于 config 模块
+	if len(parts) >= 2 && (parts[0] == "internal" || parts[0] == "pkg") {
+		return parts[1] == moduleName
+	}
+
+	return false
+}
+
 // ModuleContractResult 是并行生成模块契约的单个结果。
 type ModuleContractResult struct {
 	ModuleName string
@@ -557,6 +640,7 @@ func GenerateModuleContracts(
 				mu.Lock()
 				errors = append(errors, result.Error)
 				mu.Unlock()
+				// 在锁外面回调，避免死锁
 				if onProgress != nil {
 					onProgress(result)
 				}
@@ -565,29 +649,32 @@ func GenerateModuleContracts(
 
 			contract, err := GenerateModuleContract(client, systemPrompt, userMsg, moduleName)
 
-			mu.Lock()
 			elapsed := time.Since(startTime).Seconds()
+			var progressResult ModuleContractResult
+
+			mu.Lock()
 			if err != nil {
 				errors = append(errors, fmt.Errorf("模块 %s: %w", moduleName, err))
-				if onProgress != nil {
-					onProgress(ModuleContractResult{
-						ModuleName: moduleName,
-						Error:      err,
-						Duration:   elapsed,
-					})
+				progressResult = ModuleContractResult{
+					ModuleName: moduleName,
+					Error:      err,
+					Duration:   elapsed,
 				}
 			} else {
 				// 使用传入的模块名作为 key，确保一致性
 				results[moduleName] = contract.Content
-				if onProgress != nil {
-					onProgress(ModuleContractResult{
-						ModuleName: moduleName,
-						Content:    contract.Content,
-						Duration:   elapsed,
-					})
+				progressResult = ModuleContractResult{
+					ModuleName: moduleName,
+					Content:    contract.Content,
+					Duration:   elapsed,
 				}
 			}
 			mu.Unlock()
+
+			// 在锁外面回调，避免死锁
+			if onProgress != nil {
+				onProgress(progressResult)
+			}
 		}(mod)
 	}
 

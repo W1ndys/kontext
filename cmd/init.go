@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/templates"
+	"go.yaml.in/yaml/v4"
 )
 
 var (
@@ -174,7 +177,7 @@ func runScanInit() error {
 	totalStart := time.Now()
 
 	// ===== 阶段 1：扫描目录树 =====
-	fmt.Println("📁 阶段 1/8：扫描项目目录...")
+	fmt.Println("📁 阶段 1/9：扫描项目目录...")
 	projectDir := "."
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, 5)
 	if err != nil {
@@ -184,7 +187,7 @@ func runScanInit() error {
 	fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
 
 	// ===== 阶段 2：LLM 智能识别关键文件 =====
-	fmt.Println("🧠 阶段 2/8：AI 分析目录结构，识别关键文件...")
+	fmt.Println("🧠 阶段 2/9：AI 分析目录结构，识别关键文件...")
 
 	treeStr := strings.Join(allFiles, "\n")
 	analyzeUserMsg, err := generator.RenderTemplate(templates.InitScanAnalyzeUser, map[string]interface{}{
@@ -216,7 +219,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 3：读取配置/依赖文件 =====
-	fmt.Println("📄 阶段 3/8：读取配置/依赖文件...")
+	fmt.Println("📄 阶段 3/9：读取配置/依赖文件...")
 	configFiles := make(map[string]string)
 	var readConfigFiles []string
 	for i, f := range analyzed.ConfigFiles {
@@ -234,7 +237,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 4：提取源码概要 =====
-	fmt.Println("📝 阶段 4/8：提取源码文件概要...")
+	fmt.Println("📝 阶段 4/9：提取源码文件概要...")
 	fileSummaries := make(map[string]string)
 	var extractedFiles []string
 	for i, f := range analyzed.SourceFiles {
@@ -251,7 +254,7 @@ func runScanInit() error {
 	fmt.Println()
 
 	// ===== 阶段 5：LLM 选择重点文件 =====
-	fmt.Println("🎯 阶段 5/8：AI 分析概要，选择重点文件...")
+	fmt.Println("🎯 阶段 5/9：AI 分析概要，选择重点文件...")
 	selectUserMsg, err := generator.RenderTemplate(templates.InitScanSelectUser, map[string]interface{}{
 		"FileSummaries": fileSummaries,
 	})
@@ -327,8 +330,8 @@ func runScanInit() error {
 		}
 	}
 
-	// ===== 阶段 6/8：生成项目清单 (PROJECT_MANIFEST) =====
-	fmt.Println("🤖 阶段 6/8：生成项目清单...")
+	// ===== 阶段 6/9：生成项目清单 (PROJECT_MANIFEST) =====
+	fmt.Println("🤖 阶段 6/9：生成项目清单...")
 	manifestStart := time.Now()
 
 	done3 := make(chan struct{})
@@ -357,8 +360,8 @@ func runScanInit() error {
 	manifestElapsed := time.Since(manifestStart).Seconds()
 	fmt.Printf("\r   ✓ PROJECT_MANIFEST.yaml (%.1f 秒)\n\n", manifestElapsed)
 
-	// ===== 阶段 7/8：并行生成架构与规范 =====
-	fmt.Println("🏗️  阶段 7/8：生成架构与规范... (并行)")
+	// ===== 阶段 7/9：并行生成架构与规范 =====
+	fmt.Println("🏗️  阶段 7/9：生成架构与规范... (并行)")
 
 	// 构建包含 manifest 作为上下文的用户消息，明确指定只生成单个文件
 	archUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 ARCHITECTURE_MAP.yaml 文件的内容。不要生成其他文件。", manifestContent)
@@ -421,27 +424,98 @@ func runScanInit() error {
 	}
 	fmt.Printf("   ✓ CONVENTIONS.yaml (%.1f 秒)\n\n", convElapsed)
 
-	// ===== 阶段 8/8：并行生成模块契约 =====
+	// ===== 阶段 8/9：生成模块依赖关系图 =====
 	// 从 ARCHITECTURE_MAP 中提取模块列表
 	modules := extractModulesFromArch(archContent, allFiles)
+	var depGraphJSON string
 	if len(modules) == 0 {
-		fmt.Println("📦 阶段 8/8：未检测到模块，跳过模块契约生成")
+		fmt.Println("🔗 阶段 8/9：未检测到模块，跳过依赖关系图生成")
 	} else {
-		fmt.Printf("📦 阶段 8/8：生成模块契约... (%d 个模块并行)\n", len(modules))
+		fmt.Printf("🔗 阶段 8/9：生成模块依赖关系图... (%d 个模块)\n", len(modules))
+
+		// 构建依赖图生成的用户消息
+		depGraphUserMsg := baseUserMsg + fmt.Sprintf(
+			"\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请为以下模块生成依赖关系图：%v",
+			archContent, modules,
+		)
+
+		done6 := make(chan struct{})
+		depGraphStart := time.Now()
+		go spinnerAnimation(done6, depGraphStart, []string{"分析模块依赖", "构建依赖关系图"})
+
+		depGraph, depErr := generator.GenerateDependencyGraph(client, templates.InitScanDepgraphSystem, depGraphUserMsg)
+		close(done6)
+
+		if depErr != nil {
+			fmt.Println()
+			fmt.Printf("   ⚠ 依赖关系图生成失败: %v\n", depErr)
+			fmt.Println("   将跳过依赖关系约束，继续生成模块契约...")
+		} else {
+			depGraphElapsed := time.Since(depGraphStart).Seconds()
+			fmt.Printf("\r   ✓ 识别 %d 个模块的依赖关系 (%.1f 秒)\n", len(depGraph.Modules), depGraphElapsed)
+
+			// 将依赖图转换为 JSON 字符串，作为模块契约生成的上下文
+			depGraphBytes, _ := json.MarshalIndent(depGraph, "", "  ")
+			depGraphJSON = string(depGraphBytes)
+		}
+		fmt.Println()
+	}
+
+	// ===== 阶段 9/9：并行生成模块契约 =====
+	if len(modules) == 0 {
+		fmt.Println("📦 阶段 9/9：未检测到模块，跳过模块契约生成")
+	} else {
+		fmt.Printf("📦 阶段 9/9：生成模块契约... (%d 个模块并行)\n", len(modules))
 
 		contractContext := fmt.Sprintf(
 			"\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```",
 			manifestContent, archContent,
 		)
 
-		// 用于生成各模块用户消息的函数
-		userMsgGenerator := func(moduleName string) (string, error) {
-			return baseUserMsg + contractContext + fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.yaml 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
+		// 如果有依赖图，添加到上下文中
+		if depGraphJSON != "" {
+			contractContext += fmt.Sprintf(
+				"\n\n## 模块依赖关系图（必须遵守）\n\n```json\n%s\n```\n\n请确保生成的 CONTRACT 中的 depends_on 与上述依赖图保持一致。",
+				depGraphJSON,
+			)
 		}
 
-		done5 := make(chan struct{})
+		// 用于生成各模块用户消息的函数（只包含该模块的源码，而非全部源码）
+		userMsgGenerator := func(moduleName string) (string, error) {
+			// 筛选该模块的文件
+			moduleKeyFiles := generator.FilterFilesByModule(keyFileContents, moduleName)
+			moduleSummaries := generator.FilterFilesByModule(otherSummaries, moduleName)
+
+			// 用精简数据构建用户消息
+			moduleUserMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
+				"DirectoryTree":      treeStr,        // 目录树保留（较小）
+				"ConfigFiles":        configFiles,     // 配置文件保留
+				"KeyFileContents":    moduleKeyFiles,  // 只包含该模块的源码
+				"OtherFileSummaries": moduleSummaries, // 只包含该模块的概要
+			})
+			if err != nil {
+				return "", err
+			}
+
+			return moduleUserMsg + contractContext +
+				fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.yaml 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
+		}
+
+		// 使用 mutex 保护控制台输出，实现即时反馈
+		var printMu sync.Mutex
+
+		onProgress := func(result generator.ModuleContractResult) {
+			printMu.Lock()
+			defer printMu.Unlock()
+
+			if result.Error != nil {
+				fmt.Printf("   ✗ %s_CONTRACT.yaml 失败: %v\n", result.ModuleName, result.Error)
+			} else {
+				fmt.Printf("   ✓ %s_CONTRACT.yaml (%.1f 秒)\n", result.ModuleName, result.Duration)
+			}
+		}
+
 		step8Start := time.Now()
-		go spinnerAnimation(done5, step8Start, []string{"生成模块契约"})
 
 		contracts, contractErrors := generator.GenerateModuleContracts(
 			client,
@@ -449,11 +523,10 @@ func runScanInit() error {
 			modules,
 			userMsgGenerator,
 			3, // 最大并发数
-			nil,
+			onProgress,
 		)
-		close(done5)
 
-		// 打印每个模块的结果
+		// 校验并写入成功的模块契约文件
 		for _, mod := range modules {
 			if content, ok := contracts[mod]; ok {
 				// 校验并写入
@@ -467,16 +540,55 @@ func runScanInit() error {
 					fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filename, writeErr)
 					continue
 				}
-				fmt.Printf("   ✓ %s_CONTRACT.yaml\n", mod)
 			}
 		}
 
+		// 对失败的模块进行二次重试
 		if len(contractErrors) > 0 {
-			fmt.Printf("   ⚠ %d 个模块契约生成失败\n", len(contractErrors))
-			for _, e := range contractErrors {
-				fmt.Printf("      - %v\n", e)
+			failedModules := extractFailedModuleNames(contractErrors)
+			fmt.Printf("\n   ⚠ %d 个模块失败，正在重试...\n", len(failedModules))
+
+			retryContracts, retryErrors := generator.GenerateModuleContracts(
+				client,
+				templates.InitScanContractSystem,
+				failedModules,
+				userMsgGenerator,
+				2, // 重试时降低并发数
+				onProgress,
+			)
+
+			// 合并重试成功的结果
+			for mod, content := range retryContracts {
+				contracts[mod] = content
+			}
+
+			// 校验并写入重试成功的文件
+			for _, mod := range failedModules {
+				if content, ok := retryContracts[mod]; ok {
+					if valErr := generator.ValidateYAML(content); valErr != nil {
+						fmt.Printf("   ⚠ %s_CONTRACT.yaml 不合法，跳过\n", mod)
+						continue
+					}
+					filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
+					path := filepath.Join(kontextDir, "module_contracts", filename)
+					if writeErr := fileutil.WriteFile(path, []byte(content)); writeErr != nil {
+						fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filename, writeErr)
+						continue
+					}
+				}
+			}
+
+			// 最终仍然失败的模块
+			if len(retryErrors) > 0 {
+				fmt.Printf("   ⚠ %d 个模块最终生成失败\n", len(retryErrors))
+				for _, e := range retryErrors {
+					fmt.Printf("      - %v\n", e)
+				}
 			}
 		}
+
+		step8Elapsed := time.Since(step8Start).Seconds()
+		fmt.Printf("\n   模块契约生成完成 (%.1f 秒)\n", step8Elapsed)
 	}
 
 	totalElapsed := time.Since(totalStart).Seconds()
@@ -501,9 +613,73 @@ func runScanInit() error {
 	return nil
 }
 
-// extractModulesFromArch 从 ARCHITECTURE_MAP 的 YAML 内容和文件列表中提取模块名列表。
+// archLayer 定义 ARCHITECTURE_MAP 中的层级结构
+type archLayer struct {
+	Name     string   `yaml:"name"`
+	Packages []string `yaml:"packages"`
+}
+
+// archMap 定义 ARCHITECTURE_MAP 的解析结构
+type archMap struct {
+	Layers []archLayer `yaml:"layers"`
+}
+
+// extractModulesFromArch 从 ARCHITECTURE_MAP 的 YAML 内容中解析模块列表。
+// 优先解析 ARCHITECTURE_MAP 的 layers.packages，解析失败时回退到目录规则扫描。
 func extractModulesFromArch(archContent string, allFiles []string) []string {
-	// 从文件列表中提取顶层目录和 internal/ 下的子目录作为模块
+	// 优先从 ARCHITECTURE_MAP 解析
+	var arch archMap
+	if err := yaml.Unmarshal([]byte(archContent), &arch); err == nil && len(arch.Layers) > 0 {
+		moduleSet := make(map[string]bool)
+		for _, layer := range arch.Layers {
+			for _, pkg := range layer.Packages {
+				// "internal/config" → "config"
+				// "cmd" → "cmd"
+				// "templates" → "templates"
+				name := normalizeModuleName(pkg)
+				if name != "" {
+					moduleSet[name] = true
+				}
+			}
+		}
+
+		if len(moduleSet) > 0 {
+			var modules []string
+			for mod := range moduleSet {
+				modules = append(modules, mod)
+			}
+			sort.Strings(modules)
+			return modules
+		}
+	}
+
+	// 解析失败时回退到目录规则扫描
+	return fallbackExtractModules(allFiles)
+}
+
+// normalizeModuleName 将包路径规范化为模块名。
+// "internal/config" → "config"
+// "cmd" → "cmd"
+// "pkg/utils" → "utils"
+func normalizeModuleName(pkg string) string {
+	pkg = strings.TrimSpace(pkg)
+	pkg = filepath.ToSlash(pkg)
+	parts := strings.Split(pkg, "/")
+
+	// 排除无意义的目录
+	excluded := map[string]bool{"testdata": true, "vendor": true}
+
+	// 取最后一级有意义的名称
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] != "" && !excluded[parts[i]] {
+			return parts[i]
+		}
+	}
+	return ""
+}
+
+// fallbackExtractModules 使用目录规则扫描提取模块列表（作为回退方案）。
+func fallbackExtractModules(allFiles []string) []string {
 	moduleSet := make(map[string]bool)
 
 	for _, f := range allFiles {
@@ -541,8 +717,25 @@ func extractModulesFromArch(archContent string, allFiles []string) []string {
 	for mod := range moduleSet {
 		modules = append(modules, mod)
 	}
+	sort.Strings(modules)
 
 	return modules
+}
+
+// extractFailedModuleNames 从错误列表中提取失败的模块名。
+func extractFailedModuleNames(errors []error) []string {
+	var names []string
+	for _, e := range errors {
+		// 错误格式: "模块 xxx: ..."
+		msg := e.Error()
+		if strings.HasPrefix(msg, "模块 ") {
+			parts := strings.SplitN(msg[len("模块 "):], ":", 2)
+			if len(parts) > 0 {
+				names = append(names, strings.TrimSpace(parts[0]))
+			}
+		}
+	}
+	return names
 }
 
 // spinnerAnimation 显示旋转加载动画，phases 为轮换展示的阶段文案。

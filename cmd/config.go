@@ -133,11 +133,21 @@ func runInteractiveConfig() error {
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
 			fmt.Printf("  ✗ 创建客户端失败: %v\n", err)
+			// 允许手动输入模型名称
+			fmt.Printf("模型名称 [%s]: ", cfg.Model)
+			if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+				cfg.Model = strings.TrimSpace(input)
+			}
 		} else {
 			models, err := client.ListModels()
 			if err != nil {
-				fmt.Printf("  ✗ API Key 验证失败: %v\n", err)
+				fmt.Printf("  ✗ 获取模型列表失败: %v\n", err)
 				fmt.Println("  提示: 请检查 API Key 是否正确，或者 API 地址是否可访问")
+				// 获取模型列表失败时，允许手动输入模型名称
+				fmt.Printf("模型名称 [%s]: ", cfg.Model)
+				if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+					cfg.Model = strings.TrimSpace(input)
+				}
 			} else {
 				fmt.Printf("  ✓ API Key 验证成功！发现 %d 个可用模型\n\n", len(models))
 
@@ -149,6 +159,13 @@ func runInteractiveConfig() error {
 					selected, err := runModelSelector(models, cfg.Model)
 					if err != nil {
 						fmt.Printf("  模型选择器出错: %v，将使用当前模型 %s\n", err, cfg.Model)
+					} else if selected == manualInputModelName {
+						// 用户选择手动输入
+						fmt.Printf("请输入模型名称 [%s]: ", cfg.Model)
+						if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
+							cfg.Model = strings.TrimSpace(input)
+						}
+						fmt.Printf("  已设置模型: %s\n", cfg.Model)
 					} else if selected != "" {
 						cfg.Model = selected
 						fmt.Printf("  已选择: %s\n", cfg.Model)
@@ -270,20 +287,32 @@ func maskKey(key string) string {
 
 // ===== Bubble Tea 模型选择器 =====
 
+// manualInputModelName 是手动输入选项的特殊标记。
+const manualInputModelName = "__manual_input__"
+
 // modelItem 实现 list.Item 接口
 type modelItem struct {
 	name      string
 	isCurrent bool
+	isManual  bool // 是否为"手动输入"选项
 }
 
 func (i modelItem) Title() string {
+	if i.isManual {
+		return "✏️  手动输入模型名称..."
+	}
 	if i.isCurrent {
 		return i.name + " (当前)"
 	}
 	return i.name
 }
 func (i modelItem) Description() string { return "" }
-func (i modelItem) FilterValue() string { return i.name }
+func (i modelItem) FilterValue() string {
+	if i.isManual {
+		return "手动输入 manual input"
+	}
+	return i.name
+}
 
 // modelSelector 是 Bubble Tea 的 Model
 type modelSelector struct {
@@ -331,8 +360,10 @@ var listTitleStyle = lipgloss.NewStyle().MarginLeft(2).Bold(true)
 
 // runModelSelector 启动交互式模型选择器，返回选中的模型名。
 // 如果用户按 ESC/q 取消则返回空字符串。
+// 如果用户选择手动输入则返回 manualInputModelName。
 func runModelSelector(models []string, currentModel string) (string, error) {
-	items := make([]list.Item, len(models))
+	// +1 是为了末尾的"手动输入"选项
+	items := make([]list.Item, len(models)+1)
 
 	// 找到当前模型并置顶
 	currentIdx := -1
@@ -355,6 +386,9 @@ func runModelSelector(models []string, currentModel string) (string, error) {
 		items[idx] = modelItem{name: m, isCurrent: false}
 		idx++
 	}
+
+	// 在末尾添加"手动输入"选项
+	items[idx] = modelItem{name: manualInputModelName, isManual: true}
 
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = false

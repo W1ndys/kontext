@@ -2,6 +2,7 @@ package packer
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/w1ndys/kontext/internal/schema"
@@ -76,6 +77,18 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 		data.Contracts = strings.Join(parts, "\n\n")
 	}
 
+	if len(ctx.RelevantFiles) > 0 {
+		var parts []string
+		for _, file := range ctx.RelevantFiles {
+			line := fmt.Sprintf("- `%s` [%s]: %s", file.Path, strings.ToUpper(file.Relevance), file.Reason)
+			parts = append(parts, line)
+			if len(file.FocusAreas) > 0 {
+				parts = append(parts, fmt.Sprintf("  - focus: %s", strings.Join(file.FocusAreas, ", ")))
+			}
+		}
+		data.RelevantFiles = strings.Join(parts, "\n")
+	}
+
 	// 目录树
 	if len(ctx.DirectoryTree) > 0 {
 		data.DirectoryTree = strings.Join(ctx.DirectoryTree, "\n")
@@ -84,7 +97,13 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 	// 相关代码
 	if len(ctx.CodeSnippets) > 0 {
 		var parts []string
-		for path, content := range ctx.CodeSnippets {
+		paths := make([]string, 0, len(ctx.CodeSnippets))
+		for path := range ctx.CodeSnippets {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		for _, path := range paths {
+			content := ctx.CodeSnippets[path]
 			parts = append(parts, fmt.Sprintf("### `%s`\n```go\n%s\n```", path, content))
 		}
 		data.RelevantCode = strings.Join(parts, "\n\n")

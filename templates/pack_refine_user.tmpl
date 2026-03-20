@@ -1,0 +1,24 @@
+任务描述：
+{{.Task}}
+
+候选文件（路径 + 签名摘要）：
+{{range .Candidates}}
+---
+路径：{{.Path}}
+摘要：
+{{.Summary}}
+{{end}}
+
+{{if .Contracts}}模块契约：
+{{range .Contracts}}
+---
+模块：{{.Module.Name}}
+路径：{{.Module.Path}}
+职责：{{.Module.Purpose}}
+拥有：
+{{range .Owns}}- {{.}}
+{{end}}
+{{end}}
+{{end}}
+
+请返回与任务相关的文件列表，并标注相关度、原因以及建议关注的函数/区域。

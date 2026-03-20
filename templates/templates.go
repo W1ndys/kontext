@@ -8,6 +8,12 @@ var SystemPrompt string // SystemPrompt 是 LLM 的系统提示词模板
 //go:embed llm_user_prompt.tmpl
 var UserPrompt string // UserPrompt 是 LLM 的用户提示词模板
 
+//go:embed pack_refine_system.tmpl
+var PackRefineSystem string // PackRefineSystem 是 Pack 精筛阶段的系统提示词
+
+//go:embed pack_refine_user.tmpl
+var PackRefineUser string // PackRefineUser 是 Pack 精筛阶段的用户提示词
+
 //go:embed init_interview_system.tmpl
 var InitInterviewSystem string // InitInterviewSystem 是 AI 初始化对话阶段的系统提示词
 

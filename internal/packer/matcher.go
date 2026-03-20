@@ -2,6 +2,7 @@ package packer
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/w1ndys/kontext/internal/schema"
 )
@@ -11,7 +12,7 @@ import (
 func MatchContracts(task string, contracts []schema.ModuleContract) []schema.ModuleContract {
 	keywords := extractKeywords(task)
 	if len(keywords) == 0 {
-		return contracts // 无关键词时返回全部
+		return contracts
 	}
 
 	var matched []schema.ModuleContract
@@ -47,7 +48,7 @@ func MatchFiles(task string, files []string) []string {
 	return matched
 }
 
-// extractKeywords 从任务描述中提取有意义的关键词，过滤掉停用词。
+// extractKeywords 从任务描述中提取关键词，兼容中英文输入。
 func extractKeywords(task string) []string {
 	stopWords := map[string]bool{
 		"the": true, "a": true, "an": true, "is": true, "are": true,
@@ -63,13 +64,64 @@ func extractKeywords(task string) []string {
 		"fix": true, "refactor": true, "remove": true, "delete": true,
 	}
 
-	words := strings.Fields(strings.ToLower(task))
+	fields := strings.FieldsFunc(strings.ToLower(task), func(r rune) bool {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Han, r) {
+			return false
+		}
+		return true
+	})
+
+	seen := make(map[string]bool)
 	var keywords []string
-	for _, w := range words {
-		w = strings.Trim(w, `"'.,:;!?()[]{}`)
-		if len(w) >= 2 && !stopWords[w] {
-			keywords = append(keywords, w)
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if field == "" {
+			continue
+		}
+
+		if isHanString(field) {
+			for _, token := range expandHanKeywords(field) {
+				if !seen[token] {
+					seen[token] = true
+					keywords = append(keywords, token)
+				}
+			}
+			continue
+		}
+
+		if len(field) >= 2 && !stopWords[field] && !seen[field] {
+			seen[field] = true
+			keywords = append(keywords, field)
 		}
 	}
 	return keywords
+}
+
+func isHanString(s string) bool {
+	for _, r := range s {
+		if !unicode.Is(unicode.Han, r) {
+			return false
+		}
+	}
+	return s != ""
+}
+
+func expandHanKeywords(s string) []string {
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return nil
+	}
+
+	var result []string
+	if len(runes) >= 2 {
+		result = append(result, string(runes))
+	}
+
+	maxWindow := 4
+	for size := 2; size <= maxWindow && size <= len(runes); size++ {
+		for i := 0; i+size <= len(runes); i++ {
+			result = append(result, string(runes[i:i+size]))
+		}
+	}
+	return result
 }

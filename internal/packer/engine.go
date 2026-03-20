@@ -2,18 +2,25 @@ package packer
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/promptdoc"
 	"github.com/w1ndys/kontext/internal/schema"
 )
 
-// Engine 编排 Pack 流水线的 6 个阶段。
+const packStages = 7
+
+// Engine 编排 Pack 流水线。
 type Engine struct {
-	llmClient  llm.Client
-	kontextDir string
-	projectDir string
+	llmClient     llm.Client
+	kontextDir    string
+	projectDir    string
+	OnProgress    func(stage, total int, msg string)
+	DisableRefine bool
+	FilenameHint  string
 }
 
 // NewEngine 创建一个新的 Pack 引擎。
@@ -25,51 +32,92 @@ func NewEngine(llmClient llm.Client, kontextDir, projectDir string) *Engine {
 	}
 }
 
-// Pack 执行完整的 6 阶段流水线，返回生成的 Prompt 文件路径。
-// 阶段 1: 加载 Bundle → 阶段 2: 收集上下文 → 阶段 3: 构建模板数据
-// 阶段 4: 渲染提示词 → 阶段 5: 调用 LLM → 阶段 6: 保存 Prompt 文档
+// Pack 执行完整的 7 阶段流水线，返回生成的 Prompt 文件路径。
 func (e *Engine) Pack(task string) (string, error) {
-	// 阶段 1: 加载 .kontext/ 配置
+	e.progress(1, "加载 .kontext/ 配置...")
 	bundle, err := schema.LoadBundle(e.kontextDir)
 	if err != nil {
 		return "", fmt.Errorf("阶段 1 (加载配置): %w", err)
 	}
 
-	// 阶段 2: 收集候选上下文
+	e.progress(2, "扫描项目文件并匹配上下文...")
 	ctx, err := CollectContext(bundle, task, e.projectDir)
 	if err != nil {
-		return "", fmt.Errorf("阶段 2 (收集上下文): %w", err)
+		return "", fmt.Errorf("阶段 2 (粗筛上下文): %w", err)
 	}
 
-	// 阶段 3: 构建模板数据
+	var refine *RefineResult
+	if !e.DisableRefine && len(ctx.MatchedFiles) > 0 {
+		e.progress(3, "调用 LLM 精筛候选上下文...")
+		candidates := make([]CandidateFile, 0, len(ctx.MatchedFiles))
+		for _, relPath := range ctx.MatchedFiles {
+			candidates = append(candidates, CandidateFile{
+				Path:    relPath,
+				Summary: ctx.FileSummaries[relPath],
+			})
+		}
+
+		refine, err = RefineContext(e.llmClient, task, candidates, ctx.Contracts, func(attempt int, retryErr error, backoff time.Duration) {
+			fmt.Fprintf(os.Stderr, "\n⚠ Pack 精筛失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\n⚠ Pack 精筛失败，回退到关键词模式：%v\n", err)
+		}
+	} else {
+		e.progress(3, "跳过 LLM 精筛，使用关键词匹配结果...")
+	}
+
+	e.progress(4, "读取相关代码与摘要...")
+	if err := HydrateContext(task, e.projectDir, ctx, refine); err != nil {
+		return "", fmt.Errorf("阶段 4 (读取上下文): %w", err)
+	}
+
+	e.progress(5, "构建提示词模板...")
 	data := BuildTemplateData(task, bundle, ctx)
 
-	// 阶段 4: 渲染提示词
+	e.progress(6, "渲染提示词并调用 LLM 生成 Prompt 文档...")
 	systemPrompt, err := RenderSystemPrompt()
 	if err != nil {
-		return "", fmt.Errorf("阶段 4 (渲染系统提示词): %w", err)
+		return "", fmt.Errorf("阶段 6 (渲染系统提示词): %w", err)
 	}
 	userPrompt, err := RenderUserPrompt(data)
 	if err != nil {
-		return "", fmt.Errorf("阶段 4 (渲染用户提示词): %w", err)
+		return "", fmt.Errorf("阶段 6 (渲染用户提示词): %w", err)
 	}
 
-	// 阶段 5: 调用 LLM 生成内容
-	resp, err := e.llmClient.Generate(&llm.GenerateRequest{
-		SystemPrompt: systemPrompt,
-		UserPrompt:   userPrompt,
+	resp, err := llm.ChatStreamWithRetry(e.llmClient, buildChatRequest(systemPrompt, userPrompt), func(delta string) error {
+		_, writeErr := fmt.Fprint(os.Stderr, delta)
+		return writeErr
+	}, 3, func(attempt int, retryErr error, backoff time.Duration) {
+		fmt.Fprintf(os.Stderr, "\n⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
 	})
 	if err != nil {
-		return "", fmt.Errorf("阶段 5 (LLM 生成): %w", err)
+		return "", fmt.Errorf("阶段 6 (LLM 生成): %w", err)
 	}
+	fmt.Fprintln(os.Stderr)
 
-	// 阶段 6: 保存 Prompt 文档
-	filename := promptdoc.GenerateFilename(task)
+	e.progress(7, "保存文件...")
+	filename := promptdoc.GenerateFilename(task, e.FilenameHint)
 	outPath, err := promptdoc.SavePrompt(e.kontextDir, filename, resp.Content)
 	if err != nil {
-		return "", fmt.Errorf("阶段 6 (保存文档): %w", err)
+		return "", fmt.Errorf("阶段 7 (保存文档): %w", err)
 	}
 
 	absPath, _ := filepath.Abs(outPath)
 	return absPath, nil
+}
+
+func (e *Engine) progress(stage int, msg string) {
+	if e.OnProgress != nil {
+		e.OnProgress(stage, packStages, msg)
+	}
+}
+
+func buildChatRequest(systemPrompt, userPrompt string) *llm.ChatRequest {
+	return &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+	}
 }

@@ -19,6 +19,7 @@ type TemplateData struct {
 	Architecture    string
 	Conventions     string
 	Contracts       string
+	RelevantFiles   string
 	DirectoryTree   string
 	RelevantCode    string
 }

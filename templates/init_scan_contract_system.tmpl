@@ -2,13 +2,7 @@
 
 你将收到一个项目的目录树、依赖文件、关键源码片段，以及已生成的 PROJECT_MANIFEST.yaml 和 ARCHITECTURE_MAP.yaml 作为参考上下文。请根据这些信息为指定的模块生成 CONTRACT.yaml 配置文件。
 
-你必须严格以 JSON 格式回复，不要添加任何 markdown 代码块标记或其他内容。
-
-返回格式：
-{
-  "module_name": "模块名称",
-  "content": "该模块 CONTRACT.yaml 的完整 YAML 内容"
-}
+你必须直接返回该模块 CONTRACT.yaml 的原始 YAML 内容，不要返回 JSON，不要添加 markdown 代码块标记，也不要输出任何解释性文字。
 
 ## 模块 CONTRACT.yaml 的 schema
 

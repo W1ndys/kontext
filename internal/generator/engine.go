@@ -601,6 +601,100 @@ type ModuleContractResult struct {
 	Duration   float64 // 耗时（秒）
 }
 
+// GenerateModuleContractStream 流式生成单个模块的契约文件，支持自动重试。
+func GenerateModuleContractStream(
+	client llm.Client,
+	systemPrompt, userMsg string,
+	moduleName string,
+	onStream func(ModuleContractStreamEvent),
+) (*ModuleContractYAML, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userMsg},
+		},
+	}
+
+	maxRetries := 3
+	var lastErr error
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			backoff := time.Duration(1<<uint(attempt-2)) * time.Second
+			time.Sleep(backoff)
+		}
+
+		var accumulated strings.Builder
+		resp, err := client.ChatStream(req, func(delta string) error {
+			accumulated.WriteString(delta)
+			if onStream != nil {
+				onStream(ModuleContractStreamEvent{
+					ModuleName:  moduleName,
+					Attempt:     attempt,
+					Delta:       delta,
+					Accumulated: accumulated.String(),
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			lastErr = fmt.Errorf("调用 LLM 流式生成模块契约失败 (尝试 %d/%d): %w", attempt, maxRetries, err)
+			if onStream != nil {
+				onStream(ModuleContractStreamEvent{
+					ModuleName:  moduleName,
+					Attempt:     attempt,
+					Accumulated: accumulated.String(),
+					Error:       lastErr,
+				})
+			}
+			continue
+		}
+
+		finalRaw := resp.Content
+		if finalRaw == "" {
+			finalRaw = accumulated.String()
+		}
+		finalContent := extractYAMLFromResponse(finalRaw)
+		if finalContent == "" {
+			trimmed := strings.TrimSpace(finalRaw)
+			if trimmed != "" {
+				finalContent = trimmed
+			}
+		}
+		if finalContent == "" {
+			lastErr = fmt.Errorf("LLM 返回内容为空 (尝试 %d/%d)", attempt, maxRetries)
+			if onStream != nil {
+				onStream(ModuleContractStreamEvent{
+					ModuleName:   moduleName,
+					Attempt:      attempt,
+					Accumulated:  accumulated.String(),
+					Done:         true,
+					Error:        lastErr,
+					FinalContent: finalContent,
+				})
+			}
+			continue
+		}
+
+		if onStream != nil {
+			onStream(ModuleContractStreamEvent{
+				ModuleName:   moduleName,
+				Attempt:      attempt,
+				Accumulated:  accumulated.String(),
+				Done:         true,
+				FinalContent: finalContent,
+			})
+		}
+
+		return &ModuleContractYAML{
+			ModuleName: moduleName,
+			Content:    finalContent,
+		}, nil
+	}
+
+	return nil, lastErr
+}
+
 // GenerateModuleContracts 并行生成多个模块契约，限制最大并发数。
 func GenerateModuleContracts(
 	client llm.Client,
@@ -608,6 +702,7 @@ func GenerateModuleContracts(
 	modules []string,
 	userMsgGenerator func(moduleName string) (string, error),
 	maxConcurrency int,
+	onStream func(event ModuleContractStreamEvent),
 	onProgress func(result ModuleContractResult),
 ) (map[string]string, []error) {
 	if maxConcurrency <= 0 {
@@ -638,16 +733,19 @@ func GenerateModuleContracts(
 					Duration:   time.Since(startTime).Seconds(),
 				}
 				mu.Lock()
-				errors = append(errors, result.Error)
+				errors = append(errors, fmt.Errorf("模块 %s: %w", moduleName, result.Error))
 				mu.Unlock()
-				// 在锁外面回调，避免死锁
 				if onProgress != nil {
 					onProgress(result)
 				}
 				return
 			}
 
-			contract, err := GenerateModuleContract(client, systemPrompt, userMsg, moduleName)
+			contract, err := GenerateModuleContractStream(client, systemPrompt, userMsg, moduleName, func(event ModuleContractStreamEvent) {
+				if onStream != nil {
+					onStream(event)
+				}
+			})
 
 			elapsed := time.Since(startTime).Seconds()
 			var progressResult ModuleContractResult
@@ -661,7 +759,6 @@ func GenerateModuleContracts(
 					Duration:   elapsed,
 				}
 			} else {
-				// 使用传入的模块名作为 key，确保一致性
 				results[moduleName] = contract.Content
 				progressResult = ModuleContractResult{
 					ModuleName: moduleName,
@@ -671,7 +768,6 @@ func GenerateModuleContracts(
 			}
 			mu.Unlock()
 
-			// 在锁外面回调，避免死锁
 			if onProgress != nil {
 				onProgress(progressResult)
 			}

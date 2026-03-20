@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/invopop/jsonschema"
@@ -70,6 +71,46 @@ func (c *openaiClient) Chat(req *ChatRequest) (*ChatResponse, error) {
 	return &ChatResponse{Content: resp.Choices[0].Message.Content}, nil
 }
 
+// ChatStream 支持流式多轮对话，并在每次收到新增文本时回调。
+func (c *openaiClient) ChatStream(req *ChatRequest, onChunk func(string) error) (*ChatResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
+	defer cancel()
+
+	params, err := c.buildChatCompletionParams(req, openai.ChatCompletionNewParamsResponseFormatUnion{})
+	if err != nil {
+		return nil, err
+	}
+	params.StreamOptions = openai.ChatCompletionStreamOptionsParam{
+		IncludeUsage: openai.Bool(true),
+	}
+
+	stream := c.client.Chat.Completions.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	var content strings.Builder
+	for stream.Next() {
+		chunk := stream.Current()
+		for _, choice := range chunk.Choices {
+			delta := choice.Delta.Content
+			if delta == "" {
+				continue
+			}
+			content.WriteString(delta)
+			if onChunk != nil {
+				if err := onChunk(delta); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	if err := stream.Err(); err != nil {
+		return nil, fmt.Errorf("调用 LLM 流式 API 失败: %w", err)
+	}
+
+	return &ChatResponse{Content: content.String()}, nil
+}
+
 // ChatStructured 使用 JSON Schema 约束模型输出，并反序列化到 out。
 func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error) {
 	if out == nil {
@@ -113,6 +154,18 @@ func (c *openaiClient) createChatCompletion(
 	req *ChatRequest,
 	responseFormat openai.ChatCompletionNewParamsResponseFormatUnion,
 ) (*openai.ChatCompletion, error) {
+	params, err := c.buildChatCompletionParams(req, responseFormat)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.client.Chat.Completions.New(ctx, params)
+}
+
+func (c *openaiClient) buildChatCompletionParams(
+	req *ChatRequest,
+	responseFormat openai.ChatCompletionNewParamsResponseFormatUnion,
+) (openai.ChatCompletionNewParams, error) {
 	msgs := make([]openai.ChatCompletionMessageParamUnion, 0, len(req.Messages))
 	for i, m := range req.Messages {
 		switch m.Role {
@@ -123,15 +176,15 @@ func (c *openaiClient) createChatCompletion(
 		case "assistant":
 			msgs = append(msgs, openai.AssistantMessage(m.Content))
 		default:
-			return nil, fmt.Errorf("不支持的消息角色[%d]: %s", i, m.Role)
+			return openai.ChatCompletionNewParams{}, fmt.Errorf("不支持的消息角色[%d]: %s", i, m.Role)
 		}
 	}
 
-	return c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
+	return openai.ChatCompletionNewParams{
 		Model:          shared.ChatModel(c.cfg.Model),
 		Messages:       msgs,
 		ResponseFormat: responseFormat,
-	})
+	}, nil
 }
 
 // ListModels 获取可用的模型列表。

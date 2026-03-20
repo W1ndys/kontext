@@ -82,6 +82,7 @@ type ChatResponse struct {
 type Client interface {
 	Generate(req *GenerateRequest) (*GenerateResponse, error)
 	Chat(req *ChatRequest) (*ChatResponse, error)
+	ChatStream(req *ChatRequest, onChunk func(string) error) (*ChatResponse, error)
 	ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error)
 	ListModels() ([]string, error)
 }

@@ -39,6 +39,17 @@ type ModuleContractYAML struct {
 	Content    string `json:"content"`     // YAML 内容
 }
 
+// ModuleContractStreamEvent 表示模块契约流式生成过程中的事件。
+type ModuleContractStreamEvent struct {
+	ModuleName   string
+	Attempt      int
+	Delta        string
+	Accumulated  string
+	Done         bool
+	Error        error
+	FinalContent string
+}
+
 // ModuleDependencyGraph 是模块间依赖关系图。
 type ModuleDependencyGraph struct {
 	Modules []ModuleDep `json:"modules"`

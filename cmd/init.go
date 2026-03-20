@@ -462,6 +462,7 @@ func runScanInit() error {
 	}
 
 	// ===== 阶段 9/9：并行生成模块契约 =====
+	var successfulContractFiles []string
 	if len(modules) == 0 {
 		fmt.Println("📦 阶段 9/9：未检测到模块，跳过模块契约生成")
 	} else {
@@ -482,16 +483,14 @@ func runScanInit() error {
 
 		// 用于生成各模块用户消息的函数（只包含该模块的源码，而非全部源码）
 		userMsgGenerator := func(moduleName string) (string, error) {
-			// 筛选该模块的文件
 			moduleKeyFiles := generator.FilterFilesByModule(keyFileContents, moduleName)
 			moduleSummaries := generator.FilterFilesByModule(otherSummaries, moduleName)
 
-			// 用精简数据构建用户消息
 			moduleUserMsg, err := generator.RenderTemplate(templates.InitScanUser, map[string]interface{}{
-				"DirectoryTree":      treeStr,        // 目录树保留（较小）
-				"ConfigFiles":        configFiles,     // 配置文件保留
-				"KeyFileContents":    moduleKeyFiles,  // 只包含该模块的源码
-				"OtherFileSummaries": moduleSummaries, // 只包含该模块的概要
+				"DirectoryTree":      treeStr,
+				"ConfigFiles":        configFiles,
+				"KeyFileContents":    moduleKeyFiles,
+				"OtherFileSummaries": moduleSummaries,
 			})
 			if err != nil {
 				return "", err
@@ -501,91 +500,177 @@ func runScanInit() error {
 				fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.yaml 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
 		}
 
-		// 使用 mutex 保护控制台输出，实现即时反馈
+		moduleContractDir := filepath.Join(kontextDir, "module_contracts")
+		partialPath := func(moduleName string) string {
+			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.yaml.partial", moduleName))
+		}
+		finalPath := func(moduleName string) string {
+			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.yaml", moduleName))
+		}
+
+		type partialSnapshotState struct {
+			Attempt      int
+			LastSavedAt  time.Time
+			LastSavedLen int
+		}
+
+		const (
+			partialSaveInterval = 500 * time.Millisecond
+			partialSaveMinDelta = 256
+		)
+
 		var printMu sync.Mutex
+		var partialMu sync.Mutex
+		var resultMu sync.Mutex
+		partialStates := make(map[string]partialSnapshotState)
+		successfulContracts := make(map[string]string)
+		failedModules := make(map[string]bool)
+
+		saveFinalContract := func(moduleName, content string) error {
+			if err := generator.ValidateYAML(content); err != nil {
+				return fmt.Errorf("YAML 校验失败: %w", err)
+			}
+			if err := fileutil.WriteFile(finalPath(moduleName), []byte(content)); err != nil {
+				return fmt.Errorf("写入正式文件失败: %w", err)
+			}
+			_ = os.Remove(partialPath(moduleName))
+
+			resultMu.Lock()
+			successfulContracts[moduleName] = finalPath(moduleName)
+			delete(failedModules, moduleName)
+			resultMu.Unlock()
+			return nil
+		}
+
+		onStream := func(event generator.ModuleContractStreamEvent) {
+			snapshot := event.Accumulated
+			if event.Done && strings.TrimSpace(event.FinalContent) != "" {
+				snapshot = event.FinalContent
+			}
+			if strings.TrimSpace(snapshot) == "" {
+				return
+			}
+
+			partialMu.Lock()
+			defer partialMu.Unlock()
+
+			state := partialStates[event.ModuleName]
+			if state.Attempt != event.Attempt {
+				state = partialSnapshotState{Attempt: event.Attempt}
+			}
+
+			shouldSave := event.Done || event.Error != nil
+			if !shouldSave {
+				growth := len(snapshot) - state.LastSavedLen
+				if state.LastSavedLen > 0 && growth < partialSaveMinDelta && time.Since(state.LastSavedAt) < partialSaveInterval {
+					partialStates[event.ModuleName] = state
+					return
+				}
+			}
+
+			if err := fileutil.WriteFile(partialPath(event.ModuleName), []byte(snapshot)); err != nil {
+				printMu.Lock()
+				fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filepath.Base(partialPath(event.ModuleName)), err)
+				printMu.Unlock()
+				return
+			}
+
+			state.LastSavedAt = time.Now()
+			state.LastSavedLen = len(snapshot)
+			partialStates[event.ModuleName] = state
+		}
 
 		onProgress := func(result generator.ModuleContractResult) {
 			printMu.Lock()
 			defer printMu.Unlock()
 
 			if result.Error != nil {
+				resultMu.Lock()
+				failedModules[result.ModuleName] = true
+				resultMu.Unlock()
 				fmt.Printf("   ✗ %s_CONTRACT.yaml 失败: %v\n", result.ModuleName, result.Error)
-			} else {
-				fmt.Printf("   ✓ %s_CONTRACT.yaml (%.1f 秒)\n", result.ModuleName, result.Duration)
+				return
 			}
+
+			if err := saveFinalContract(result.ModuleName, result.Content); err != nil {
+				resultMu.Lock()
+				failedModules[result.ModuleName] = true
+				resultMu.Unlock()
+				fmt.Printf("   ✗ %s_CONTRACT.yaml 失败: %v\n", result.ModuleName, err)
+				return
+			}
+
+			fmt.Printf("   ✓ %s_CONTRACT.yaml (%.1f 秒)\n", result.ModuleName, result.Duration)
 		}
 
 		step8Start := time.Now()
 
-		contracts, contractErrors := generator.GenerateModuleContracts(
+		_, contractErrors := generator.GenerateModuleContracts(
 			client,
 			templates.InitScanContractSystem,
 			modules,
 			userMsgGenerator,
-			3, // 最大并发数
+			3,
+			onStream,
 			onProgress,
 		)
 
-		// 校验并写入成功的模块契约文件
-		for _, mod := range modules {
-			if content, ok := contracts[mod]; ok {
-				// 校验并写入
-				if valErr := generator.ValidateYAML(content); valErr != nil {
-					fmt.Printf("   ⚠ %s_CONTRACT.yaml 不合法，跳过\n", mod)
-					continue
-				}
-				filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
-				path := filepath.Join(kontextDir, "module_contracts", filename)
-				if writeErr := fileutil.WriteFile(path, []byte(content)); writeErr != nil {
-					fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filename, writeErr)
-					continue
-				}
-			}
+		resultMu.Lock()
+		for _, mod := range extractFailedModuleNames(contractErrors) {
+			failedModules[mod] = true
 		}
+		var retryModules []string
+		for mod := range failedModules {
+			retryModules = append(retryModules, mod)
+		}
+		sort.Strings(retryModules)
+		resultMu.Unlock()
 
-		// 对失败的模块进行二次重试
-		if len(contractErrors) > 0 {
-			failedModules := extractFailedModuleNames(contractErrors)
-			fmt.Printf("\n   ⚠ %d 个模块失败，正在重试...\n", len(failedModules))
+		if len(retryModules) > 0 {
+			fmt.Printf("\n   ⚠ %d 个模块失败，正在重试...\n", len(retryModules))
 
-			retryContracts, retryErrors := generator.GenerateModuleContracts(
+			_, retryErrors := generator.GenerateModuleContracts(
 				client,
 				templates.InitScanContractSystem,
-				failedModules,
+				retryModules,
 				userMsgGenerator,
-				2, // 重试时降低并发数
+				2,
+				onStream,
 				onProgress,
 			)
 
-			// 合并重试成功的结果
-			for mod, content := range retryContracts {
-				contracts[mod] = content
+			resultMu.Lock()
+			for _, mod := range extractFailedModuleNames(retryErrors) {
+				failedModules[mod] = true
 			}
-
-			// 校验并写入重试成功的文件
-			for _, mod := range failedModules {
-				if content, ok := retryContracts[mod]; ok {
-					if valErr := generator.ValidateYAML(content); valErr != nil {
-						fmt.Printf("   ⚠ %s_CONTRACT.yaml 不合法，跳过\n", mod)
-						continue
-					}
-					filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
-					path := filepath.Join(kontextDir, "module_contracts", filename)
-					if writeErr := fileutil.WriteFile(path, []byte(content)); writeErr != nil {
-						fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filename, writeErr)
-						continue
-					}
+			var finalFailures []string
+			for mod := range failedModules {
+				if _, ok := successfulContracts[mod]; !ok {
+					finalFailures = append(finalFailures, mod)
 				}
 			}
+			sort.Strings(finalFailures)
+			resultMu.Unlock()
 
-			// 最终仍然失败的模块
-			if len(retryErrors) > 0 {
-				fmt.Printf("   ⚠ %d 个模块最终生成失败\n", len(retryErrors))
-				for _, e := range retryErrors {
-					fmt.Printf("      - %v\n", e)
+			if len(finalFailures) > 0 {
+				fmt.Printf("   ⚠ %d 个模块最终生成失败\n", len(finalFailures))
+				for _, mod := range finalFailures {
+					fmt.Printf("      - %s\n", mod)
 				}
 			}
 		}
+
+		resultMu.Lock()
+		var successModules []string
+		for mod := range successfulContracts {
+			successModules = append(successModules, mod)
+		}
+		sort.Strings(successModules)
+		successfulContractFiles = make([]string, 0, len(successModules))
+		for _, mod := range successModules {
+			successfulContractFiles = append(successfulContractFiles, successfulContracts[mod])
+		}
+		resultMu.Unlock()
 
 		step8Elapsed := time.Since(step8Start).Seconds()
 		fmt.Printf("\n   模块契约生成完成 (%.1f 秒)\n", step8Elapsed)
@@ -601,13 +686,8 @@ func runScanInit() error {
 	fmt.Printf("  %s\n", filepath.Join(kontextDir, "CONVENTIONS.yaml"))
 
 	// 列出已创建的模块契约
-	contractDir := filepath.Join(kontextDir, "module_contracts")
-	if entries, err := os.ReadDir(contractDir); err == nil {
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), "_CONTRACT.yaml") {
-				fmt.Printf("  %s\n", filepath.Join(contractDir, entry.Name()))
-			}
-		}
+	for _, path := range successfulContractFiles {
+		fmt.Printf("  %s\n", path)
 	}
 
 	return nil

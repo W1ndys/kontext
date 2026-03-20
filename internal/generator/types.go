@@ -38,3 +38,16 @@ type ModuleContractYAML struct {
 	ModuleName string `json:"module_name"` // 模块名
 	Content    string `json:"content"`     // YAML 内容
 }
+
+// ModuleDependencyGraph 是模块间依赖关系图。
+type ModuleDependencyGraph struct {
+	Modules []ModuleDep `json:"modules"`
+}
+
+// ModuleDep 是单个模块的依赖关系信息。
+type ModuleDep struct {
+	Name      string   `json:"name"`       // 模块名
+	Path      string   `json:"path"`       // 模块路径
+	Purpose   string   `json:"purpose"`    // 一句话描述
+	DependsOn []string `json:"depends_on"` // 依赖的模块名列表
+}

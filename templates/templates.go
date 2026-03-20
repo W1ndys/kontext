@@ -58,3 +58,15 @@ var InitScanContractSystem string // InitScanContractSystem 是分步生成单�
 
 //go:embed init_scan_depgraph_system.tmpl
 var InitScanDepgraphSystem string // InitScanDepgraphSystem 是生成模块依赖关系图的系统提示词
+
+//go:embed update_system.tmpl
+var UpdateSystem string // UpdateSystem 是 update 命令的系统提示词
+
+//go:embed update_architecture.tmpl
+var UpdateArchitecture string // UpdateArchitecture 是更新 ARCHITECTURE_MAP 的用户提示词
+
+//go:embed update_contract.tmpl
+var UpdateContract string // UpdateContract 是更新模块契约的用户提示词
+
+//go:embed update_manifest.tmpl
+var UpdateManifest string // UpdateManifest 是更新 PROJECT_MANIFEST 的用户提示词

@@ -49,3 +49,6 @@ var InitScanConventionsSystem string // InitScanConventionsSystem 是分步生�
 
 //go:embed init_scan_contract_system.tmpl
 var InitScanContractSystem string // InitScanContractSystem 是分步生成单个模块契约的系统提示词
+
+//go:embed init_scan_depgraph_system.tmpl
+var InitScanDepgraphSystem string // InitScanDepgraphSystem 是生成模块依赖关系图的系统提示词

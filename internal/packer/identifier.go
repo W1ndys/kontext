@@ -14,15 +14,59 @@ import (
 
 // IdentifyRelevantFiles 使用 LLM 识别与任务相关的文件
 func IdentifyRelevantFiles(client llm.Client, task string, candidatePaths []string, projectRoot, architectureSummary, moduleSummary string, onRetry func(attempt int, err error, backoff time.Duration)) (*MentionedFiles, error) {
-	// 构建模板数据
-	data := identifyTemplateData{
-		Task:               task,
-		CandidatePaths:     candidatePaths,
-		ArchitectureSummary: architectureSummary,
-		ModuleSummary:      moduleSummary,
+	var batchResults []*MentionedFiles
+	for start := 0; start < len(candidatePaths); start += maxIdentifyCandidateBatchSize {
+		end := min(start+maxIdentifyCandidateBatchSize, len(candidatePaths))
+		batch := candidatePaths[start:end]
+
+		out, err := identifyRelevantFilesBatch(client, task, batch, projectRoot, architectureSummary, moduleSummary, onRetry)
+		if err != nil {
+			return nil, err
+		}
+		batchResults = append(batchResults, out)
 	}
 
-	// 渲染用户提示词
+	return mergeMentionedFiles(batchResults), nil
+}
+
+func mergeMentionedFiles(results []*MentionedFiles) *MentionedFiles {
+	merged := &MentionedFiles{
+		Paths:   make([]string, 0, maxIdentifiedFiles),
+		Reasons: make(map[string]string),
+	}
+	seen := make(map[string]bool)
+
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		for _, path := range result.Paths {
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			merged.Paths = append(merged.Paths, path)
+			if reason := strings.TrimSpace(result.Reasons[path]); reason != "" {
+				merged.Reasons[path] = reason
+			} else {
+				merged.Reasons[path] = defaultIdentifiedReason
+			}
+			if len(merged.Paths) >= maxIdentifiedFiles {
+				return merged
+			}
+		}
+	}
+	return merged
+}
+
+func identifyRelevantFilesBatch(client llm.Client, task string, candidatePaths []string, projectRoot, architectureSummary, moduleSummary string, onRetry func(attempt int, err error, backoff time.Duration)) (*MentionedFiles, error) {
+	data := identifyTemplateData{
+		Task:                task,
+		CandidatePaths:      candidatePaths,
+		ArchitectureSummary: architectureSummary,
+		ModuleSummary:       moduleSummary,
+	}
+
 	userPrompt, err := renderIdentifyUserPrompt(data)
 	if err != nil {
 		return nil, fmt.Errorf("渲染文件识别提示词失败: %w", err)
@@ -40,16 +84,15 @@ func IdentifyRelevantFiles(client llm.Client, task string, candidatePaths []stri
 		return nil, err
 	}
 
-	// 校验和清理结果
 	return validateAndCleanMentionedFiles(&out, candidatePaths, projectRoot)
 }
 
 // identifyTemplateData 是文件识别模板的数据结构
 type identifyTemplateData struct {
-	Task               string
-	CandidatePaths     []string
+	Task                string
+	CandidatePaths      []string
 	ArchitectureSummary string
-	ModuleSummary      string
+	ModuleSummary       string
 }
 
 // renderIdentifyUserPrompt 渲染文件识别用户提示词
@@ -68,7 +111,6 @@ func renderIdentifyUserPrompt(data identifyTemplateData) (string, error) {
 
 // validateAndCleanMentionedFiles 校验 LLM 返回的文件路径并清理结果
 func validateAndCleanMentionedFiles(mentioned *MentionedFiles, candidatePaths []string, projectRoot string) (*MentionedFiles, error) {
-	// 构建候选路径集合用于快速查找
 	candidateSet := make(map[string]bool, len(candidatePaths))
 	for _, path := range candidatePaths {
 		clean := filepath.Clean(strings.TrimSpace(path))
@@ -102,7 +144,7 @@ func validateAndCleanMentionedFiles(mentioned *MentionedFiles, candidatePaths []
 		if reason, ok := mentioned.Reasons[path]; ok && strings.TrimSpace(reason) != "" {
 			validReasons[cleanPath] = strings.TrimSpace(reason)
 		} else {
-			validReasons[cleanPath] = "LLM 识别为相关文件"
+			validReasons[cleanPath] = defaultIdentifiedReason
 		}
 
 		if len(validPaths) >= maxIdentifiedFiles {

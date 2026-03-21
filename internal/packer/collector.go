@@ -129,7 +129,7 @@ func buildIdentifiedFiles(files []FileRelevance, snippets map[string]string, rea
 			}
 		}
 		if reason == "" {
-			reason = "LLM 识别为相关文件"
+			reason = defaultIdentifiedReason
 		}
 		result = append(result, IdentifiedFile{
 			Path:      file.Path,
@@ -148,7 +148,7 @@ func buildIdentifiedFilesFromPaths(paths []string, snippets map[string]string, r
 		if content == "" {
 			continue
 		}
-		reason := "LLM 识别为相关文件"
+		reason := defaultIdentifiedReason
 		if fallback, ok := reasons[path]; ok {
 			reason = fallback
 		}
@@ -179,7 +179,7 @@ func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRele
 			if i >= maxContextFiles {
 				break
 			}
-			reason := "LLM 识别为相关文件"
+			reason := defaultIdentifiedReason
 			if fallback, ok := ctx.MentionedReasons[relPath]; ok && strings.TrimSpace(fallback) != "" {
 				reason = strings.TrimSpace(fallback)
 			}

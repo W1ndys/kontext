@@ -68,10 +68,10 @@ func (e *Engine) Pack(task string) (string, error) {
 	}
 
 	mentionedFiles, err = IdentifyRelevantFiles(e.llmClient, task, candidateFiles, e.projectDir, archSummary, moduleSummary, func(attempt int, retryErr error, backoff time.Duration) {
-		fmt.Fprintf(os.Stderr, "\n⚠ 文件识别失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
+		fmt.Fprintf(os.Stderr, "\n⚠ Relevant file identification failed (%s), retrying in %s [attempt %d] / 文件识别失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ 文件识别失败，将继续打包但不附加源码：%v\n", err)
+		fmt.Fprintf(os.Stderr, "\n⚠ Failed to identify relevant files automatically; packing will continue without attached source files / 文件识别失败，将继续打包但不附加源码：%v\n", err)
 		mentionedFiles = nil
 	}
 
@@ -80,7 +80,7 @@ func (e *Engine) Pack(task string) (string, error) {
 		return "", fmt.Errorf("阶段 4 (粗筛上下文): %w", err)
 	}
 	if err := PreloadIdentifiedFiles(e.projectDir, ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ 读取识别文件失败，将继续打包但不附加源码：%v\n", err)
+		fmt.Fprintf(os.Stderr, "\n⚠ Failed to attach some or all identified source files; packing will continue with available context / 读取识别文件失败，将继续打包并使用当前可用上下文：%v\n", err)
 	}
 
 	var refine *RefineResult
@@ -95,13 +95,13 @@ func (e *Engine) Pack(task string) (string, error) {
 		}
 
 		refine, err = RefineContext(e.llmClient, task, candidates, ctx.Contracts, ctx.IdentifiedFiles, func(attempt int, retryErr error, backoff time.Duration) {
-			fmt.Fprintf(os.Stderr, "\n⚠ Pack 精筛失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
+			fmt.Fprintf(os.Stderr, "\n⚠ Context refinement failed (%s), retrying in %s [attempt %d] / Pack 精筛失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n⚠ Pack 精筛失败，回退到关键词模式：%v\n", err)
+			fmt.Fprintf(os.Stderr, "\n⚠ Context refinement failed; continuing with identified candidates / Pack 精筛失败，将继续使用已识别候选上下文：%v\n", err)
 		}
 	} else {
-		e.progress(5, "跳过 LLM 精筛，使用关键词匹配结果...")
+		e.progress(5, "跳过 LLM 精筛，继续使用已识别候选上下文...")
 	}
 
 	e.progress(6, "整理相关文件与上下文...")

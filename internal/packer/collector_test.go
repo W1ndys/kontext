@@ -49,4 +49,26 @@ func TestValidateAndCleanMentionedFilesFiltersMissing(t *testing.T) {
 	if len(result.Paths) != 1 || result.Paths[0] != "exists.go" {
 		t.Fatalf("unexpected paths: %#v", result.Paths)
 	}
+	if result.Reasons["exists.go"] != "exists" {
+		t.Fatalf("unexpected reason: %q", result.Reasons["exists.go"])
+	}
+}
+
+func TestValidateAndCleanMentionedFilesUsesDefaultReason(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "exists.go")
+	if err := os.WriteFile(filePath, []byte("package main"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	mentioned := &MentionedFiles{
+		Paths:   []string{"exists.go"},
+		Reasons: map[string]string{},
+	}
+	result, err := validateAndCleanMentionedFiles(mentioned, []string{"exists.go"}, dir)
+	if err != nil {
+		t.Fatalf("validateAndCleanMentionedFiles: %v", err)
+	}
+	if result.Reasons["exists.go"] != defaultIdentifiedReason {
+		t.Fatalf("unexpected default reason: %q", result.Reasons["exists.go"])
+	}
 }

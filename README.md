@@ -1,59 +1,366 @@
 # Kontext
 
-**从模糊需求到 AI-Native 工程物料的生成系统**
+Kontext 是一个面向 AI 辅助研发场景的 Go 命令行工具。它的目标不是直接帮你写代码，而是先把一个项目的关键知识编译成结构化上下文，再把这些上下文按任务打包成高质量 Prompt，供大模型或 AI 编程工具直接消费。
 
-> 现在所有的工程规范、代码注释、项目文档都是为**人**设计的。  
-> 但真正写代码的，越来越多是 AI。  
-> **Kontext 为 AI 重新设计了工程上下文。**
+简单说，它解决的是这类问题：
 
-## 🤔 解决什么问题？
+- AI 不知道项目整体结构，每次都要重新解释
+- 项目规范、模块边界、架构约束通常散落在代码、文档和人脑里
+- 同一个任务换一个模型、换一个对话窗口，就得重复补上下文
+- 全量喂代码成本高，而且效果并不稳定
 
-你让 AI 帮你写代码时，是不是经常遇到：
+Kontext 的做法是把这些信息沉淀到项目内的 `.kontext/` 目录中，再围绕具体任务生成结构化 Markdown Prompt 文档。
 
-- AI 不了解项目全貌，写出的代码风格不一致
-- 要反复解释项目约定、架构分层、命名规范
-- 低级模型（GPT-3.5/Qwen-7B）几乎不可用，必须上最贵的模型
-- 每次对话都在"补充上下文"，真正写代码的时间反而很少
-- 换一个 AI 工具/模型，又要从头解释一遍
+## 它是干什么的
 
-**根因：我们给 AI 的信息是"为人设计的"——隐式的、散文式的、假设读者有经验的。**
+从代码实现和 `.kontext/` 中的工程说明看，Kontext 可以概括为一个“面向 AI 开发工作流的上下文编译器”：
 
-## 💡 Kontext 的解法
+- `init`：初始化 `.kontext/`，生成项目清单、架构图、编码约定、模块契约等上下文文件
+- `validate`：校验 `.kontext/` 里的 YAML 配置是否合法
+- `pack`：按任务描述收集相关上下文、代码片段和规则，打包成 Markdown Prompt 文档
+- `update`：检测项目源码变化，按需更新 `.kontext/` 中的物料
+- `config`：管理全局 LLM 配置
 
-将模糊的人类需求，转化为一套 **AI-Consumable Engineering Artifacts**：
+它既支持“交互式初始化”，也支持“扫描源码自动生成配置”，然后再进入“按任务打包 Prompt”的使用方式。
 
-| 物料 | 作用 | 对标人类世界 |
-|------|------|-------------|
-| `PROJECT_MANIFEST.yaml` | AI 的项目大脑 | 项目简介 + 技术方案 |
-| `ARCHITECTURE_MAP.yaml` | AI 的导航地图 | 架构文档 |
-| `MODULE_CONTRACTS/` | 每个模块的接口契约 | 接口文档 |
-| `DEPENDENCY_GRAPH.yaml` | 模块依赖关系 | 架构图 |
-| `TASK_CONTEXTS/` | 任务上下文包 | 任务 Brief |
-| `CODE_SKELETON/` | AI 注释的代码骨架 | 脚手架 |
-| `CONVENTIONS.yaml` | 项目约定规范 | 编码规范 |
-| `DEV_PLAYBOOK.yaml` | AI 开发剧本 | 开发指南 |
+## 核心产物
 
-## 🎯 效果
+Kontext 主要围绕项目根目录下的 `.kontext/` 工作。当前实现里最核心的产物包括：
 
-传统方式：人 → 反复解释 → AI → 反复修改 → 勉强能用
-Kontext：需求 → Kontext → 上下文包 → 任何AI → 一次成型
+- `.kontext/PROJECT_MANIFEST.yaml`
+  项目全局清单，描述项目定位、业务背景、核心流程、技术栈、当前阶段
+- `.kontext/ARCHITECTURE_MAP.yaml`
+  项目的分层结构、模块归属和架构规则
+- `.kontext/CONVENTIONS.yaml`
+  编码规范、错误处理规则、AI 协作约束
+- `.kontext/module_contracts/*_CONTRACT.yaml`
+  每个模块的职责边界、依赖关系、对外接口和修改规则
+- `.kontext/prompts/*.md`
+  `pack` 命令生成的任务上下文文档
+- `.kontext/.cache/`
+  `init --scan` 的阶段缓存和断点恢复数据
 
+## 项目结构概览
 
-- ✅ GPT-3.5 + Kontext ≈ GPT-4o 裸跑的代码质量  
-- ✅ 新加入项目的 AI（新对话/新工具）零学习成本
-- ✅ 代码风格 100% 一致，不再需要反复纠正
-- ✅ 支持任何 AI 工具：Cursor / Copilot / Claude / ChatGPT / 本地模型
+仓库当前是一个标准的 Go CLI 工程，入口和分层比较清晰：
 
-## 🏗️ 适用场景
+- `main.go`
+  程序入口
+- `cmd/`
+  Cobra 命令层，对外暴露 `init`、`pack`、`validate`、`update`、`config`
+- `internal/generator/`
+  初始化与扫描生成流程
+- `internal/packer/`
+  任务上下文收集、筛选、Prompt 打包
+- `internal/updater/`
+  变更检测与物料更新
+- `internal/schema/`
+  `.kontext` 各类 YAML 的结构定义、加载和校验
+- `internal/llm/`
+  OpenAI 兼容接口封装、结构化输出和重试逻辑
+- `internal/config/`
+  全局 LLM 配置加载与保存
+- `internal/cache/`
+  扫描缓存与检查点恢复
+- `templates/`
+  提示词模板，使用 Go embed 打包进二进制
+- `docs/`
+  设计记录和方案演进文档
+- `.kontext/`
+  当前仓库自身的 Kontext 配置，可作为理解项目的参考样本
 
-- [x] Web 全栈应用
-- [x] RAG / LLM 应用
-- [x] Agent 系统
-- [x] API 服务
-- [x] CLI 工具
-- [x] Python 库开发
-- [ ] 移动端（规划中）
+## 工作流程
 
-## 🚀 Quick Start
+典型使用流程如下：
 
-（后续补充）
+1. 配置 LLM
+2. 运行 `kontext init` 或 `kontext init --scan`
+3. 检查并补充 `.kontext/` 中的 YAML 内容
+4. 运行 `kontext validate`
+5. 使用 `kontext pack "任务描述"` 生成 Prompt 文档
+6. 把生成的 Markdown Prompt 发给 ChatGPT、Claude、Cursor、Copilot 或其他兼容工具
+
+## 安装
+
+### 方式一：直接用 Go 安装
+
+要求：
+
+- Go 1.24.2 或更高版本
+
+安装命令：
+
+```bash
+go install github.com/w1ndys/kontext@latest
+```
+
+安装完成后，确认 `GOBIN` 或 `GOPATH/bin` 已加入 `PATH`。
+
+### 方式二：从源码构建
+
+```bash
+git clone https://github.com/w1ndys/kontext.git
+cd kontext
+go build -o dist/kontext .
+```
+
+Windows 下可输出为：
+
+```powershell
+go build -o dist/kontext.exe .
+```
+
+### 方式三：使用 Taskfile 构建
+
+仓库内已经提供 `Taskfile.yml`，支持当前平台和多平台构建，例如：
+
+```bash
+task build
+task build:all
+```
+
+## LLM 配置
+
+Kontext 当前通过 OpenAI 兼容接口工作。配置优先级为：
+
+- 环境变量
+- `~/.kontext/config.yaml`
+- 默认值
+
+默认值：
+
+- `llm.base_url = https://api.openai.com/v1`
+- `llm.model = gpt-5.4`
+
+### 方式一：交互式配置
+
+```bash
+kontext config
+```
+
+这个命令会引导你设置：
+
+- API Base URL
+- API Key
+- 模型名
+- 超时时间
+
+如果 API 可访问，它还会尝试读取模型列表并让你在终端里选择。
+
+### 方式二：命令行配置
+
+```bash
+kontext config set llm.base_url https://api.openai.com/v1
+kontext config set llm.api_key your-api-key
+kontext config set llm.model gpt-5.4
+kontext config set llm.timeout 120
+```
+
+查看配置：
+
+```bash
+kontext config list
+kontext config get llm.model
+```
+
+### 方式三：环境变量
+
+```bash
+export KONTEXT_LLM_BASE_URL=https://api.openai.com/v1
+export KONTEXT_LLM_API_KEY=your-api-key
+export KONTEXT_LLM_MODEL=gpt-5.4
+export KONTEXT_LLM_TIMEOUT=120
+```
+
+Windows PowerShell：
+
+```powershell
+$env:KONTEXT_LLM_BASE_URL = "https://api.openai.com/v1"
+$env:KONTEXT_LLM_API_KEY = "your-api-key"
+$env:KONTEXT_LLM_MODEL = "gpt-5.4"
+$env:KONTEXT_LLM_TIMEOUT = "120"
+```
+
+## 如何使用
+
+### 1. 初始化 `.kontext`
+
+#### 交互式初始化
+
+```bash
+kontext init
+```
+
+行为如下：
+
+- 如果输入项目描述，会调用 LLM 进行交互式初始化
+- 如果直接回车，会写入一套静态模板
+- 如果当前目录已经存在 `.kontext/PROJECT_MANIFEST.yaml`，会先询问是否覆盖
+
+#### 扫描源码自动生成
+
+```bash
+kontext init --scan
+```
+
+这个模式会分阶段执行：
+
+1. 扫描目录树
+2. 用 LLM 识别关键文件
+3. 读取配置和依赖文件
+4. 提取源码概要
+5. 选择重点文件
+6. 生成 `PROJECT_MANIFEST.yaml`
+7. 生成 `ARCHITECTURE_MAP.yaml` 和 `CONVENTIONS.yaml`
+8. 生成模块契约
+9. 补充依赖与收尾
+
+缓存与恢复：
+
+```bash
+kontext init --scan --fresh
+kontext init --scan --resume
+```
+
+- `--fresh` 忽略缓存，强制重新扫描
+- `--resume` 直接从有效检查点继续
+
+### 2. 校验生成结果
+
+```bash
+kontext validate
+```
+
+当前会重点检查：
+
+- `PROJECT_MANIFEST.yaml` 是否存在
+- YAML 是否可解析
+- `project.name` 等必要字段是否存在
+- 架构图、规范、模块契约文件是否可解析
+
+### 3. 为任务打包上下文
+
+```bash
+kontext pack "为 update 命令补充单元测试"
+```
+
+或从文件读取任务描述：
+
+```bash
+kontext pack --from-file task.md
+kontext pack --from-file -
+```
+
+可选参数：
+
+```bash
+kontext pack "优化 pack 流程" --no-refine
+```
+
+- 默认会结合关键词匹配和 LLM 精筛
+- `--no-refine` 会跳过 LLM 精筛，只做本地匹配
+
+输出结果会保存在：
+
+```text
+.kontext/prompts/
+```
+
+文件名由时间戳和任务摘要组成，例如：
+
+```text
+20260322-153000_update命令补充单元测试.md
+```
+
+### 4. 根据代码变更更新 `.kontext`
+
+```bash
+kontext update
+```
+
+只看变更报告，不落盘：
+
+```bash
+kontext update --dry-run
+```
+
+只更新指定物料：
+
+```bash
+kontext update --file manifest
+kontext update --file architecture
+kontext update --file contracts
+kontext update --file all
+```
+
+只分析某个 commit 之后的变更：
+
+```bash
+kontext update --since <commit>
+```
+
+## 最小可用示例
+
+如果你想最快验证一遍：
+
+```bash
+kontext config
+kontext init --scan
+kontext validate
+kontext pack "阅读项目并说明 pack 流程如何工作"
+```
+
+然后打开 `.kontext/prompts/` 下生成的 Markdown 文件，把它交给任意 AI 工具继续工作。
+
+## 适用场景
+
+当前更适合以下类型项目：
+
+- CLI 工具
+- Go / Python / Node.js 服务端项目
+- 多模块后端系统
+- AI Agent / LLM 应用
+- 需要长期和多个 AI 工具协作的工程
+
+## 当前实现特点
+
+结合现有代码，Kontext 的几个关键实现点是：
+
+- 使用 Cobra 构建 CLI
+- 使用 `.kontext` YAML 作为项目知识的标准载体
+- 使用 OpenAI 兼容 LLM 接口生成结构化结果
+- 使用模板系统统一组织 Prompt
+- `init --scan` 具备阶段缓存和断点恢复能力
+- `pack` 不是把整个仓库直接塞给模型，而是先筛选相关文件与片段再组装
+
+## 局限与注意事项
+
+- 运行依赖可用的 LLM API Key
+- 当前实现主要围绕 OpenAI 兼容接口
+- 自动生成的 `.kontext` 不是最终真相，仍建议人工检查和修订
+- 测试覆盖还不高，当前已有测试主要集中在 `internal/packer` 和 `internal/schema`
+- 仓库内设计文档里提到的一些更大范围物料类型，并不代表当前版本都已经落地
+
+## 开发与验证
+
+本仓库当前可以通过：
+
+```bash
+go test ./...
+```
+
+我在当前代码上执行过该命令，测试通过。
+
+## 参考
+
+如果你要进一步理解这个项目，建议优先阅读：
+
+- `.kontext/PROJECT_MANIFEST.yaml`
+- `.kontext/ARCHITECTURE_MAP.yaml`
+- `.kontext/CONVENTIONS.yaml`
+- `cmd/`
+- `internal/generator/`
+- `internal/packer/`
+- `docs/`
+
+这几部分基本能覆盖“项目是什么、怎么工作、为什么这样设计”。

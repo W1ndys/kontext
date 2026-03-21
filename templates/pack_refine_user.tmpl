@@ -1,6 +1,15 @@
 任务描述：
 {{.Task}}
 
+已识别相关文件与源码片段（可能已截断）：
+{{range .IdentifiedFiles}}
+---
+路径：{{.Path}}
+原因：{{.Reason}}
+源码：
+{{.Content}}
+{{end}}
+
 候选文件（路径 + 签名摘要）：
 {{range .Candidates}}
 ---

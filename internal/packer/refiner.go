@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
-	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/templates"
@@ -32,17 +32,19 @@ type RefineResult struct {
 }
 
 type refineTemplateData struct {
-	Task       string
-	Candidates []CandidateFile
-	Contracts  []schema.ModuleContract
+	Task            string
+	Candidates      []CandidateFile
+	Contracts       []schema.ModuleContract
+	IdentifiedFiles []IdentifiedFile
 }
 
 // RefineContext 使用 LLM 对候选文件做二次精筛。
-func RefineContext(client llm.Client, task string, candidates []CandidateFile, contracts []schema.ModuleContract, onRetry func(attempt int, err error, backoff time.Duration)) (*RefineResult, error) {
-	userPrompt, err := generator.RenderTemplate(templates.PackRefineUser, refineTemplateData{
-		Task:       task,
-		Candidates: candidates,
-		Contracts:  contracts,
+func RefineContext(client llm.Client, task string, candidates []CandidateFile, contracts []schema.ModuleContract, identifiedFiles []IdentifiedFile, onRetry func(attempt int, err error, backoff time.Duration)) (*RefineResult, error) {
+	userPrompt, err := renderPackRefineUserPrompt(refineTemplateData{
+		Task:            task,
+		Candidates:      candidates,
+		Contracts:       contracts,
+		IdentifiedFiles: identifiedFiles,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("渲染精筛提示词失败: %w", err)
@@ -77,4 +79,17 @@ func RefineContext(client llm.Client, task string, candidates []CandidateFile, c
 	})
 
 	return &RefineResult{RelevantFiles: filtered}, nil
+}
+
+func renderPackRefineUserPrompt(data refineTemplateData) (string, error) {
+	tmpl, err := template.New("pack_refine_user").Parse(templates.PackRefineUser)
+	if err != nil {
+		return "", err
+	}
+
+	var buf strings.Builder
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }

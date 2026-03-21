@@ -22,6 +22,7 @@ type TemplateData struct {
 	RelevantFiles   string
 	DirectoryTree   string
 	RelevantCode    string
+	IdentifiedFiles []IdentifiedFile
 }
 
 // RenderSystemPrompt 返回渲染后的系统提示词。

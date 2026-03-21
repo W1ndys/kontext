@@ -28,26 +28,6 @@ func MatchContracts(task string, contracts []schema.ModuleContract) []schema.Mod
 	return matched
 }
 
-// MatchFiles 根据任务描述中的关键词匹配相关的文件路径。
-func MatchFiles(task string, files []string) []string {
-	keywords := extractKeywords(task)
-	if len(keywords) == 0 {
-		return files
-	}
-
-	var matched []string
-	for _, f := range files {
-		lower := strings.ToLower(f)
-		for _, kw := range keywords {
-			if strings.Contains(lower, kw) {
-				matched = append(matched, f)
-				break
-			}
-		}
-	}
-	return matched
-}
-
 // extractKeywords 从任务描述中提取关键词，兼容中英文输入。
 func extractKeywords(task string) []string {
 	stopWords := map[string]bool{

@@ -1,8 +1,7 @@
 package packer
 
 import (
-	"fmt"
-	"os"
+	"errors"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,12 +10,6 @@ import (
 	"github.com/w1ndys/kontext/internal/schema"
 )
 
-const (
-	maxCandidateFiles = 50
-	maxContextFiles   = 20
-	maxHighFileLines  = 500
-	scanDepth         = 5
-)
 
 var supportedCodeExtensions = map[string]bool{
 	".go": true, ".py": true, ".js": true, ".ts": true, ".tsx": true, ".jsx": true,
@@ -26,24 +19,27 @@ var supportedCodeExtensions = map[string]bool{
 
 // CandidateContext 保存为 Prompt 生成收集的候选上下文数据。
 type CandidateContext struct {
-	DirectoryTree []string
-	MatchedFiles  []string
-	FileSummaries map[string]string
-	CodeSnippets  map[string]string
-	Contracts     []schema.ModuleContract
-	RelevantFiles []FileRelevance
+	DirectoryTree    []string
+	MatchedFiles     []string
+	FileSummaries    map[string]string
+	CodeSnippets     map[string]string
+	Contracts        []schema.ModuleContract
+	RelevantFiles    []FileRelevance
+	MentionedReasons map[string]string
+	IdentifiedFiles  []IdentifiedFile
 }
 
-type scoredCandidate struct {
-	path    string
-	score   int
-	summary string
+// ScanCandidateFiles 扫描项目文件，返回候选文件路径列表
+func ScanCandidateFiles(root string) ([]string, error) {
+	return fileutil.ScanDirectoryTree(root, scanDepth)
 }
 
 // CollectContext 进行粗筛，返回候选文件路径和签名摘要。
-func CollectContext(bundle *schema.Bundle, task string, root string) (*CandidateContext, error) {
+// 如果提供了 mentionedFiles，将使用 LLM 识别结果；否则仅返回基础目录树与模块契约。
+func CollectContext(bundle *schema.Bundle, task string, root string, mentionedFiles *MentionedFiles) (*CandidateContext, error) {
 	ctx := &CandidateContext{
-		FileSummaries: make(map[string]string),
+		FileSummaries:    make(map[string]string),
+		MentionedReasons: make(map[string]string),
 	}
 
 	allFiles, err := fileutil.ScanDirectoryTree(root, scanDepth)
@@ -55,102 +51,115 @@ func CollectContext(bundle *schema.Bundle, task string, root string) (*Candidate
 
 	sourceFiles := collectSourceFiles(allFiles)
 	if len(sourceFiles) == 0 {
+		ctx.Contracts = MatchContracts(task, bundle.Contracts)
 		return ctx, nil
 	}
 
-	candidates := make([]scoredCandidate, 0, len(sourceFiles))
-	for _, relPath := range sourceFiles {
+	if mentionedFiles == nil || len(mentionedFiles.Paths) == 0 {
+		ctx.Contracts = MatchContracts(task, bundle.Contracts)
+		return ctx, nil
+	}
+
+	candidatePaths := mentionedFiles.Paths
+	for path, reason := range mentionedFiles.Reasons {
+		ctx.MentionedReasons[path] = reason
+	}
+
+	ctx.MatchedFiles = make([]string, 0, min(maxCandidateFiles, len(candidatePaths)))
+	for _, relPath := range candidatePaths {
+		if len(ctx.MatchedFiles) >= maxCandidateFiles {
+			break
+		}
 		fullPath := filepath.Join(root, relPath)
 		summary, summaryErr := fileutil.ExtractFileSummary(fullPath)
-		if summaryErr != nil {
-			continue
+		if summaryErr == nil && summary != "" {
+			ctx.FileSummaries[relPath] = summary
 		}
-		ctx.FileSummaries[relPath] = summary
-
-		score := matchScore(task, relPath, summary)
-		if score > 0 {
-			candidates = append(candidates, scoredCandidate{
-				path:    relPath,
-				score:   score,
-				summary: summary,
-			})
-		}
+		ctx.MatchedFiles = append(ctx.MatchedFiles, relPath)
 	}
 
-	if len(candidates) == 0 {
-		for _, relPath := range sourceFiles {
-			summary := ctx.FileSummaries[relPath]
-			if summary == "" {
-				continue
-			}
-			candidates = append(candidates, scoredCandidate{
-				path:    relPath,
-				score:   1,
-				summary: summary,
-			})
-		}
-	}
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].score == candidates[j].score {
-			return candidates[i].path < candidates[j].path
-		}
-		return candidates[i].score > candidates[j].score
-	})
-
-	if len(candidates) > maxCandidateFiles {
-		candidates = candidates[:maxCandidateFiles]
-	}
-
-	ctx.MatchedFiles = make([]string, 0, len(candidates))
-	filteredSummaries := make(map[string]string, len(candidates))
-	for _, candidate := range candidates {
-		ctx.MatchedFiles = append(ctx.MatchedFiles, candidate.path)
-		filteredSummaries[candidate.path] = candidate.summary
-	}
-	ctx.FileSummaries = filteredSummaries
 	ctx.Contracts = MatchContracts(task, bundle.Contracts)
 	return ctx, nil
 }
 
-// HydrateContext 根据精筛结果读取最终上下文代码。
-func HydrateContext(task string, root string, ctx *CandidateContext, refine *RefineResult) error {
+func PreloadIdentifiedFiles(root string, ctx *CandidateContext) error {
+	if len(ctx.MatchedFiles) == 0 {
+		ctx.CodeSnippets = make(map[string]string)
+		ctx.IdentifiedFiles = nil
+		return nil
+	}
 	ctx.CodeSnippets = make(map[string]string)
+	totalBytes := 0
+	for _, relPath := range ctx.MatchedFiles {
+		if totalBytes >= maxIdentifiedTotalBytes {
+			break
+		}
+		content, truncated, err := readIdentifiedFileContent(root, relPath, &totalBytes)
+		if err != nil {
+			continue
+		}
+		if truncated {
+			content = content + "\n\n[truncated]"
+		}
+		ctx.CodeSnippets[relPath] = content
+	}
+	ctx.IdentifiedFiles = buildIdentifiedFilesFromPaths(ctx.MatchedFiles, ctx.CodeSnippets, ctx.MentionedReasons)
+	return nil
+}
 
+// HydrateContext 根据精筛结果读取最终上下文代码。
+func HydrateContext(task string, ctx *CandidateContext, refine *RefineResult) {
 	selected := selectRelevantFiles(ctx, refine)
 	ctx.RelevantFiles = selected
-
-	for _, file := range selected {
-		if file.Relevance == "medium" {
-			if summary := ctx.FileSummaries[file.Path]; summary != "" {
-				ctx.CodeSnippets[file.Path] = summary
-			}
-			continue
-		}
-
-		content, err := readRelevantFile(root, file.Path, file.FocusAreas, maxHighFileLines)
-		if err != nil {
-			if summary := ctx.FileSummaries[file.Path]; summary != "" {
-				ctx.CodeSnippets[file.Path] = summary
-			}
-			continue
-		}
-		ctx.CodeSnippets[file.Path] = content
-	}
-
-	if len(ctx.CodeSnippets) == 0 {
-		for _, relPath := range ctx.MatchedFiles {
-			if summary := ctx.FileSummaries[relPath]; summary != "" {
-				ctx.CodeSnippets[relPath] = summary
-			}
-			if len(ctx.CodeSnippets) >= min(maxContextFiles, len(ctx.MatchedFiles)) {
-				break
-			}
-		}
-	}
-
 	ctx.Contracts = filterContractsByRelevantFiles(task, ctx.Contracts, selected)
-	return nil
+	ctx.IdentifiedFiles = buildIdentifiedFiles(selected, ctx.CodeSnippets, ctx.MentionedReasons)
+}
+
+func buildIdentifiedFiles(files []FileRelevance, snippets map[string]string, reasons map[string]string) []IdentifiedFile {
+	result := make([]IdentifiedFile, 0, len(files))
+	for _, file := range files {
+		content := snippets[file.Path]
+		if content == "" {
+			continue
+		}
+		reason := file.Reason
+		if reason == "" {
+			if fallback, ok := reasons[file.Path]; ok {
+				reason = fallback
+			}
+		}
+		if reason == "" {
+			reason = "LLM 识别为相关文件"
+		}
+		result = append(result, IdentifiedFile{
+			Path:      file.Path,
+			Reason:    reason,
+			Content:   content,
+			Truncated: strings.Contains(content, "[truncated]"),
+		})
+	}
+	return result
+}
+
+func buildIdentifiedFilesFromPaths(paths []string, snippets map[string]string, reasons map[string]string) []IdentifiedFile {
+	result := make([]IdentifiedFile, 0, len(paths))
+	for _, path := range paths {
+		content := snippets[path]
+		if content == "" {
+			continue
+		}
+		reason := "LLM 识别为相关文件"
+		if fallback, ok := reasons[path]; ok {
+			reason = fallback
+		}
+		result = append(result, IdentifiedFile{
+			Path:      path,
+			Reason:    reason,
+			Content:   content,
+			Truncated: strings.Contains(content, "[truncated]"),
+		})
+	}
+	return result
 }
 
 func collectSourceFiles(allFiles []string) []string {
@@ -163,27 +172,6 @@ func collectSourceFiles(allFiles []string) []string {
 	return files
 }
 
-func matchScore(task, path, summary string) int {
-	keywords := extractKeywords(task)
-	if len(keywords) == 0 {
-		return 1
-	}
-
-	lowerPath := strings.ToLower(path)
-	lowerSummary := strings.ToLower(summary)
-
-	score := 0
-	for _, kw := range keywords {
-		if strings.Contains(lowerPath, kw) {
-			score += 3
-		}
-		if strings.Contains(lowerSummary, kw) {
-			score += 2
-		}
-	}
-	return score
-}
-
 func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRelevance {
 	if refine == nil || len(refine.RelevantFiles) == 0 {
 		selected := make([]FileRelevance, 0, min(maxContextFiles, len(ctx.MatchedFiles)))
@@ -191,10 +179,14 @@ func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRele
 			if i >= maxContextFiles {
 				break
 			}
+			reason := "LLM 识别为相关文件"
+			if fallback, ok := ctx.MentionedReasons[relPath]; ok && strings.TrimSpace(fallback) != "" {
+				reason = strings.TrimSpace(fallback)
+			}
 			selected = append(selected, FileRelevance{
 				Path:      relPath,
 				Relevance: "high",
-				Reason:    "基于关键词匹配回退选择",
+				Reason:    reason,
 			})
 		}
 		return selected
@@ -218,107 +210,31 @@ func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRele
 	return ordered
 }
 
-func readRelevantFile(root, relPath string, focusAreas []string, maxLines int) (string, error) {
+func readIdentifiedFileContent(root, relPath string, totalBytes *int) (string, bool, error) {
 	fullPath := filepath.Join(root, relPath)
-	data, err := os.ReadFile(fullPath)
+	data, err := fileutil.ReadFile(fullPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	content := string(data)
-	lines := strings.Split(content, "\n")
-	if len(lines) <= maxLines {
-		return strings.TrimSpace(content), nil
+	remainingTotal := maxIdentifiedTotalBytes - *totalBytes
+	if remainingTotal <= 0 {
+		return "", false, errors.New("total byte limit reached")
 	}
 
-	windows := focusWindows(lines, focusAreas, maxLines)
-	if len(windows) == 0 {
-		return strings.Join(lines[:maxLines], "\n"), nil
+	limit := maxIdentifiedFileBytes
+	if remainingTotal < limit {
+		limit = remainingTotal
 	}
 
-	var parts []string
-	for _, window := range windows {
-		header := fmt.Sprintf("// === %s:%d-%d ===", relPath, window.start+1, window.end)
-		parts = append(parts, header)
-		parts = append(parts, strings.Join(lines[window.start:window.end], "\n"))
-	}
-	return strings.Join(parts, "\n"), nil
-}
-
-type lineWindow struct {
-	start int
-	end   int
-}
-
-func focusWindows(lines []string, focusAreas []string, maxLines int) []lineWindow {
-	if len(focusAreas) == 0 {
-		return nil
+	truncated := false
+	if len(data) > limit {
+		data = data[:limit]
+		truncated = true
 	}
 
-	lowerAreas := make([]string, 0, len(focusAreas))
-	for _, area := range focusAreas {
-		if trimmed := strings.TrimSpace(strings.ToLower(area)); trimmed != "" {
-			lowerAreas = append(lowerAreas, trimmed)
-		}
-	}
-	if len(lowerAreas) == 0 {
-		return nil
-	}
-
-	windows := make([]lineWindow, 0, len(lowerAreas))
-	for idx, line := range lines {
-		lowerLine := strings.ToLower(line)
-		for _, area := range lowerAreas {
-			if strings.Contains(lowerLine, area) {
-				start := max(0, idx-20)
-				end := min(len(lines), idx+80)
-				windows = append(windows, lineWindow{start: start, end: end})
-				break
-			}
-		}
-	}
-	if len(windows) == 0 {
-		return nil
-	}
-
-	sort.Slice(windows, func(i, j int) bool {
-		return windows[i].start < windows[j].start
-	})
-
-	merged := make([]lineWindow, 0, len(windows))
-	for _, window := range windows {
-		if len(merged) == 0 {
-			merged = append(merged, window)
-			continue
-		}
-		last := &merged[len(merged)-1]
-		if window.start <= last.end {
-			if window.end > last.end {
-				last.end = window.end
-			}
-			continue
-		}
-		merged = append(merged, window)
-	}
-
-	totalLines := 0
-	trimmed := make([]lineWindow, 0, len(merged))
-	for _, window := range merged {
-		length := window.end - window.start
-		if totalLines+length > maxLines {
-			window.end = min(window.start+(maxLines-totalLines), window.end)
-			length = window.end - window.start
-		}
-		if length <= 0 {
-			break
-		}
-		totalLines += length
-		trimmed = append(trimmed, window)
-		if totalLines >= maxLines {
-			break
-		}
-	}
-	return trimmed
+	*totalBytes += len(data)
+	return strings.TrimSpace(string(data)), truncated, nil
 }
 
 func filterContractsByRelevantFiles(task string, contracts []schema.ModuleContract, files []FileRelevance) []schema.ModuleContract {
@@ -371,13 +287,6 @@ func moduleNameFromPath(relPath string) string {
 
 func min(a, b int) int {
 	if a < b {
-		return a
-	}
-	return b
-}
-
-func max(a, b int) int {
-	if a > b {
 		return a
 	}
 	return b

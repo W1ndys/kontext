@@ -77,16 +77,14 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 		data.Contracts = strings.Join(parts, "\n\n")
 	}
 
-	if len(ctx.RelevantFiles) > 0 {
+	if len(ctx.IdentifiedFiles) > 0 {
 		var parts []string
-		for _, file := range ctx.RelevantFiles {
-			line := fmt.Sprintf("- `%s` [%s]: %s", file.Path, strings.ToUpper(file.Relevance), file.Reason)
+		for _, file := range ctx.IdentifiedFiles {
+			line := fmt.Sprintf("- `%s`: %s", file.Path, file.Reason)
 			parts = append(parts, line)
-			if len(file.FocusAreas) > 0 {
-				parts = append(parts, fmt.Sprintf("  - focus: %s", strings.Join(file.FocusAreas, ", ")))
-			}
 		}
 		data.RelevantFiles = strings.Join(parts, "\n")
+		data.IdentifiedFiles = ctx.IdentifiedFiles
 	}
 
 	// 目录树

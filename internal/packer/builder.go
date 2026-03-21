@@ -2,6 +2,7 @@ package packer
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -64,7 +65,6 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 	if len(ctx.Contracts) > 0 {
 		var parts []string
 		for _, c := range ctx.Contracts {
-			// 构建依赖列表
 			var deps []string
 			for _, d := range c.DependsOn {
 				deps = append(deps, d.Module)
@@ -87,12 +87,10 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 		data.IdentifiedFiles = ctx.IdentifiedFiles
 	}
 
-	// 目录树
 	if len(ctx.DirectoryTree) > 0 {
 		data.DirectoryTree = strings.Join(ctx.DirectoryTree, "\n")
 	}
 
-	// 相关代码
 	if len(ctx.CodeSnippets) > 0 {
 		var parts []string
 		paths := make([]string, 0, len(ctx.CodeSnippets))
@@ -102,10 +100,52 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 		sort.Strings(paths)
 		for _, path := range paths {
 			content := ctx.CodeSnippets[path]
-			parts = append(parts, fmt.Sprintf("### `%s`\n```go\n%s\n```", path, content))
+			language := markdownFenceLanguage(path)
+			if language == "" {
+				parts = append(parts, fmt.Sprintf("### `%s`\n```\n%s\n```", path, content))
+				continue
+			}
+			parts = append(parts, fmt.Sprintf("### `%s`\n```%s\n%s\n```", path, language, content))
 		}
 		data.RelevantCode = strings.Join(parts, "\n\n")
 	}
 
 	return data
+}
+
+func markdownFenceLanguage(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return "go"
+	case ".py":
+		return "python"
+	case ".js", ".mjs", ".cjs":
+		return "javascript"
+	case ".ts":
+		return "typescript"
+	case ".tsx":
+		return "tsx"
+	case ".jsx":
+		return "jsx"
+	case ".java":
+		return "java"
+	case ".rs":
+		return "rust"
+	case ".c", ".h":
+		return "c"
+	case ".cpp", ".cc", ".cxx", ".hpp":
+		return "cpp"
+	case ".rb":
+		return "ruby"
+	case ".php":
+		return "php"
+	case ".swift":
+		return "swift"
+	case ".kt":
+		return "kotlin"
+	case ".scala":
+		return "scala"
+	default:
+		return ""
+	}
 }

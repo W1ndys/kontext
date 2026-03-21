@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
@@ -16,6 +19,8 @@ var (
 	updateDryRun bool
 	updateFile   string
 	updateSince  string
+	updateLogMu  sync.Mutex
+	updateUI     = newUpdateProgressUI()
 )
 
 var updateCmd = &cobra.Command{
@@ -61,10 +66,11 @@ var updateCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("开始执行更新... / Applying updates...")
+		updateUI.Start()
 		executor := updater.NewExecutor(client, ".kontext", ".")
 		executor.SetProgressHandler(printUpdateProgress)
 		updated, err := executor.Execute(report, actions)
+		updateUI.Stop()
 		if err != nil {
 			return fmt.Errorf("执行更新失败: %w", err)
 		}
@@ -169,18 +175,177 @@ func confirmPlannedUpdates() bool {
 }
 
 func printUpdateProgress(event updater.ProgressEvent) {
+	updateUI.Handle(event)
+}
+
+type updateProgressUI struct {
+	mu         sync.Mutex
+	states     map[string]*updateTaskState
+	order      []string
+	tickerStop chan struct{}
+	tickerDone chan struct{}
+	rendered   int
+	running    bool
+	lastTotal  int
+}
+
+type updateTaskState struct {
+	index     int
+	total     int
+	target    string
+	startedAt time.Time
+	done      bool
+	doneText  string
+}
+
+func newUpdateProgressUI() *updateProgressUI {
+	return &updateProgressUI{
+		states: make(map[string]*updateTaskState),
+	}
+}
+
+func (ui *updateProgressUI) Start() {
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+
+	ui.states = make(map[string]*updateTaskState)
+	ui.order = nil
+	ui.rendered = 0
+	ui.lastTotal = 0
+	ui.tickerStop = make(chan struct{})
+	ui.tickerDone = make(chan struct{})
+	ui.running = true
+
+	go ui.loop(ui.tickerStop, ui.tickerDone)
+}
+
+func (ui *updateProgressUI) Stop() {
+	ui.mu.Lock()
+	if !ui.running {
+		ui.mu.Unlock()
+		return
+	}
+	stop := ui.tickerStop
+	done := ui.tickerDone
+	ui.running = false
+	ui.mu.Unlock()
+
+	close(stop)
+	<-done
+
+	ui.mu.Lock()
+	ui.renderLocked()
+	fmt.Println()
+	ui.mu.Unlock()
+}
+
+func (ui *updateProgressUI) loop(stop <-chan struct{}, done chan<- struct{}) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	defer close(done)
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			ui.mu.Lock()
+			ui.renderLocked()
+			ui.mu.Unlock()
+		}
+	}
+}
+
+func (ui *updateProgressUI) Handle(event updater.ProgressEvent) {
+	ui.mu.Lock()
+	defer ui.mu.Unlock()
+
+	key := ui.taskKey(event)
 	switch event.Stage {
 	case updater.ProgressActionStart:
-		fmt.Printf("[%d/%d] 更新 %s...\n", event.Index, event.Total, event.Action.Target)
-		fmt.Printf("  目标文件: %s\n", event.TargetPath)
-		fmt.Printf("  原因: %s\n", event.Action.Reason)
-	case updater.ProgressLLMStart:
-		fmt.Println("  正在调用 LLM 生成更新内容...")
-	case updater.ProgressStructuredFallback:
-		fmt.Printf("  结构化输出失败，回退到传统 JSON 模式: %s\n", event.Message)
-	case updater.ProgressYAMLRetry:
-		fmt.Printf("  返回内容不是合法 YAML，正在请求模型修正: %s\n", event.Message)
+		if _, ok := ui.states[key]; !ok {
+			ui.order = append(ui.order, key)
+		}
+		ui.states[key] = &updateTaskState{
+			index:     event.Index,
+			total:     event.Total,
+			target:    event.Action.Target,
+			startedAt: time.Now(),
+		}
+		ui.lastTotal = event.Total
 	case updater.ProgressActionDone:
-		fmt.Println("  已完成")
+		state, ok := ui.states[key]
+		if !ok {
+			state = &updateTaskState{
+				index:     event.Index,
+				total:     event.Total,
+				target:    event.Action.Target,
+				startedAt: time.Now(),
+			}
+			ui.states[key] = state
+			ui.order = append(ui.order, key)
+		}
+		state.done = true
+		state.doneText = event.Message
+		ui.lastTotal = event.Total
 	}
+
+	ui.renderLocked()
+}
+
+func (ui *updateProgressUI) taskKey(event updater.ProgressEvent) string {
+	return fmt.Sprintf("%d:%s", event.Index, event.Action.Target)
+}
+
+func (ui *updateProgressUI) renderLocked() {
+	lines := ui.linesLocked()
+	if ui.rendered > 0 {
+		fmt.Printf("\x1b[%dA", ui.rendered)
+	}
+	for i, line := range lines {
+		fmt.Print("\x1b[2K\r")
+		fmt.Print(line)
+		if i < len(lines)-1 {
+			fmt.Print("\n")
+		}
+	}
+	ui.rendered = len(lines)
+}
+
+func (ui *updateProgressUI) linesLocked() []string {
+	if len(ui.order) == 0 {
+		return nil
+	}
+
+	lines := make([]string, 0, len(ui.order))
+	now := time.Now()
+	for _, key := range ui.order {
+		state := ui.states[key]
+		if state == nil {
+			continue
+		}
+		total := state.total
+		if total == 0 {
+			total = ui.lastTotal
+		}
+		if state.done {
+			lines = append(lines, fmt.Sprintf("[%d/%d] %s  更新完成(耗时%s)", state.index, total, state.target, state.doneText))
+			continue
+		}
+		elapsed := int(now.Sub(state.startedAt).Round(time.Second) / time.Second)
+		if elapsed < 1 {
+			elapsed = 1
+		}
+		lines = append(lines, fmt.Sprintf("[%d/%d] 更新 %s 中(%ds)", state.index, total, state.target, elapsed))
+	}
+	return lines
+}
+
+func parseElapsedSeconds(value string) int {
+	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "s")
+	seconds, err := strconv.Atoi(trimmed)
+	if err != nil || seconds < 1 {
+		return 1
+	}
+	return seconds
 }

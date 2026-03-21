@@ -179,11 +179,11 @@ func detectStaleContract(contract schema.ModuleContract, summary string) string 
 	lowerSummary := strings.ToLower(summary)
 	missingOwns := 0
 	for _, item := range contract.Owns {
-		trimmed := strings.TrimSpace(strings.ToLower(item))
-		if trimmed == "" {
+		normalized, ok := normalizedOwnsProbe(item)
+		if !ok {
 			continue
 		}
-		if !strings.Contains(lowerSummary, trimmed) {
+		if !strings.Contains(lowerSummary, normalized) {
 			missingOwns++
 		}
 	}
@@ -204,6 +204,27 @@ func detectStaleContract(contract schema.ModuleContract, summary string) string 
 		reasons = append(reasons, fmt.Sprintf("检测到 %d 个未记录的导出符号", extra))
 	}
 	return strings.Join(reasons, "；")
+}
+
+func normalizedOwnsProbe(item string) (string, bool) {
+	trimmed := strings.TrimSpace(strings.ToLower(item))
+	if trimmed == "" {
+		return "", false
+	}
+
+	// `owns` 通常是职责描述，不应要求逐字出现在源码摘要里。
+	// 仅对路径、模块名、符号名这类可从代码直接验证的 ASCII 短条目做匹配。
+	if len([]rune(trimmed)) > 48 {
+		return "", false
+	}
+	if strings.Contains(trimmed, " ") {
+		return "", false
+	}
+	if !regexp.MustCompile(`^[a-z0-9_./-]+$`).MatchString(trimmed) {
+		return "", false
+	}
+
+	return trimmed, true
 }
 
 func extractExportedSymbols(summary string) []string {

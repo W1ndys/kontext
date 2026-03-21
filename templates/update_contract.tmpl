@@ -12,3 +12,38 @@
 请在现有契约基础上做最小修改。
 如果这是新模块，请生成一个完整契约。
 如果模块已删除且不应再保留，请返回空字符串。
+
+返回的 CONTRACT.yaml 必须严格符合以下 schema，不要省略顶层字段名，不要改用自定义字段：
+
+```yaml
+module:
+  name: "{{.ModuleName}}"
+  path: "模块路径，例如 internal/updater 或 cmd"
+  purpose: |
+    模块核心职责描述
+
+owns:
+  - "该模块负责的功能点"
+
+not_responsible_for:
+  - "该模块明确不负责的内容"
+
+depends_on:
+  - module: "依赖模块名"
+    reason: "依赖原因"
+
+public_interface:
+  - name: "对外暴露的函数或类型名"
+    signature: "完整签名或类型定义"
+    description: "功能描述"
+
+modification_rules:
+  - rule: "修改该模块时必须遵守的规则"
+    reason: "原因"
+```
+
+注意：
+- `module` 必须是对象，不能写成 `module: {{.ModuleName}}`
+- 必须使用 `owns`，不能改成 `responsibilities`
+- 必须使用 `public_interface`，不能改成 `key_functions`
+- 必须使用 `modification_rules`，不能改成 `notes`

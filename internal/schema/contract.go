@@ -1,12 +1,14 @@
 package schema
 
+import "fmt"
+
 // ModuleContract 定义模块的职责边界和依赖关系。
 type ModuleContract struct {
-	Module           ModuleInfo        `yaml:"module"`
-	Owns             []string          `yaml:"owns"`
-	NotResponsibleFor []string         `yaml:"not_responsible_for"`
-	DependsOn        []ModuleDependency `yaml:"depends_on"`
-	PublicInterface  []InterfaceItem    `yaml:"public_interface"`
+	Module            ModuleInfo         `yaml:"module"`
+	Owns              []string           `yaml:"owns"`
+	NotResponsibleFor []string           `yaml:"not_responsible_for"`
+	DependsOn         []ModuleDependency `yaml:"depends_on"`
+	PublicInterface   []InterfaceItem    `yaml:"public_interface"`
 	ModificationRules []ModificationRule `yaml:"modification_rules"`
 }
 
@@ -34,4 +36,26 @@ type InterfaceItem struct {
 type ModificationRule struct {
 	Rule   string `yaml:"rule"`
 	Reason string `yaml:"reason"`
+}
+
+// Validate 校验模块契约的必填字段。
+func (c ModuleContract) Validate() error {
+	if c.Module.Name == "" {
+		return fmt.Errorf("module.name 不能为空")
+	}
+	if c.Module.Path == "" {
+		return fmt.Errorf("module.path 不能为空")
+	}
+	if c.Module.Purpose == "" {
+		return fmt.Errorf("module.purpose 不能为空")
+	}
+	if len(c.Owns) == 0 {
+		return fmt.Errorf("owns 为必填字段，至少需要 1 个条目")
+	}
+	for i, item := range c.Owns {
+		if item == "" {
+			return fmt.Errorf("owns[%d] 不能为空", i)
+		}
+	}
+	return nil
 }

@@ -40,6 +40,7 @@ type ProgressStage string
 const (
 	ProgressActionStart        ProgressStage = "action_start"
 	ProgressLLMStart           ProgressStage = "llm_start"
+	ProgressLLMTick            ProgressStage = "llm_tick"
 	ProgressStructuredFallback ProgressStage = "structured_fallback"
 	ProgressYAMLRetry          ProgressStage = "yaml_retry"
 	ProgressActionDone         ProgressStage = "action_done"

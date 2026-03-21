@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/w1ndys/kontext/internal/fileutil"
@@ -14,10 +15,22 @@ import (
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/templates"
+	"go.yaml.in/yaml/v4"
+)
+
+const (
+	contractUpdateConcurrency = 4
+	llmProgressInterval       = 15 * time.Second
 )
 
 type yamlEnvelope struct {
 	Content string `json:"content"`
+}
+
+type actionResult struct {
+	index      int
+	targetPath string
+	err        error
 }
 
 // Executor 执行 update 计划。
@@ -47,37 +60,55 @@ func (e *Executor) SetProgressHandler(handler func(ProgressEvent)) {
 // Execute 执行更新计划。
 func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]string, error) {
 	var updated []string
-	for i, action := range actions {
-		targetPath, err := e.targetPath(action)
+	for i := 0; i < len(actions); {
+		if isContractAction(actions[i]) {
+			j := i
+			for j < len(actions) && isContractAction(actions[j]) {
+				j++
+			}
+
+			batchUpdated, err := e.executeContractBatch(report, actions[i:j], i, len(actions))
+			updated = append(updated, batchUpdated...)
+			if err != nil {
+				return updated, err
+			}
+			i = j
+			continue
+		}
+
+		targetPath, err := e.targetPath(actions[i])
 		if err != nil {
 			return updated, err
 		}
+		actionStart := time.Now()
 
 		e.emitProgress(ProgressEvent{
 			Stage:      ProgressActionStart,
-			Action:     action,
+			Action:     actions[i],
 			Index:      i + 1,
 			Total:      len(actions),
 			TargetPath: targetPath,
 		})
 
-		content, err := e.generateContent(report, action, i+1, len(actions), targetPath)
+		content, err := e.generateContent(report, actions[i], i+1, len(actions), targetPath)
 		if err != nil {
-			return updated, fmt.Errorf("生成 %s 失败: %w", action.Target, err)
+			return updated, fmt.Errorf("生成 %s 失败: %w", actions[i].Target, err)
 		}
 
-		if err := e.applyAction(targetPath, action, content); err != nil {
-			return updated, fmt.Errorf("应用 %s 失败: %w", action.Target, err)
+		if err := e.applyAction(targetPath, actions[i], content); err != nil {
+			return updated, fmt.Errorf("应用 %s 失败: %w", actions[i].Target, err)
 		}
 		updated = append(updated, targetPath)
 
 		e.emitProgress(ProgressEvent{
 			Stage:      ProgressActionDone,
-			Action:     action,
+			Action:     actions[i],
 			Index:      i + 1,
 			Total:      len(actions),
 			TargetPath: targetPath,
+			Message:    formatElapsedDuration(time.Since(actionStart)),
 		})
+		i++
 	}
 
 	if errs := schema.ValidateBundle(e.kontextDir); len(errs) > 0 {
@@ -90,6 +121,76 @@ func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]stri
 
 	sort.Strings(updated)
 	return updated, nil
+}
+
+func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAction, start, total int) ([]string, error) {
+	results := make(chan actionResult, len(actions))
+	sem := make(chan struct{}, contractUpdateConcurrency)
+	var wg sync.WaitGroup
+
+	for i, action := range actions {
+		globalIndex := start + i + 1
+		wg.Add(1)
+		go func(action UpdateAction, index int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			targetPath, err := e.targetPath(action)
+			if err != nil {
+				results <- actionResult{index: index, err: err}
+				return
+			}
+			actionStart := time.Now()
+
+			e.emitProgress(ProgressEvent{
+				Stage:      ProgressActionStart,
+				Action:     action,
+				Index:      index,
+				Total:      total,
+				TargetPath: targetPath,
+			})
+
+			content, err := e.generateContent(report, action, index, total, targetPath)
+			if err != nil {
+				results <- actionResult{index: index, err: fmt.Errorf("生成 %s 失败: %w", action.Target, err)}
+				return
+			}
+
+			if err := e.applyAction(targetPath, action, content); err != nil {
+				results <- actionResult{index: index, err: fmt.Errorf("应用 %s 失败: %w", action.Target, err)}
+				return
+			}
+
+			e.emitProgress(ProgressEvent{
+				Stage:      ProgressActionDone,
+				Action:     action,
+				Index:      index,
+				Total:      total,
+				TargetPath: targetPath,
+				Message:    formatElapsedDuration(time.Since(actionStart)),
+			})
+			results <- actionResult{index: index, targetPath: targetPath}
+		}(action, globalIndex)
+	}
+
+	wg.Wait()
+	close(results)
+
+	var updated []string
+	var firstErr error
+	firstErrIndex := total + 1
+	for result := range results {
+		if result.targetPath != "" {
+			updated = append(updated, result.targetPath)
+		}
+		if result.err != nil && result.index < firstErrIndex {
+			firstErr = result.err
+			firstErrIndex = result.index
+		}
+	}
+
+	return updated, firstErr
 }
 
 func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
@@ -121,7 +222,9 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 			TargetPath: targetPath,
 		})
 
+		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
 		resp, content, err := e.generateYAMLEnvelope(req, action, index, total, targetPath)
+		stopHeartbeat()
 		if err != nil {
 			return "", err
 		}
@@ -130,7 +233,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 			return "", nil
 		}
 
-		if validateErr := generator.ValidateYAML(content); validateErr == nil {
+		if validateErr := validateGeneratedContent(action, content); validateErr == nil {
 			return content, nil
 		} else {
 			lastValidationErr = validateErr
@@ -407,4 +510,80 @@ func (e *Executor) emitProgress(event ProgressEvent) {
 	if e.onProgress != nil {
 		e.onProgress(event)
 	}
+}
+
+func validateGeneratedContent(action UpdateAction, content string) error {
+	if err := generator.ValidateYAML(content); err != nil {
+		return err
+	}
+
+	switch {
+	case action.Target == "manifest":
+		var manifest schema.ProjectManifest
+		if err := yaml.Unmarshal([]byte(content), &manifest); err != nil {
+			return fmt.Errorf("manifest 结构不合法: %w", err)
+		}
+		if strings.TrimSpace(manifest.Project.Name) == "" {
+			return fmt.Errorf("manifest 结构不合法: project.name 不能为空")
+		}
+	case action.Target == "architecture":
+		var arch schema.ArchitectureMap
+		if err := yaml.Unmarshal([]byte(content), &arch); err != nil {
+			return fmt.Errorf("architecture 结构不合法: %w", err)
+		}
+	case strings.HasPrefix(action.Target, "contract:"):
+		var contract schema.ModuleContract
+		if err := yaml.Unmarshal([]byte(content), &contract); err != nil {
+			return fmt.Errorf("contract 结构不合法: %w", err)
+		}
+		if err := contract.Validate(); err != nil {
+			return fmt.Errorf("contract 结构不合法: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func isContractAction(action UpdateAction) bool {
+	return strings.HasPrefix(action.Target, "contract:")
+}
+
+func (e *Executor) startLLMHeartbeat(action UpdateAction, index, total int, targetPath string) func() {
+	done := make(chan struct{})
+	var once sync.Once
+	start := time.Now()
+
+	go func() {
+		ticker := time.NewTicker(llmProgressInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				e.emitProgress(ProgressEvent{
+					Stage:      ProgressLLMTick,
+					Action:     action,
+					Index:      index,
+					Total:      total,
+					TargetPath: targetPath,
+					Message:    formatElapsedDuration(time.Since(start)),
+				})
+			}
+		}
+	}()
+
+	return func() {
+		once.Do(func() {
+			close(done)
+		})
+	}
+}
+
+func formatElapsedDuration(elapsed time.Duration) string {
+	seconds := int(elapsed.Round(time.Second) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return fmt.Sprintf("%ds", seconds)
 }

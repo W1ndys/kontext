@@ -16,7 +16,6 @@ var (
 	updateDryRun bool
 	updateFile   string
 	updateSince  string
-	updateYes    bool
 )
 
 var updateCmd = &cobra.Command{
@@ -44,6 +43,12 @@ var updateCmd = &cobra.Command{
 			return nil
 		}
 
+		printPlannedUpdates(actions)
+		if !confirmPlannedUpdates() {
+			fmt.Println("已取消更新。")
+			return nil
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			return fmt.Errorf("加载 LLM 配置失败: %w", err)
@@ -56,19 +61,9 @@ var updateCmd = &cobra.Command{
 			return err
 		}
 
-		selected := make([]updater.UpdateAction, 0, len(actions))
-		for _, action := range actions {
-			if updateYes || confirmUpdateAction(action) {
-				selected = append(selected, action)
-			}
-		}
-		if len(selected) == 0 {
-			fmt.Println("未选择任何更新项。")
-			return nil
-		}
-
+		fmt.Println("开始执行更新... / Applying updates...")
 		executor := updater.NewExecutor(client, ".kontext", ".")
-		updated, err := executor.Execute(report, selected)
+		updated, err := executor.Execute(report, actions)
 		if err != nil {
 			return fmt.Errorf("执行更新失败: %w", err)
 		}
@@ -85,7 +80,6 @@ func init() {
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检测并打印变更报告 / Detect only without modifying files")
 	updateCmd.Flags().StringVar(&updateFile, "file", "", "仅更新指定物料：manifest|architecture|contracts|all")
 	updateCmd.Flags().StringVar(&updateSince, "since", "", "只分析指定 commit 之后的变更 / Analyze changes since commit")
-	updateCmd.Flags().BoolVarP(&updateYes, "yes", "y", false, "跳过确认，直接执行更新 / Apply updates without confirmation")
 }
 
 func validateUpdateFilter(filter string) error {
@@ -99,16 +93,6 @@ func validateUpdateFilter(filter string) error {
 
 func normalizedUpdateFilter(filter string) string {
 	return strings.ToLower(strings.TrimSpace(filter))
-}
-
-func confirmUpdateAction(action updater.UpdateAction) bool {
-	fmt.Printf("即将更新 %s，原因：%s。是否继续？[y/N] ", action.Target, action.Reason)
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		return false
-	}
-	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	return answer == "y" || answer == "yes"
 }
 
 func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAction) {
@@ -163,4 +147,22 @@ func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAct
 	for i, action := range actions {
 		fmt.Printf("  %d. %s  - %s\n", i+1, action.Target, action.Reason)
 	}
+}
+
+func printPlannedUpdates(actions []updater.UpdateAction) {
+	fmt.Println("即将更新以下物料 / Planned updates:")
+	for i, action := range actions {
+		fmt.Printf("  %d. %s - %s\n", i+1, action.Target, action.Reason)
+	}
+	fmt.Println()
+}
+
+func confirmPlannedUpdates() bool {
+	fmt.Print("是否继续执行更新？[y/N] ")
+	scanner := bufio.NewScanner(os.Stdin)
+	if !scanner.Scan() {
+		return false
+	}
+	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
+	return answer == "y" || answer == "yes"
 }

@@ -70,3 +70,9 @@ var UpdateContract string // UpdateContract 是更新模块契约的用户提示
 
 //go:embed update_manifest.tmpl
 var UpdateManifest string // UpdateManifest 是更新 PROJECT_MANIFEST 的用户提示词
+
+//go:embed pack_identify_files_system.tmpl
+var PackIdentifyFilesSystem string // PackIdentifyFilesSystem 是 Pack 文件识别阶段的系统提示词
+
+//go:embed pack_identify_files_user.tmpl
+var PackIdentifyFilesUser string // PackIdentifyFilesUser 是 Pack 文件识别阶段的用户提示词

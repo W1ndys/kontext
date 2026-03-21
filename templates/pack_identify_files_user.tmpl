@@ -1,0 +1,16 @@
+用户任务描述：
+{{.Task}}
+
+候选文件路径列表：
+{{range .CandidatePaths}}- {{.}}
+{{end}}
+
+{{if .ArchitectureSummary}}架构摘要：
+{{.ArchitectureSummary}}
+{{end}}
+
+{{if .ModuleSummary}}模块摘要：
+{{.ModuleSummary}}
+{{end}}
+
+请根据任务描述识别被提到或语义指向的文件路径。

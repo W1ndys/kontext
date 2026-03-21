@@ -26,6 +26,7 @@ type Executor struct {
 	kontextDir  string
 	projectDir  string
 	backupStamp string
+	onProgress  func(ProgressEvent)
 }
 
 // NewExecutor 创建一个 update 执行器。
@@ -38,16 +39,29 @@ func NewExecutor(client llm.Client, kontextDir, projectDir string) *Executor {
 	}
 }
 
+// SetProgressHandler 设置 update 执行进度回调。
+func (e *Executor) SetProgressHandler(handler func(ProgressEvent)) {
+	e.onProgress = handler
+}
+
 // Execute 执行更新计划。
 func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]string, error) {
 	var updated []string
-	for _, action := range actions {
+	for i, action := range actions {
 		targetPath, err := e.targetPath(action)
 		if err != nil {
 			return updated, err
 		}
 
-		content, err := e.generateContent(report, action)
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressActionStart,
+			Action:     action,
+			Index:      i + 1,
+			Total:      len(actions),
+			TargetPath: targetPath,
+		})
+
+		content, err := e.generateContent(report, action, i+1, len(actions), targetPath)
 		if err != nil {
 			return updated, fmt.Errorf("生成 %s 失败: %w", action.Target, err)
 		}
@@ -56,6 +70,14 @@ func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]stri
 			return updated, fmt.Errorf("应用 %s 失败: %w", action.Target, err)
 		}
 		updated = append(updated, targetPath)
+
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressActionDone,
+			Action:     action,
+			Index:      i + 1,
+			Total:      len(actions),
+			TargetPath: targetPath,
+		})
 	}
 
 	if errs := schema.ValidateBundle(e.kontextDir); len(errs) > 0 {
@@ -70,7 +92,7 @@ func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]stri
 	return updated, nil
 }
 
-func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (string, error) {
+func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
 	currentPath, err := e.targetPath(action)
 	if err != nil {
 		return "", err
@@ -91,7 +113,15 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (s
 
 	var lastValidationErr error
 	for semanticAttempt := 0; semanticAttempt < 2; semanticAttempt++ {
-		resp, content, err := e.generateYAMLEnvelope(req)
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressLLMStart,
+			Action:     action,
+			Index:      index,
+			Total:      total,
+			TargetPath: targetPath,
+		})
+
+		resp, content, err := e.generateYAMLEnvelope(req, action, index, total, targetPath)
 		if err != nil {
 			return "", err
 		}
@@ -104,6 +134,14 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (s
 			return content, nil
 		} else {
 			lastValidationErr = validateErr
+			e.emitProgress(ProgressEvent{
+				Stage:      ProgressYAMLRetry,
+				Action:     action,
+				Index:      index,
+				Total:      total,
+				TargetPath: targetPath,
+				Message:    validateErr.Error(),
+			})
 			req.Messages = append(req.Messages,
 				llm.Message{Role: "assistant", Content: resp.Content},
 				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的 YAML 无法解析：%v。请保持最小修改并返回合法 YAML。", validateErr)},
@@ -114,7 +152,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (s
 	return "", fmt.Errorf("LLM 返回的 YAML 仍不合法: %w", lastValidationErr)
 }
 
-func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
+func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
 	var out yamlEnvelope
 	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &out, 3, nil)
 	if err == nil {
@@ -123,6 +161,15 @@ func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest) (*llm.ChatResponse
 	if !llm.IsStructuredOutputError(err) {
 		return nil, "", err
 	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressStructuredFallback,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    err.Error(),
+	})
 
 	fallbackResp, fallbackContent, fallbackErr := e.generateYAMLEnvelopeLegacy(req)
 	if fallbackErr != nil {
@@ -354,4 +401,10 @@ func parseYAMLEnvelope(raw string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out.Content), nil
+}
+
+func (e *Executor) emitProgress(event ProgressEvent) {
+	if e.onProgress != nil {
+		e.onProgress(event)
+	}
 }

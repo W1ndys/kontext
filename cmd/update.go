@@ -63,6 +63,7 @@ var updateCmd = &cobra.Command{
 
 		fmt.Println("开始执行更新... / Applying updates...")
 		executor := updater.NewExecutor(client, ".kontext", ".")
+		executor.SetProgressHandler(printUpdateProgress)
 		updated, err := executor.Execute(report, actions)
 		if err != nil {
 			return fmt.Errorf("执行更新失败: %w", err)
@@ -165,4 +166,21 @@ func confirmPlannedUpdates() bool {
 	}
 	answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return answer == "y" || answer == "yes"
+}
+
+func printUpdateProgress(event updater.ProgressEvent) {
+	switch event.Stage {
+	case updater.ProgressActionStart:
+		fmt.Printf("[%d/%d] 更新 %s...\n", event.Index, event.Total, event.Action.Target)
+		fmt.Printf("  目标文件: %s\n", event.TargetPath)
+		fmt.Printf("  原因: %s\n", event.Action.Reason)
+	case updater.ProgressLLMStart:
+		fmt.Println("  正在调用 LLM 生成更新内容...")
+	case updater.ProgressStructuredFallback:
+		fmt.Printf("  结构化输出失败，回退到传统 JSON 模式: %s\n", event.Message)
+	case updater.ProgressYAMLRetry:
+		fmt.Printf("  返回内容不是合法 YAML，正在请求模型修正: %s\n", event.Message)
+	case updater.ProgressActionDone:
+		fmt.Println("  已完成")
+	}
 }

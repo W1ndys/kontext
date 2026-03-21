@@ -33,3 +33,24 @@ type UpdateAction struct {
 	Module     string
 	ChangeType string
 }
+
+// ProgressStage 描述 update 执行过程中的进度阶段。
+type ProgressStage string
+
+const (
+	ProgressActionStart        ProgressStage = "action_start"
+	ProgressLLMStart           ProgressStage = "llm_start"
+	ProgressStructuredFallback ProgressStage = "structured_fallback"
+	ProgressYAMLRetry          ProgressStage = "yaml_retry"
+	ProgressActionDone         ProgressStage = "action_done"
+)
+
+// ProgressEvent 描述一次 update 执行进度事件。
+type ProgressEvent struct {
+	Stage      ProgressStage
+	Action     UpdateAction
+	Index      int
+	Total      int
+	TargetPath string
+	Message    string
+}

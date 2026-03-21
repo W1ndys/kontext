@@ -141,9 +141,26 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 		return nil, fmt.Errorf("LLM API 未返回任何结果")
 	}
 
-	content := resp.Choices[0].Message.Content
+	choice := resp.Choices[0]
+	content := strings.TrimSpace(choice.Message.Content)
+	if content == "" {
+		rawMessage := compactSnippet(choice.Message.RawJSON(), 240)
+		if choice.Message.Refusal != "" {
+			return nil, fmt.Errorf(
+				"解析结构化输出失败: 响应内容为空（finish_reason=%s, refusal=%q, raw_message=%s）",
+				choice.FinishReason,
+				choice.Message.Refusal,
+				rawMessage,
+			)
+		}
+		return nil, fmt.Errorf(
+			"解析结构化输出失败: 响应内容为空（finish_reason=%s, raw_message=%s）",
+			choice.FinishReason,
+			rawMessage,
+		)
+	}
 	if err := json.Unmarshal([]byte(content), out); err != nil {
-		return nil, fmt.Errorf("解析结构化输出失败: %w", err)
+		return nil, fmt.Errorf("解析结构化输出失败: %w（content=%s）", err, compactSnippet(content, 240))
 	}
 
 	return &ChatResponse{Content: content}, nil
@@ -224,4 +241,17 @@ func generateJSONSchema(v any) (map[string]any, error) {
 	}
 
 	return result, nil
+}
+
+func compactSnippet(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return `""`
+	}
+
+	s = strings.Join(strings.Fields(s), " ")
+	if maxLen > 0 && len(s) > maxLen {
+		s = s[:maxLen] + "..."
+	}
+	return fmt.Sprintf("%q", s)
 }

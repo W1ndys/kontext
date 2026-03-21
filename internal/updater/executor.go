@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -90,13 +91,11 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (s
 
 	var lastValidationErr error
 	for semanticAttempt := 0; semanticAttempt < 2; semanticAttempt++ {
-		var out yamlEnvelope
-		resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &out, 3, nil)
+		resp, content, err := e.generateYAMLEnvelope(req)
 		if err != nil {
 			return "", err
 		}
 
-		content := strings.TrimSpace(out.Content)
 		if content == "" && allowEmpty {
 			return "", nil
 		}
@@ -113,6 +112,52 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction) (s
 	}
 
 	return "", fmt.Errorf("LLM 返回的 YAML 仍不合法: %w", lastValidationErr)
+}
+
+func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
+	var out yamlEnvelope
+	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &out, 3, nil)
+	if err == nil {
+		return resp, strings.TrimSpace(out.Content), nil
+	}
+	if !llm.IsStructuredOutputError(err) {
+		return nil, "", err
+	}
+
+	fallbackResp, fallbackContent, fallbackErr := e.generateYAMLEnvelopeLegacy(req)
+	if fallbackErr != nil {
+		return nil, "", fmt.Errorf("结构化输出失败: %v；回退到传统 JSON 模式也失败: %w", err, fallbackErr)
+	}
+	return fallbackResp, fallbackContent, nil
+}
+
+func (e *Executor) generateYAMLEnvelopeLegacy(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
+	resp, err := llm.ChatWithRetry(e.client, req, 3, nil)
+	if err != nil {
+		return nil, "", err
+	}
+
+	content, err := parseYAMLEnvelope(resp.Content)
+	if err == nil {
+		return resp, content, nil
+	}
+
+	retryReq := &llm.ChatRequest{Messages: append([]llm.Message{}, req.Messages...)}
+	retryReq.Messages = append(retryReq.Messages,
+		llm.Message{Role: "assistant", Content: resp.Content},
+		llm.Message{Role: "user", Content: fmt.Sprintf("上次返回的 JSON 格式不正确，错误: %v。请重新返回合法 JSON，且只包含 content 字段。", err)},
+	)
+
+	retryResp, retryErr := llm.ChatWithRetry(e.client, retryReq, 3, nil)
+	if retryErr != nil {
+		return nil, "", retryErr
+	}
+
+	content, err = parseYAMLEnvelope(retryResp.Content)
+	if err != nil {
+		return nil, "", fmt.Errorf("解析传统 JSON 响应失败: %w", err)
+	}
+	return retryResp, content, nil
 }
 
 func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, currentYAML string) (string, bool, error) {
@@ -289,4 +334,24 @@ func readTextIfExists(path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func parseYAMLEnvelope(raw string) (string, error) {
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```") {
+		lines := strings.Split(cleaned, "\n")
+		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") {
+			lines = lines[1:]
+			if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1]) == "```" {
+				lines = lines[:n-1]
+			}
+			cleaned = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+
+	var out yamlEnvelope
+	if err := json.Unmarshal([]byte(cleaned), &out); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.Content), nil
 }

@@ -54,6 +54,7 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 		logger.Info("command started",
 			"command", cmd.CommandPath(),
 			"arg_count", len(args),
+			"log_file", logging.CurrentLogFilePath(),
 		)
 		return nil
 	},

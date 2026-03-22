@@ -76,13 +76,21 @@ func resolvePackTask(args []string) (string, string, error) {
 	}
 
 	if packFromFile == "" && len(args) == 0 {
-		return "", "", fmt.Errorf("请提供任务描述，或使用 --from-file 指定任务文件")
+		task, err := readTaskFromPrompt()
+		if err != nil {
+			return "", "", err
+		}
+		return task, "", nil
 	}
 
 	if packFromFile == "" {
 		task := strings.TrimSpace(args[0])
 		if task == "" {
-			return "", "", fmt.Errorf("任务描述不能为空")
+			task, err := readTaskFromPrompt()
+			if err != nil {
+				return "", "", err
+			}
+			return task, "", nil
 		}
 		return task, "", nil
 	}
@@ -113,4 +121,36 @@ func readTaskInput(path string) ([]byte, error) {
 func cleanTaskContent(data []byte) string {
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	return strings.TrimSpace(string(data))
+}
+
+func readTaskFromPrompt() (string, error) {
+	reader := bufio.NewReader(os.Stdin)
+	var lines []string
+
+	for {
+		if len(lines) == 0 {
+			fmt.Fprintln(os.Stderr, "请输入任务描述，输入空行结束:")
+		}
+		fmt.Fprint(os.Stderr, "> ")
+		line, err := reader.ReadString('\n')
+		line = strings.TrimRight(line, "\r\n")
+		if strings.TrimSpace(line) == "" {
+			if len(lines) > 0 {
+				return strings.TrimSpace(strings.Join(lines, "\n")), nil
+			}
+			if err == io.EOF {
+				return "", fmt.Errorf("任务描述不能为空")
+			}
+			continue
+		}
+
+		lines = append(lines, line)
+
+		if err != nil {
+			if err == io.EOF {
+				return strings.TrimSpace(strings.Join(lines, "\n")), nil
+			}
+			return "", fmt.Errorf("读取任务描述失败: %w", err)
+		}
+	}
 }

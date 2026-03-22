@@ -1,0 +1,38 @@
+module:
+  name: "promptdoc"
+  path: "internal/promptdoc"
+  purpose: |
+    负责将最终生成的 Prompt 文档以稳定、可读的文件名保存到目标目录中。
+    该模块聚焦于输出落盘适配：根据任务描述生成适合文件系统使用的 Markdown 文件名，并执行目录创建与文件写入。
+    它不参与 Prompt 内容生成、上下文筛选、模板渲染或 LLM 调用，只为上层打包流程提供最终文档持久化能力。
+
+owns:
+  - "根据任务描述生成适合作为 Prompt 文档的 slug 文件名"
+  - "确保输出目录存在并将 Prompt 内容保存为 Markdown 文件"
+  - "统一 Prompt 文档文件扩展名与落盘路径拼接规则"
+
+not_responsible_for:
+  - "不负责收集或筛选项目上下文"
+  - "不负责调用 LLM 生成 Prompt 内容"
+  - "不负责模板渲染或决定 Prompt 文档结构"
+  - "不负责扫描仓库、解析 YAML 或校验 .kontext 物料"
+
+depends_on: []
+
+public_interface:
+  - name: "GenerateFilename"
+    signature: "func GenerateFilename(task string) string"
+    description: "根据任务描述生成适合文件系统使用的 Markdown 文件名；当任务为空或归一化后为空时返回默认文件名。"
+  - name: "SavePrompt"
+    signature: "func SavePrompt(outputDir string, filename string, content string) (string, error)"
+    description: "确保输出目录存在后，将 Prompt 内容写入指定文件名对应的 Markdown 文件，并返回最终文件路径。"
+
+modification_rules:
+  - rule: "生成文件名时必须保持结果可跨平台安全使用，并继续输出 .md 扩展名。"
+    reason: "该模块被 pack 流程用于最终文档落盘，文件名不安全或扩展名变化会破坏用户预期和后续使用习惯。"
+  - rule: "保存文件前必须确保目标目录存在，且返回值应为最终写入路径。"
+    reason: "上层流程依赖该模块一次性完成可写目录准备与结果路径反馈，避免在调用方重复实现文件系统细节。"
+  - rule: "模块应只处理命名与落盘，不引入 LLM、模板或上下文筛选相关逻辑。"
+    reason: "根据架构分层，promptdoc 是输出适配器；越界扩展会模糊与 packer、templates、llm 的职责边界。"
+  - rule: "默认文件名语义应保持稳定，空任务或不可用任务输入时不能返回空字符串。"
+    reason: "上层命令在不同交互方式下都可能传入弱化任务描述，稳定兜底命名可避免保存失败或产生不可预测文件名。"

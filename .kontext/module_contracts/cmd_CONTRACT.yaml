@@ -1,0 +1,68 @@
+module:
+  name: "cmd"
+  path: "cmd"
+  purpose: |
+    提供 Kontext CLI 的命令入口层，实现 init、pack、update、validate、config 等命令的定义、参数解析、终端交互、进度展示与错误转译，并将具体业务流程委托给内部应用服务模块执行。
+
+owns:
+  - "定义根命令及各子命令，并完成 Cobra 命令注册"
+  - "解析命令行参数、flag 与位置参数，转换为内部流程可消费的输入"
+  - "处理用户交互，包括覆盖确认、更新确认、任务输入读取与配置输入"
+  - "加载运行时配置并创建 LLM 客户端后交给下层模块使用"
+  - "编排 init 的交互式初始化、静态初始化、扫描初始化以及断点恢复入口"
+  - "编排 update 的变更检测、更新计划展示、执行确认与进度输出"
+  - "编排 pack 的任务解析、任务文件读取与调用打包引擎"
+  - "调用 schema 校验 .kontext 物料并向终端输出校验结果"
+  - "为配置命令提供命令行与 TUI 交互入口"
+
+not_responsible_for:
+  - "不负责定义 .kontext YAML 的数据结构与校验规则"
+  - "不负责实现 OpenAI 兼容协议、流式输出或重试策略"
+  - "不负责实现初始化生成、Prompt 打包或增量更新的核心业务算法"
+  - "不负责底层文件扫描、目录遍历、通用读写与摘要提取算法"
+  - "不负责维护模板内容本身，只负责触发使用对应模板的流程"
+
+depends_on:
+  - module: "cache"
+    reason: "init --scan 流程需要检查检查点有效性、清理缓存并支持断点恢复"
+  - module: "config"
+    reason: "init、update、config、pack 等命令需要读取和保存全局 LLM 配置，并转换为 llm.Config"
+  - module: "fileutil"
+    reason: "命令层在初始化与打包入口中需要检查目录/文件是否存在以及进行基础文件读取辅助"
+  - module: "generator"
+    reason: "init 命令通过该模块执行交互式生成、扫描分析与 YAML 物料产出"
+  - module: "llm"
+    reason: "命令层在读取配置后创建统一的 LLM 客户端供 init、pack、update 流程使用"
+  - module: "packer"
+    reason: "pack 命令将任务描述与上下文打包工作委托给打包引擎"
+  - module: "schema"
+    reason: "validate 命令依赖 schema.ValidateBundle 校验 .kontext 物料完整性"
+  - module: "updater"
+    reason: "update 命令依赖该模块完成变更检测、更新计划生成、执行与进度事件输出"
+  - module: "templates"
+    reason: "init 扫描初始化入口会直接引用模板资源参与阶段性生成与默认初始化"
+
+public_interface:
+  - name: "Execute"
+    signature: "func Execute()"
+    description: "CLI 程序主入口，初始化默认 help 命令描述并执行根命令；执行失败时向标准错误输出并退出进程。"
+
+modification_rules:
+  - rule: "新增命令必须通过 rootCmd.AddCommand 注册到根命令，而不是在 main 或其他包中分散挂载。"
+    reason: "当前命令树集中在 cmd/root.go 维护，保证 CLI 入口统一且便于发现全部子命令。"
+  - rule: "cmd 层只负责参数解析、交互与流程触发，不得把 YAML 解析、LLM 协议细节或复杂业务规则下沉到命令文件中。"
+    reason: "架构上 cmd 是命令入口层，核心逻辑已分别归属 generator、packer、updater、schema、llm 等模块。"
+  - rule: "读取 LLM 相关配置时必须先走 config.Load 与 ToLLMConfig，再调用 llm.NewClient。"
+    reason: "项目已将配置持久化格式与运行时客户端配置转换集中在 config 模块，避免命令层重复拼装。"
+  - rule: "涉及可能覆盖用户文件或执行批量更新的命令必须保留显式确认步骤。"
+    reason: "init 与 update 当前都在执行破坏性操作前询问用户，属于既有安全边界。"
+  - rule: "validate 命令不得复制 schema 中的校验逻辑，只能复用 schema 提供的统一校验入口。"
+    reason: "YAML 结构约束必须保持单一事实来源，避免命令层与 schema 层规则漂移。"
+  - rule: "update 命令的职责应维持为检测 -> 计划展示 -> 用户确认 -> 执行，不得跳过计划输出直接落地更新。"
+    reason: "当前实现明确通过 printPlannedUpdates 与 confirmPlannedUpdates 建立可审查的更新流程。"
+  - rule: "init --scan 的缓存恢复入口必须继续依赖 cache 模块，不得在 cmd 内部引入新的独立缓存格式。"
+    reason: "扫描初始化的断点续跑已由 internal/cache 提供统一检查点语义，重复实现会破坏兼容性。"
+  - rule: "终端展示逻辑可以扩展，但不应改变下层 ProgressEvent、ChangeReport、UpdateAction 等类型的语义。"
+    reason: "cmd/update.go 的进度 UI 和报告输出建立在 updater 暴露的数据契约之上，命令层应消费而非重定义这些契约。"
+  - rule: "根命令 Execute 应继续作为 main 调用的唯一公开入口。"
+    reason: "main.go 只依赖 cmd.Execute，保持启动入口单一可避免上层直接耦合具体命令实现。"

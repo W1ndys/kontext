@@ -1,0 +1,56 @@
+module:
+  name: "fileutil"
+  path: "internal/fileutil"
+  purpose: |
+    提供项目范围内复用的底层文件系统工具能力，包括文件读写、目录存在性判断、目录创建、项目源码扫描、候选文件筛选与文件摘要提取。该模块为上层的 generator、packer、schema、updater 和 cmd 提供统一的 I/O 与扫描基础设施，屏蔽具体文件系统遍历和文本截断细节。
+
+owns:
+  - "读取与写入文本文件内容"
+  - "创建目录及确保目录存在"
+  - "判断文件或目录是否存在"
+  - "递归扫描项目目录并生成文件清单"
+  - "按忽略规则过滤目录和文件"
+  - "提取文件摘要用于上层上下文构建"
+
+not_responsible_for:
+  - "不负责 YAML 结构定义、解析语义或业务校验"
+  - "不负责 LLM 调用、提示词生成或模型结果处理"
+  - "不负责根据任务判断文件相关性"
+  - "不负责 .kontext 物料更新规划或执行策略"
+
+depends_on: []
+
+public_interface:
+  - name: "ReadFile"
+    signature: "func ReadFile(path string) (string, error)"
+    description: "读取指定路径文件内容并返回字符串形式的完整文本。"
+  - name: "WriteFile"
+    signature: "func WriteFile(path string, content string) error"
+    description: "将文本内容写入指定文件路径，供配置物料和文档输出复用。"
+  - name: "FileExists"
+    signature: "func FileExists(path string) bool"
+    description: "判断指定路径的文件是否存在。"
+  - name: "DirExists"
+    signature: "func DirExists(path string) bool"
+    description: "判断指定路径的目录是否存在。"
+  - name: "EnsureDir"
+    signature: "func EnsureDir(path string) error"
+    description: "确保目录存在，不存在时递归创建。"
+  - name: "ScanFiles"
+    signature: "func ScanFiles(root string, maxDepth int) ([]string, error)"
+    description: "扫描根目录下的文件列表，并依据深度和内置忽略规则过滤无关路径。"
+  - name: "ExtractFileSummary"
+    signature: "func ExtractFileSummary(path string, maxLines int) (string, error)"
+    description: "提取文件的摘要文本，通常用于候选文件说明或上下文预览。"
+
+modification_rules:
+  - rule: "新增或修改扫描逻辑时，必须保持该模块只返回通用文件事实，不嵌入 pack、init 或 update 的业务判断。"
+    reason: "fileutil 被多个上层模块共享，若混入业务语义会破坏模块边界并增加耦合。"
+  - rule: "修改公开函数签名时，必须同步检查 generator、packer、schema、updater 与 cmd 的调用点兼容性。"
+    reason: "该模块是底层通用设施，接口变更会影响多个上层流程。"
+  - rule: "扫描函数必须持续遵守忽略隐藏目录、构建产物、依赖目录和 .kontext 等噪声路径的策略，除非有明确全局设计变更。"
+    reason: "上层流程依赖稳定的候选文件集合，扫描范围失控会显著增加噪声、成本和处理时间。"
+  - rule: "文件摘要提取逻辑应保持可预测和轻量，避免在该模块中引入复杂解析器或语言特定语义分析。"
+    reason: "该模块定位为基础 I/O 工具，复杂语义分析应由更上层模块负责。"
+  - rule: "写文件相关能力必须优先保证目录存在与错误透传，不得静默吞掉底层 I/O 错误。"
+    reason: "schema、promptdoc 和更新流程依赖明确的失败信号来保证物料写入安全性。"

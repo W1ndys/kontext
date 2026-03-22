@@ -1,0 +1,36 @@
+module:
+  name: "main"
+  path: "main.go"
+  purpose: |
+    程序启动入口模块，负责作为可执行文件的最外层边界启动 CLI，并将控制权交给 cmd 包执行。该模块只承载进程入口职责，不包含命令解析、业务编排、配置加载、文件处理、LLM 调用或 YAML 物料处理逻辑。
+
+owns:
+  - "定义程序入口函数 main"
+  - "调用 cmd.Execute 启动整个 CLI 应用"
+  - "作为可执行程序与命令系统之间的最小连接点"
+
+not_responsible_for:
+  - "命令行参数定义与子命令注册"
+  - "初始化、打包、更新、校验等业务流程编排"
+  - "LLM 配置读取或模型调用"
+  - "YAML 物料加载、解析与校验"
+  - "文件系统扫描、缓存、模板渲染或 Prompt 文档输出"
+
+depends_on:
+  - module: "cmd"
+    reason: "main 仅通过调用 cmd.Execute 将程序启动流程委托给 CLI 命令入口层"
+
+public_interface:
+  - name: "main"
+    signature: "func main()"
+    description: "应用程序启动入口，调用 cmd.Execute 启动命令行执行流程"
+
+modification_rules:
+  - rule: "main.go 中必须保持仅作为启动入口使用，不得加入业务逻辑"
+    reason: "架构上 main 只负责启动程序，业务应收敛在 cmd 及 internal 包中，避免入口层膨胀"
+  - rule: "main 模块只能依赖 cmd 模块，不得直接导入 internal 下的业务或基础设施包"
+    reason: "需要维持清晰的单向依赖关系，避免绕过 CLI 入口层形成耦合"
+  - rule: "若需要在启动时增加行为，应优先在 cmd.Execute 或对应命令初始化中实现，而不是在 main 中扩展"
+    reason: "这样可保持启动入口稳定、可测试，并与现有架构分层保持一致"
+  - rule: "main 函数应保持简短且确定性，不应承担错误聚合、交互展示或运行时配置拼装"
+    reason: "这些职责属于 cmd 层，放入 main 会导致职责边界模糊并增加维护成本"

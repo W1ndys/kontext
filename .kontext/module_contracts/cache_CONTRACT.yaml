@@ -1,0 +1,55 @@
+module:
+  name: "cache"
+  path: "internal/cache"
+  purpose: |
+    为扫描初始化等长流程提供本地检查点缓存能力，负责阶段状态持久化、恢复读取、缓存有效性判断以及目录内容哈希计算，用于支持断点续跑、恢复执行和缓存清理。
+
+owns:
+  - "定义扫描初始化检查点的数据结构与元数据字段"
+  - "将检查点内容序列化到磁盘并从磁盘恢复"
+  - "根据项目路径、扫描深度等上下文判断检查点是否仍然可用"
+  - "计算目录内容哈希，用于识别源码状态变化"
+  - "提供检查点文件删除与缓存失效处理能力"
+
+not_responsible_for:
+  - "不负责扫描项目源码、提取模块信息或生成 YAML 物料"
+  - "不负责命令行参数解析、交互确认或进度展示"
+  - "不负责 LLM 调用、提示词渲染或模型输出处理"
+  - "不负责 .kontext schema 校验或业务层更新规划"
+
+depends_on: []
+
+public_interface:
+  - name: "Checkpoint"
+    signature: "type Checkpoint struct"
+    description: "表示扫描初始化流程的检查点数据，承载阶段标识、项目路径、扫描参数、分析结果及时间戳等可恢复状态。"
+  - name: "SaveCheckpoint"
+    signature: "func SaveCheckpoint(checkpointPath string, cp *Checkpoint) error"
+    description: "将检查点数据写入指定路径，供后续恢复扫描流程使用。"
+  - name: "LoadCheckpoint"
+    signature: "func LoadCheckpoint(checkpointPath string) (*Checkpoint, error)"
+    description: "从指定路径读取并反序列化检查点数据。"
+  - name: "DeleteCheckpoint"
+    signature: "func DeleteCheckpoint(checkpointPath string) error"
+    description: "删除指定检查点文件，用于 fresh 模式或流程完成后的清理。"
+  - name: "IsCheckpointValid"
+    signature: "func IsCheckpointValid(cp *Checkpoint, projectPath string, depth int) bool"
+    description: "校验已有检查点是否与当前项目路径和扫描深度匹配，从而决定能否恢复执行。"
+  - name: "ComputeDirHash"
+    signature: "func ComputeDirHash(root string) (string, error)"
+    description: "计算目录内容哈希值，用于判断项目源码状态是否发生变化。"
+  - name: "HashFile"
+    signature: "func HashFile(path string) (string, error)"
+    description: "计算单个文件的哈希值，作为目录哈希汇总的基础能力。"
+
+modification_rules:
+  - rule: "新增或修改 Checkpoint 字段时必须保持向后兼容，避免让旧检查点在升级后无法读取。"
+    reason: "该模块承担断点恢复职责，破坏兼容性会直接导致 resume 流程失效。"
+  - rule: "检查点有效性判断只能基于缓存元数据与运行参数，不得引入上层业务语义。"
+    reason: "cache 被定位为底层支撑设施，应保持通用和低耦合。"
+  - rule: "哈希计算必须保持确定性，相同目录内容在相同规则下应产生稳定结果。"
+    reason: "缓存命中与失效依赖哈希结果，非确定性会造成错误恢复或无效重跑。"
+  - rule: "读写检查点时必须以错误返回的方式暴露失败原因，不得吞掉 I/O 或序列化错误。"
+    reason: "上层命令需要据此决定是恢复、重试还是回退到全量扫描。"
+  - rule: "不要在该模块中加入扫描、生成、更新等流程编排逻辑。"
+    reason: "模块边界要求 cache 仅提供缓存与哈希能力，避免与 generator、cmd 形成职责混杂。"

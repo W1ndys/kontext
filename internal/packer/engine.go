@@ -12,7 +12,7 @@ import (
 	"github.com/w1ndys/kontext/internal/schema"
 )
 
-const packStages = 9
+const packStages = 10
 
 // Engine 编排 Pack 流水线。
 type Engine struct {
@@ -21,7 +21,6 @@ type Engine struct {
 	projectDir    string
 	OnProgress    func(stage, total int, msg string)
 	DisableRefine bool
-	FilenameHint  string
 }
 
 // NewEngine 创建一个新的 Pack 引擎。
@@ -33,7 +32,7 @@ func NewEngine(llmClient llm.Client, kontextDir, projectDir string) *Engine {
 	}
 }
 
-// Pack 执行完整的 9 阶段流水线，返回生成的 Prompt 文件路径。
+// Pack 执行完整的 10 阶段流水线，返回生成的 Prompt 文件路径。
 func (e *Engine) Pack(task string) (string, error) {
 	e.progress(1, "加载 .kontext/ 配置...")
 	bundle, err := schema.LoadBundle(e.kontextDir)
@@ -75,9 +74,10 @@ func (e *Engine) Pack(task string) (string, error) {
 		mentionedFiles = nil
 	}
 
+	e.progress(4, "收集候选上下文...")
 	ctx, err := CollectContext(bundle, task, e.projectDir, mentionedFiles)
 	if err != nil {
-		return "", fmt.Errorf("阶段 4 (粗筛上下文): %w", err)
+		return "", fmt.Errorf("阶段 4 (收集候选上下文): %w", err)
 	}
 	if err := PreloadIdentifiedFiles(e.projectDir, ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "\n⚠ Failed to attach some or all identified source files; packing will continue with available context / 读取识别文件失败，将继续打包并使用当前可用上下文：%v\n", err)
@@ -131,11 +131,19 @@ func (e *Engine) Pack(task string) (string, error) {
 	}
 	fmt.Fprintln(os.Stderr)
 
-	e.progress(9, "保存文件...")
-	filename := promptdoc.GenerateFilename(task, e.FilenameHint)
+	e.progress(9, "生成输出文件名...")
+	filenameTitle, err := GenerateFilenameSuggestion(e.llmClient, task, func(attempt int, retryErr error, backoff time.Duration) {
+		fmt.Fprintf(os.Stderr, "\n⚠ Filename generation failed (%s), retrying in %s [attempt %d] / 文件名生成失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n⚠ Failed to generate semantic filename; fallback to default naming / 文件名生成失败，将回退为默认命名：%v\n", err)
+	}
+
+	e.progress(10, "保存文件...")
+	filename := promptdoc.GenerateFilename(task, filenameTitle)
 	outPath, err := promptdoc.SavePrompt(e.kontextDir, filename, resp.Content)
 	if err != nil {
-		return "", fmt.Errorf("阶段 9 (保存文档): %w", err)
+		return "", fmt.Errorf("阶段 10 (保存文档): %w", err)
 	}
 
 	absPath, _ := filepath.Abs(outPath)

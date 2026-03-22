@@ -76,3 +76,9 @@ var PackIdentifyFilesSystem string // PackIdentifyFilesSystem 是 Pack 文件识
 
 //go:embed pack_identify_files_user.tmpl
 var PackIdentifyFilesUser string // PackIdentifyFilesUser 是 Pack 文件识别阶段的用户提示词
+
+//go:embed pack_generate_filename_system.tmpl
+var PackGenerateFilenameSystem string // PackGenerateFilenameSystem 是 Pack 文件名生成阶段的系统提示词
+
+//go:embed pack_generate_filename_user.tmpl
+var PackGenerateFilenameUser string // PackGenerateFilenameUser 是 Pack 文件名生成阶段的用户提示词

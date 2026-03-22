@@ -10,7 +10,8 @@ build/
 .serena/
 
 # kontext specific ignores
-.kontext/
+.kontext/logs
+.kontext/.cache
 
 # Build output
 /kontext

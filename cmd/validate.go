@@ -11,14 +11,21 @@ var validateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "校验 .kontext/ 目录下的 YAML 配置文件 / Validate YAML config files in .kontext/ directory",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger := namedLogger(commandPathValidate)
 		kontextDir := ".kontext"
+		logger.Info("validate started", "dir", kontextDir)
 
 		errs := schema.ValidateBundle(kontextDir)
 		if len(errs) == 0 {
+			logger.Info("validate succeeded", "dir", kontextDir)
 			fmt.Println("所有 .kontext/ 配置文件校验通过。")
 			return nil
 		}
 
+		logger.Warn("validate failed",
+			"dir", kontextDir,
+			"error_count", len(errs),
+		)
 		fmt.Printf("发现 %d 个校验错误：\n", len(errs))
 		for i, err := range errs {
 			fmt.Printf("  %d. %s\n", i+1, err)

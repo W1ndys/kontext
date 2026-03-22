@@ -73,9 +73,12 @@ func init() {
 // runInteractiveInit 交互式初始化，询问用户项目描述。
 func runInteractiveInit() error {
 	kontextDir := ".kontext"
+	logger := namedLogger(commandPathInit).With("mode", "interactive")
+	logger.Info("interactive init started")
 
 	// 检查是否已存在
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		logger.Info("existing kontext directory detected", "dir", kontextDir)
 		fmt.Println(".kontext/ 已存在。")
 		fmt.Println()
 		fmt.Println("如需重新生成，可使用以下方式：")
@@ -86,10 +89,12 @@ func runInteractiveInit() error {
 		if scanner.Scan() {
 			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 			if answer != "y" && answer != "yes" {
+				logger.Info("interactive init cancelled by user")
 				fmt.Println("已取消。")
 				return nil
 			}
 		} else {
+			logger.Info("interactive init cancelled because overwrite prompt ended")
 			return nil
 		}
 	}
@@ -107,36 +112,60 @@ func runInteractiveInit() error {
 	description := strings.TrimSpace(input)
 
 	if description == "" {
+		logger.Info("static init selected from interactive flow")
 		fmt.Println()
 		fmt.Println("未输入描述，将使用默认模板...")
 		return runStaticInitWithOverwrite()
 	}
 
+	logger.Info("ai init selected",
+		"description_length", len(description),
+		"description_lines", countLines(description),
+	)
 	return runAIInit(description)
 }
 
 // runAIInit 启动 AI 交互式初始化流程（由 runInteractiveInit 调用，已处理过目录检查）。
 func runAIInit(description string) error {
+	logger := namedLogger(commandPathInit).With("mode", "ai")
+	logger.Info("ai init started",
+		"description_length", len(description),
+		"description_lines", countLines(description),
+	)
+
 	// 加载 LLM 配置
 	cfg, err := config.Load()
 	if err != nil {
+		logger.Error("load llm config failed", "error", err)
 		return fmt.Errorf("读取 LLM 配置失败: %w", err)
 	}
 
 	if cfg.APIKey == "" {
+		logger.Warn("ai init missing api key")
 		return fmt.Errorf("AI 交互式初始化需要配置 API Key\n\n方式一：运行 kontext config 进行交互式配置\n方式二：设置环境变量 export KONTEXT_LLM_API_KEY=your-api-key")
 	}
 
 	llmCfg := cfg.ToLLMConfig()
+	logger.Info("llm config loaded",
+		"base_url", llmCfg.BaseURL,
+		"model", llmCfg.Model,
+	)
 	client, err := llm.NewClient(llmCfg)
 	if err != nil {
+		logger.Error("create llm client failed", "error", err)
 		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
 	}
 
 	fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
 	fmt.Println("正在分析项目需求...")
 
-	return generator.RunInteractiveInit(client, description)
+	if err := generator.RunInteractiveInit(client, description); err != nil {
+		logger.Error("ai init failed", "error", err)
+		return err
+	}
+
+	logger.Info("ai init completed")
+	return nil
 }
 
 // runScanInit 自动扫描项目源码并调用 LLM 生成 .kontext 配置。
@@ -144,20 +173,35 @@ func runScanInit() error {
 	kontextDir := ".kontext"
 	projectDir := "."
 	scanDepth := 5
+	logger := namedLogger(commandPathInit).With("mode", "scan")
+	logger.Info("scan init requested",
+		"fresh", freshFlag,
+		"resume", resumeFlag,
+	)
 
 	// ===== 缓存检测与恢复 =====
 	if freshFlag {
 		// --fresh: 强制清除缓存
-		_ = cache.ClearCache()
+		if err := cache.ClearCache(); err != nil {
+			logger.Warn("clear cache failed", "error", err)
+		} else {
+			logger.Info("scan cache cleared for fresh run")
+		}
 	} else {
 		// 检查是否存在有效缓存
 		valid, cp, err := cache.IsCheckpointValid(projectDir, scanDepth)
 		if err != nil {
+			logger.Warn("checkpoint validation failed", "error", err)
 			fmt.Printf("   ⚠ 检查缓存失败: %v，将从头开始\n", err)
 		} else if valid && cp != nil && cp.CurrentStage > 1 {
+			logger.Info("checkpoint detected",
+				"resume_stage", cp.CurrentStage,
+				"completed_stage_count", len(cp.CompletedStages),
+			)
 			// 存在有效缓存
 			if resumeFlag {
 				// --resume: 直接继续
+				logger.Info("resuming scan from checkpoint due to flag", "resume_stage", cp.CurrentStage)
 				return runScanInitFromCheckpoint(cp)
 			}
 			// 询问用户
@@ -166,29 +210,38 @@ func runScanInit() error {
 			if scanner.Scan() {
 				answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 				if answer == "" || answer == "y" || answer == "yes" {
+					logger.Info("resuming scan from checkpoint after confirmation", "resume_stage", cp.CurrentStage)
 					return runScanInitFromCheckpoint(cp)
 				}
 			}
 			// 用户选择不继续，清除缓存从头开始
-			_ = cache.ClearCache()
+			if err := cache.ClearCache(); err != nil {
+				logger.Warn("clear cache after declined resume failed", "error", err)
+			} else {
+				logger.Info("checkpoint discarded; starting fresh scan")
+			}
 		}
 	}
 
 	// 检查是否已存在
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		logger.Info("existing kontext directory detected", "dir", kontextDir)
 		fmt.Print(".kontext/ 已存在，是否覆盖？[y/N] ")
 		scanner := bufio.NewScanner(os.Stdin)
 		if scanner.Scan() {
 			answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 			if answer != "y" && answer != "yes" {
+				logger.Info("scan init cancelled by user")
 				fmt.Println("已取消。")
 				return nil
 			}
 		} else {
+			logger.Info("scan init cancelled because overwrite prompt ended")
 			return nil
 		}
 	}
 
+	logger.Info("starting fresh scan init")
 	return runScanInitFresh()
 }
 
@@ -197,24 +250,38 @@ func runScanInitFresh() error {
 	kontextDir := ".kontext"
 	projectDir := "."
 	scanDepth := 5
+	logger := namedLogger(commandPathInit).With("mode", "scan", "resume", false)
+	logger.Info("scan init fresh started")
 
 	// 初始化检查点
-	projectHash, _ := cache.ComputeProjectHash(projectDir, scanDepth)
+	projectHash, hashErr := cache.ComputeProjectHash(projectDir, scanDepth)
+	if hashErr != nil {
+		logger.Warn("compute project hash failed", "error", hashErr)
+	}
 	cp := cache.NewCheckpoint(projectHash)
-	_ = cache.SaveCheckpoint(cp)
+	if err := cache.SaveCheckpoint(cp); err != nil {
+		logger.Warn("save initial checkpoint failed", "error", err)
+	}
 
 	// 加载 LLM 配置
 	cfg, err := config.Load()
 	if err != nil {
+		logger.Error("load llm config failed", "error", err)
 		return fmt.Errorf("读取 LLM 配置失败: %w", err)
 	}
 	if cfg.APIKey == "" {
+		logger.Warn("scan init missing api key")
 		return fmt.Errorf("扫描模式需要配置 API Key\n\n方式一：运行 kontext config 进行交互式配置\n方式二：设置环境变量 export KONTEXT_LLM_API_KEY=your-api-key")
 	}
 
 	llmCfg := cfg.ToLLMConfig()
+	logger.Info("llm config loaded",
+		"base_url", llmCfg.BaseURL,
+		"model", llmCfg.Model,
+	)
 	client, err := llm.NewClient(llmCfg)
 	if err != nil {
+		logger.Error("create llm client failed", "error", err)
 		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
 	}
 
@@ -226,10 +293,16 @@ func runScanInitFresh() error {
 	fmt.Println("📁 阶段 1/9：扫描项目目录...")
 	allFiles, err := fileutil.ScanDirectoryTree(projectDir, scanDepth)
 	if err != nil {
+		logger.Error("scan directory failed", "stage", 1, "error", err)
 		return fmt.Errorf("扫描项目目录失败: %w", err)
 	}
 	printProgress(len(allFiles), len(allFiles), "扫描文件")
 	fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
+	logger.Info("scan stage completed",
+		"stage", 1,
+		"stage_name", "scan_directory",
+		"file_count", len(allFiles),
+	)
 
 	// 保存阶段 1 结果
 	_ = cache.SaveStageResult(1, allFiles)
@@ -243,6 +316,7 @@ func runScanInitFresh() error {
 		"DirectoryTree": treeStr,
 	})
 	if err != nil {
+		logger.Error("render analyze template failed", "stage", 2, "error", err)
 		return fmt.Errorf("渲染文件识别模板失败: %w", err)
 	}
 
@@ -253,7 +327,13 @@ func runScanInitFresh() error {
 
 	analyzed, err := generator.AnalyzeProjectFiles(client, templates.InitScanAnalyzeSystem, analyzeUserMsg)
 	close(done)
+	analyzeFallback := false
 	if err != nil {
+		analyzeFallback = true
+		logger.Warn("project file analysis failed; using local fallback",
+			"stage", 2,
+			"error", err,
+		)
 		fmt.Println()
 		fmt.Println("   ⚠ AI 文件识别失败，回退到本地规则识别...")
 		analyzed = localAnalyzeFiles(allFiles)
@@ -266,6 +346,14 @@ func runScanInitFresh() error {
 	printFileListWithTitle("配置文件", analyzed.ConfigFiles, 8)
 	printFileListWithTitle("关键源码", analyzed.SourceFiles, 10)
 	fmt.Println()
+	logger.Info("scan stage completed",
+		"stage", 2,
+		"stage_name", "analyze_project_files",
+		"config_file_count", len(analyzed.ConfigFiles),
+		"source_file_count", len(analyzed.SourceFiles),
+		"fallback", analyzeFallback,
+		"duration_ms", time.Since(analyzeStart).Milliseconds(),
+	)
 
 	// 保存阶段 2 结果
 	_ = cache.SaveStageResult(2, analyzed)
@@ -288,6 +376,11 @@ func runScanInitFresh() error {
 	fmt.Printf("   ✓ 成功读取 %d 个配置文件\n", len(configFiles))
 	printFileList(readConfigFiles, 10)
 	fmt.Println()
+	logger.Info("scan stage completed",
+		"stage", 3,
+		"stage_name", "read_config_files",
+		"config_file_count", len(configFiles),
+	)
 
 	// 保存阶段 3 结果
 	_ = cache.SaveStageResult(3, configFiles)
@@ -309,6 +402,11 @@ func runScanInitFresh() error {
 	fmt.Printf("   ✓ 提取 %d 个文件概要\n", len(fileSummaries))
 	printFileList(extractedFiles, 10)
 	fmt.Println()
+	logger.Info("scan stage completed",
+		"stage", 4,
+		"stage_name", "extract_file_summaries",
+		"summary_file_count", len(fileSummaries),
+	)
 
 	// 保存阶段 4 结果
 	_ = cache.SaveStageResult(4, fileSummaries)
@@ -320,6 +418,7 @@ func runScanInitFresh() error {
 		"FileSummaries": fileSummaries,
 	})
 	if err != nil {
+		logger.Error("render key-file selection template failed", "stage", 5, "error", err)
 		return fmt.Errorf("渲染重点文件选择模板失败: %w", err)
 	}
 
@@ -329,7 +428,13 @@ func runScanInitFresh() error {
 
 	selected, err := generator.SelectKeyFiles(client, templates.InitScanSelectSystem, selectUserMsg)
 	close(done2)
+	selectFallback := false
 	if err != nil {
+		selectFallback = true
+		logger.Warn("key-file selection failed; using fallback",
+			"stage", 5,
+			"error", err,
+		)
 		fmt.Println()
 		fmt.Println("   ⚠ AI 选择失败，使用全部文件...")
 		maxFiles := len(analyzed.SourceFiles)
@@ -355,6 +460,14 @@ func runScanInitFresh() error {
 			readKeyFiles = append(readKeyFiles, f)
 		}
 	}
+	logger.Info("scan stage completed",
+		"stage", 5,
+		"stage_name", "select_key_files",
+		"key_file_count", len(selected.KeyFiles),
+		"read_key_file_count", len(readKeyFiles),
+		"fallback", selectFallback,
+		"duration_ms", time.Since(selectStart).Milliseconds(),
+	)
 
 	// 保存阶段 5 结果（包含 selected 和 keyFileContents）
 	_ = cache.SaveStageResult(5, selected)
@@ -381,6 +494,7 @@ func runScanInitFresh() error {
 		"OtherFileSummaries": otherSummaries,
 	})
 	if err != nil {
+		logger.Error("render scan template failed", "error", err)
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
@@ -401,6 +515,7 @@ func runScanInitFresh() error {
 
 	successfulContractFiles, err := executeScanStages6to9(pctx)
 	if err != nil {
+		logger.Error("execute scan stages 6 to 9 failed", "error", err)
 		return err
 	}
 
@@ -417,6 +532,11 @@ func runScanInitFresh() error {
 	for _, path := range successfulContractFiles {
 		fmt.Printf("  %s\n", path)
 	}
+
+	logger.Info("scan init fresh completed",
+		"duration_ms", time.Since(totalStart).Milliseconds(),
+		"generated_contract_count", len(successfulContractFiles),
+	)
 
 	return nil
 }
@@ -450,6 +570,10 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	treeStr := ctx.treeStr
 	baseUserMsg := ctx.baseUserMsg
 	startStage := ctx.startStage
+	logger := namedLogger(commandPathInit).With(
+		"mode", "scan",
+		"pipeline_start_stage", startStage,
+	)
 
 	// 创建 .kontext 目录结构
 	dirs := []string{
@@ -459,6 +583,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	}
 	for _, d := range dirs {
 		if err := fileutil.EnsureDir(d); err != nil {
+			logger.Error("ensure kontext directory failed", "path", d, "error", err)
 			return nil, fmt.Errorf("创建目录 %s 失败: %w", d, err)
 		}
 	}
@@ -479,21 +604,30 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		manifestContent, err = generator.GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
 		close(done3)
 		if err != nil {
+			logger.Error("generate manifest failed", "stage", 6, "error", err)
 			fmt.Println()
 			return nil, fmt.Errorf("生成 PROJECT_MANIFEST.yaml 失败: %w", err)
 		}
 
 		if valErr := generator.ValidateYAML(manifestContent); valErr != nil {
+			logger.Error("validate manifest yaml failed", "stage", 6, "error", valErr)
 			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", valErr)
 		}
 
 		manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")
 		if err := fileutil.WriteFile(manifestPath, []byte(manifestContent)); err != nil {
+			logger.Error("write manifest failed", "stage", 6, "path", manifestPath, "error", err)
 			return nil, fmt.Errorf("写入 PROJECT_MANIFEST.yaml 失败: %w", err)
 		}
 
 		manifestElapsed := time.Since(manifestStart).Seconds()
 		fmt.Printf("\r   ✓ PROJECT_MANIFEST.yaml (%.1f 秒)\n\n", manifestElapsed)
+		logger.Info("scan stage completed",
+			"stage", 6,
+			"stage_name", "generate_manifest",
+			"path", manifestPath,
+			"duration_ms", time.Since(manifestStart).Milliseconds(),
+		)
 
 		_ = cache.UpdateGeneratedFile(cp, "PROJECT_MANIFEST.yaml", true)
 		_ = cache.UpdateCheckpointStage(cp, 6)
@@ -543,30 +677,44 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		close(done4)
 
 		if archErr != nil {
+			logger.Error("generate architecture map failed", "stage", 7, "error", archErr)
 			return nil, fmt.Errorf("生成 ARCHITECTURE_MAP.yaml 失败: %w", archErr)
 		}
 		if convErr != nil {
+			logger.Error("generate conventions failed", "stage", 7, "error", convErr)
 			return nil, fmt.Errorf("生成 CONVENTIONS.yaml 失败: %w", convErr)
 		}
 
 		if valErr := generator.ValidateYAML(archContent); valErr != nil {
+			logger.Error("validate architecture map yaml failed", "stage", 7, "error", valErr)
 			return nil, fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", valErr)
 		}
 		if valErr := generator.ValidateYAML(convContent); valErr != nil {
+			logger.Error("validate conventions yaml failed", "stage", 7, "error", valErr)
 			return nil, fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", valErr)
 		}
 
 		archPath := filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml")
 		if err := fileutil.WriteFile(archPath, []byte(archContent)); err != nil {
+			logger.Error("write architecture map failed", "stage", 7, "path", archPath, "error", err)
 			return nil, fmt.Errorf("写入 ARCHITECTURE_MAP.yaml 失败: %w", err)
 		}
 		fmt.Printf("   ✓ ARCHITECTURE_MAP.yaml (%.1f 秒)\n", archElapsed)
 
 		convPath := filepath.Join(kontextDir, "CONVENTIONS.yaml")
 		if err := fileutil.WriteFile(convPath, []byte(convContent)); err != nil {
+			logger.Error("write conventions failed", "stage", 7, "path", convPath, "error", err)
 			return nil, fmt.Errorf("写入 CONVENTIONS.yaml 失败: %w", err)
 		}
 		fmt.Printf("   ✓ CONVENTIONS.yaml (%.1f 秒)\n\n", convElapsed)
+		logger.Info("scan stage completed",
+			"stage", 7,
+			"stage_name", "generate_architecture_and_conventions",
+			"architecture_path", archPath,
+			"conventions_path", convPath,
+			"architecture_duration_ms", int64(archElapsed*1000),
+			"conventions_duration_ms", int64(convElapsed*1000),
+		)
 
 		_ = cache.UpdateGeneratedFile(cp, "ARCHITECTURE_MAP.yaml", true)
 		_ = cache.UpdateGeneratedFile(cp, "CONVENTIONS.yaml", true)
@@ -586,6 +734,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	modules := extractModulesFromArch(archContent, allFiles)
 	if startStage <= 8 {
 		if len(modules) == 0 {
+			logger.Info("scan stage skipped",
+				"stage", 8,
+				"stage_name", "generate_dependency_graph",
+				"reason", "no_modules",
+			)
 			fmt.Println("🔗 阶段 8/9：未检测到模块，跳过依赖关系图生成")
 		} else {
 			fmt.Printf("🔗 阶段 8/9：生成模块依赖关系图... (%d 个模块)\n", len(modules))
@@ -603,6 +756,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			close(done6)
 
 			if depErr != nil {
+				logger.Warn("generate dependency graph failed",
+					"stage", 8,
+					"module_count", len(modules),
+					"error", depErr,
+				)
 				fmt.Println()
 				fmt.Printf("   ⚠ 依赖关系图生成失败: %v\n", depErr)
 				fmt.Println("   将跳过依赖关系约束，继续生成模块契约...")
@@ -612,6 +770,13 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 				depGraphBytes, _ := json.MarshalIndent(depGraph, "", "  ")
 				depGraphJSON = string(depGraphBytes)
+				logger.Info("scan stage completed",
+					"stage", 8,
+					"stage_name", "generate_dependency_graph",
+					"module_count", len(modules),
+					"dep_graph_module_count", len(depGraph.Modules),
+					"duration_ms", time.Since(depGraphStart).Milliseconds(),
+				)
 			}
 			fmt.Println()
 		}
@@ -624,7 +789,14 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 	// ===== 阶段 9/9：并行生成模块契约 =====
 	var successfulContractFiles []string
+	var retryCount int
+	var finalFailures []string
 	if len(modules) == 0 {
+		logger.Info("scan stage skipped",
+			"stage", 9,
+			"stage_name", "generate_module_contracts",
+			"reason", "no_modules",
+		)
 		fmt.Println("📦 阶段 9/9：未检测到模块，跳过模块契约生成")
 	} else {
 		fmt.Printf("📦 阶段 9/9：生成模块契约... (%d 个模块并行)\n", len(modules))
@@ -786,6 +958,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		resultMu.Unlock()
 
 		if len(retryModules) > 0 {
+			retryCount = len(retryModules)
 			fmt.Printf("\n   ⚠ %d 个模块失败，正在重试...\n", len(retryModules))
 
 			_, retryErrors := generator.GenerateModuleContracts(
@@ -802,16 +975,21 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			for _, mod := range extractFailedModuleNames(retryErrors) {
 				failedModules[mod] = true
 			}
-			var finalFailures []string
+			computedFinalFailures := make([]string, 0, len(failedModules))
 			for mod := range failedModules {
 				if _, ok := successfulContracts[mod]; !ok {
-					finalFailures = append(finalFailures, mod)
+					computedFinalFailures = append(computedFinalFailures, mod)
 				}
 			}
-			sort.Strings(finalFailures)
+			sort.Strings(computedFinalFailures)
+			finalFailures = computedFinalFailures
 			resultMu.Unlock()
 
 			if len(finalFailures) > 0 {
+				logger.Warn("module contract generation completed with failures",
+					"stage", 9,
+					"failed_count", len(finalFailures),
+				)
 				fmt.Printf("   ⚠ %d 个模块最终生成失败\n", len(finalFailures))
 				for _, mod := range finalFailures {
 					fmt.Printf("      - %s\n", mod)
@@ -833,6 +1011,15 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		step9Elapsed := time.Since(step9Start).Seconds()
 		fmt.Printf("\n   模块契约生成完成 (%.1f 秒)\n", step9Elapsed)
+		logger.Info("scan stage completed",
+			"stage", 9,
+			"stage_name", "generate_module_contracts",
+			"module_count", len(modules),
+			"successful_contract_count", len(successfulContractFiles),
+			"retry_count", retryCount,
+			"failed_count", len(finalFailures),
+			"duration_ms", time.Since(step9Start).Milliseconds(),
+		)
 	}
 
 	// 保存阶段 9 检查点
@@ -845,21 +1032,36 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 	kontextDir := ".kontext"
 	startStage := cp.CurrentStage
+	logger := namedLogger(commandPathInit).With(
+		"mode", "scan",
+		"resume", true,
+		"resume_stage", startStage,
+	)
+	logger.Info("scan init resumed from checkpoint",
+		"completed_stage_count", len(cp.CompletedStages),
+	)
 
 	fmt.Printf("\n从阶段 %d 继续...\n\n", startStage)
 
 	// 加载 LLM 配置
 	cfg, err := config.Load()
 	if err != nil {
+		logger.Error("load llm config failed", "error", err)
 		return fmt.Errorf("读取 LLM 配置失败: %w", err)
 	}
 	if cfg.APIKey == "" {
+		logger.Warn("scan init missing api key")
 		return fmt.Errorf("扫描模式需要配置 API Key\n\n方式一：运行 kontext config 进行交互式配置\n方式二：设置环境变量 export KONTEXT_LLM_API_KEY=your-api-key")
 	}
 
 	llmCfg := cfg.ToLLMConfig()
+	logger.Info("llm config loaded",
+		"base_url", llmCfg.BaseURL,
+		"model", llmCfg.Model,
+	)
 	client, err := llm.NewClient(llmCfg)
 	if err != nil {
+		logger.Error("create llm client failed", "error", err)
 		return fmt.Errorf("创建 LLM 客户端失败: %w", err)
 	}
 
@@ -877,34 +1079,40 @@ func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 
 	if startStage > 1 {
 		if err := cache.LoadStageResult(1, &allFiles); err != nil {
+			logger.Error("load stage 1 cache failed", "error", err)
 			return fmt.Errorf("加载阶段 1 缓存失败: %w", err)
 		}
 		fmt.Printf("   ✓ 已从缓存加载阶段 1 结果 (%d 个文件)\n", len(allFiles))
 	}
 	if startStage > 2 {
 		if err := cache.LoadStageResult(2, &analyzed); err != nil {
+			logger.Error("load stage 2 cache failed", "error", err)
 			return fmt.Errorf("加载阶段 2 缓存失败: %w", err)
 		}
 		fmt.Printf("   ✓ 已从缓存加载阶段 2 结果 (%d 配置 + %d 源码)\n", len(analyzed.ConfigFiles), len(analyzed.SourceFiles))
 	}
 	if startStage > 3 {
 		if err := cache.LoadStageResult(3, &configFiles); err != nil {
+			logger.Error("load stage 3 cache failed", "error", err)
 			return fmt.Errorf("加载阶段 3 缓存失败: %w", err)
 		}
 		fmt.Printf("   ✓ 已从缓存加载阶段 3 结果 (%d 个配置文件)\n", len(configFiles))
 	}
 	if startStage > 4 {
 		if err := cache.LoadStageResult(4, &fileSummaries); err != nil {
+			logger.Error("load stage 4 cache failed", "error", err)
 			return fmt.Errorf("加载阶段 4 缓存失败: %w", err)
 		}
 		fmt.Printf("   ✓ 已从缓存加载阶段 4 结果 (%d 个文件概要)\n", len(fileSummaries))
 	}
 	if startStage > 5 {
 		if err := cache.LoadStageResult(5, &selected); err != nil {
+			logger.Error("load stage 5 cache failed", "error", err)
 			return fmt.Errorf("加载阶段 5 缓存失败: %w", err)
 		}
 		// 加载重点文件内容
 		if err := cache.LoadStageResultPart(5, 1, &keyFileContents); err != nil {
+			logger.Error("load stage 5 key-file cache failed", "error", err)
 			return fmt.Errorf("加载阶段 5 附属数据缓存失败: %w", err)
 		}
 		fmt.Printf("   ✓ 已从缓存加载阶段 5 结果 (%d 个重点文件)\n", len(selected.KeyFiles))
@@ -915,11 +1123,19 @@ func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 	if startStage > 8 {
 		_ = cache.LoadStageResult(8, &depGraphJSON)
 	}
+	logger.Info("checkpoint data loaded",
+		"all_file_count", len(allFiles),
+		"config_file_count", len(configFiles),
+		"summary_file_count", len(fileSummaries),
+		"key_file_count", len(selected.KeyFiles),
+		"has_dependency_graph", depGraphJSON != "",
+	)
 
 	fmt.Println()
 
 	// 如果恢复点在阶段 1-5，需要从该阶段重新执行
 	if startStage <= 5 {
+		logger.Info("resuming early scan stages", "resume_stage", startStage)
 		return runScanInitResumeEarlyStages(client, cp, startStage, allFiles, &analyzed, configFiles, fileSummaries, &selected, keyFileContents)
 	}
 
@@ -946,6 +1162,7 @@ func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 		"OtherFileSummaries": otherSummaries,
 	})
 	if err != nil {
+		logger.Error("render scan template failed", "error", err)
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
@@ -967,6 +1184,7 @@ func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 
 	successfulContractFiles, err := executeScanStages6to9(pctx)
 	if err != nil {
+		logger.Error("execute resumed scan stages 6 to 9 failed", "error", err)
 		return err
 	}
 
@@ -982,6 +1200,11 @@ func runScanInitFromCheckpoint(cp *cache.Checkpoint) error {
 	for _, path := range successfulContractFiles {
 		fmt.Printf("  %s\n", path)
 	}
+
+	logger.Info("scan init resume completed",
+		"duration_ms", time.Since(totalStart).Milliseconds(),
+		"generated_contract_count", len(successfulContractFiles),
+	)
 
 	return nil
 }
@@ -1002,6 +1225,12 @@ func runScanInitResumeEarlyStages(
 	kontextDir := ".kontext"
 	projectDir := "."
 	scanDepth := 5
+	logger := namedLogger(commandPathInit).With(
+		"mode", "scan",
+		"resume", true,
+		"resume_stage", startStage,
+	)
+	logger.Info("scan init resume early stages started")
 
 	totalStart := time.Now()
 
@@ -1011,10 +1240,16 @@ func runScanInitResumeEarlyStages(
 		var err error
 		allFiles, err = fileutil.ScanDirectoryTree(projectDir, scanDepth)
 		if err != nil {
+			logger.Error("scan directory failed", "stage", 1, "error", err)
 			return fmt.Errorf("扫描项目目录失败: %w", err)
 		}
 		printProgress(len(allFiles), len(allFiles), "扫描文件")
 		fmt.Printf("\n   发现 %d 个文件\n\n", len(allFiles))
+		logger.Info("scan stage completed",
+			"stage", 1,
+			"stage_name", "scan_directory",
+			"file_count", len(allFiles),
+		)
 
 		_ = cache.SaveStageResult(1, allFiles)
 		_ = cache.UpdateCheckpointStage(cp, 1)
@@ -1029,6 +1264,7 @@ func runScanInitResumeEarlyStages(
 			"DirectoryTree": treeStr,
 		})
 		if err != nil {
+			logger.Error("render analyze template failed", "stage", 2, "error", err)
 			return fmt.Errorf("渲染文件识别模板失败: %w", err)
 		}
 
@@ -1038,7 +1274,13 @@ func runScanInitResumeEarlyStages(
 
 		analyzedPtr, analyzeErr := generator.AnalyzeProjectFiles(client, templates.InitScanAnalyzeSystem, analyzeUserMsg)
 		close(done)
+		analyzeFallback := false
 		if analyzeErr != nil {
+			analyzeFallback = true
+			logger.Warn("project file analysis failed; using local fallback",
+				"stage", 2,
+				"error", analyzeErr,
+			)
 			fmt.Println()
 			fmt.Println("   ⚠ AI 文件识别失败，回退到本地规则识别...")
 			analyzed = localAnalyzeFiles(allFiles)
@@ -1052,6 +1294,14 @@ func runScanInitResumeEarlyStages(
 		printFileListWithTitle("配置文件", analyzed.ConfigFiles, 8)
 		printFileListWithTitle("关键源码", analyzed.SourceFiles, 10)
 		fmt.Println()
+		logger.Info("scan stage completed",
+			"stage", 2,
+			"stage_name", "analyze_project_files",
+			"config_file_count", len(analyzed.ConfigFiles),
+			"source_file_count", len(analyzed.SourceFiles),
+			"fallback", analyzeFallback,
+			"duration_ms", time.Since(analyzeStart).Milliseconds(),
+		)
 
 		_ = cache.SaveStageResult(2, analyzed)
 		_ = cache.UpdateCheckpointStage(cp, 2)
@@ -1075,6 +1325,11 @@ func runScanInitResumeEarlyStages(
 		fmt.Printf("   ✓ 成功读取 %d 个配置文件\n", len(configFiles))
 		printFileList(readConfigFiles, 10)
 		fmt.Println()
+		logger.Info("scan stage completed",
+			"stage", 3,
+			"stage_name", "read_config_files",
+			"config_file_count", len(configFiles),
+		)
 
 		_ = cache.SaveStageResult(3, configFiles)
 		_ = cache.UpdateCheckpointStage(cp, 3)
@@ -1097,6 +1352,11 @@ func runScanInitResumeEarlyStages(
 		fmt.Printf("   ✓ 提取 %d 个文件概要\n", len(fileSummaries))
 		printFileList(extractedFiles, 10)
 		fmt.Println()
+		logger.Info("scan stage completed",
+			"stage", 4,
+			"stage_name", "extract_file_summaries",
+			"summary_file_count", len(fileSummaries),
+		)
 
 		_ = cache.SaveStageResult(4, fileSummaries)
 		_ = cache.UpdateCheckpointStage(cp, 4)
@@ -1109,6 +1369,7 @@ func runScanInitResumeEarlyStages(
 			"FileSummaries": fileSummaries,
 		})
 		if err != nil {
+			logger.Error("render key-file selection template failed", "stage", 5, "error", err)
 			return fmt.Errorf("渲染重点文件选择模板失败: %w", err)
 		}
 
@@ -1118,7 +1379,13 @@ func runScanInitResumeEarlyStages(
 
 		selectedPtr, selectErr := generator.SelectKeyFiles(client, templates.InitScanSelectSystem, selectUserMsg)
 		close(done2)
+		selectFallback := false
 		if selectErr != nil {
+			selectFallback = true
+			logger.Warn("key-file selection failed; using fallback",
+				"stage", 5,
+				"error", selectErr,
+			)
 			fmt.Println()
 			fmt.Println("   ⚠ AI 选择失败，使用全部文件...")
 			maxFiles := len(analyzed.SourceFiles)
@@ -1142,6 +1409,14 @@ func runScanInitResumeEarlyStages(
 				keyFileContents[f] = content
 			}
 		}
+		logger.Info("scan stage completed",
+			"stage", 5,
+			"stage_name", "select_key_files",
+			"key_file_count", len(selected.KeyFiles),
+			"read_key_file_count", len(keyFileContents),
+			"fallback", selectFallback,
+			"duration_ms", time.Since(selectStart).Milliseconds(),
+		)
 
 		_ = cache.SaveStageResult(5, selected)
 		_ = cache.SaveStageResultPart(5, 1, keyFileContents)
@@ -1169,6 +1444,7 @@ func runScanInitResumeEarlyStages(
 		"OtherFileSummaries": otherSummaries,
 	})
 	if err != nil {
+		logger.Error("render scan template failed", "error", err)
 		return fmt.Errorf("渲染扫描模板失败: %w", err)
 	}
 
@@ -1189,6 +1465,7 @@ func runScanInitResumeEarlyStages(
 
 	successfulContractFiles, execErr := executeScanStages6to9(pctx)
 	if execErr != nil {
+		logger.Error("execute resumed scan stages 6 to 9 failed", "error", execErr)
 		return execErr
 	}
 
@@ -1204,6 +1481,11 @@ func runScanInitResumeEarlyStages(
 	for _, path := range successfulContractFiles {
 		fmt.Printf("  %s\n", path)
 	}
+
+	logger.Info("scan init resume early stages completed",
+		"duration_ms", time.Since(totalStart).Milliseconds(),
+		"generated_contract_count", len(successfulContractFiles),
+	)
 
 	return nil
 }
@@ -1496,8 +1778,10 @@ func isSourceFile(path string) bool {
 // runStaticInit 执行原有的静态模板初始化（带目录检查）。
 func runStaticInit() error {
 	kontextDir := ".kontext"
+	logger := namedLogger(commandPathInit).With("mode", "static")
 
 	if fileutil.DirExists(kontextDir) && fileutil.FileExists(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")) {
+		logger.Info("static init skipped because kontext already exists", "dir", kontextDir)
 		fmt.Println(".kontext/ 已存在，跳过初始化。")
 		fmt.Println()
 		fmt.Println("如需重新生成，可使用以下方式：")
@@ -1512,6 +1796,8 @@ func runStaticInit() error {
 // runStaticInitWithOverwrite 执行静态模板初始化（无目录检查，直接覆盖）。
 func runStaticInitWithOverwrite() error {
 	kontextDir := ".kontext"
+	logger := namedLogger(commandPathInit).With("mode", "static")
+	logger.Info("static init started", "dir", kontextDir)
 
 	// 创建目录结构
 	dirs := []string{
@@ -1521,6 +1807,7 @@ func runStaticInitWithOverwrite() error {
 	}
 	for _, d := range dirs {
 		if err := fileutil.EnsureDir(d); err != nil {
+			logger.Error("ensure static init directory failed", "path", d, "error", err)
 			return fmt.Errorf("创建目录 %s 失败: %w", d, err)
 		}
 	}
@@ -1534,6 +1821,7 @@ func runStaticInitWithOverwrite() error {
 
 	for path, content := range templateFiles {
 		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+			logger.Error("write static template failed", "path", path, "error", err)
 			return fmt.Errorf("写入 %s 失败: %w", path, err)
 		}
 		fmt.Printf("  已创建: %s\n", path)
@@ -1548,6 +1836,7 @@ func runStaticInitWithOverwrite() error {
 	fmt.Println("  模块契约:")
 	for path, content := range contractFiles {
 		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+			logger.Error("write static contract failed", "path", path, "error", err)
 			return fmt.Errorf("写入 %s 失败: %w", path, err)
 		}
 		fmt.Printf("    已创建: %s\n", path)
@@ -1562,6 +1851,11 @@ func runStaticInitWithOverwrite() error {
 	fmt.Println("  5. 运行 'kontext validate' 校验配置是否正确")
 	fmt.Println()
 	fmt.Println("提示: 使用 'kontext init --scan' 可自动扫描项目源码生成完整配置")
+
+	logger.Info("static init completed",
+		"template_file_count", len(templateFiles),
+		"contract_file_count", len(contractFiles),
+	)
 
 	return nil
 }

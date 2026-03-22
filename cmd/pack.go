@@ -26,24 +26,44 @@ var packCmd = &cobra.Command{
 	Short: "将项目上下文打包为 Markdown Prompt 文档 / Pack project context into a structured Markdown prompt document",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		task, hint, err := resolvePackTask(args)
+		logger := namedLogger(commandPathPack)
+
+		task, hint, source, err := resolvePackTask(args)
 		if err != nil {
+			logger.Error("resolve pack task failed",
+				"error", err,
+				"from_file", packFromFile,
+				"arg_count", len(args),
+			)
 			return err
 		}
+		logger.Info("pack started",
+			"task_source", source,
+			"task_length", len(task),
+			"task_lines", countLines(task),
+			"filename_hint", hint,
+			"disable_refine", packNoRefine,
+		)
 
 		kontextDir := ".kontext"
 		projectDir := "."
 
 		cfg, err := config.Load()
 		if err != nil {
+			logger.Error("load llm config failed", "error", err)
 			return fmt.Errorf("加载 LLM 配置失败: %w", err)
 		}
 
 		llmCfg := cfg.ToLLMConfig()
+		logger.Info("llm config loaded",
+			"base_url", llmCfg.BaseURL,
+			"model", llmCfg.Model,
+		)
 		fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
 
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
+			logger.Error("create llm client failed", "error", err)
 			return err
 		}
 
@@ -57,9 +77,19 @@ var packCmd = &cobra.Command{
 		fmt.Fprintf(os.Stderr, "正在为任务打包上下文...\n")
 		outPath, err := engine.Pack(task)
 		if err != nil {
+			logger.Error("pack failed",
+				"error", err,
+				"task_source", source,
+				"filename_hint", hint,
+			)
 			return fmt.Errorf("打包失败: %w", err)
 		}
 
+		logger.Info("pack completed",
+			"output_path", outPath,
+			"task_source", source,
+			"filename_hint", hint,
+		)
 		fmt.Printf("Prompt 文档已保存至: %s\n", outPath)
 		return nil
 	},
@@ -70,17 +100,17 @@ func init() {
 	packCmd.Flags().BoolVar(&packNoRefine, "no-refine", false, "跳过 LLM 精筛，只使用关键词匹配 / Skip LLM-based context refinement")
 }
 
-func resolvePackTask(args []string) (string, string, error) {
+func resolvePackTask(args []string) (string, string, string, error) {
 	if packFromFile != "" && len(args) > 0 {
-		return "", "", fmt.Errorf("--from-file 与位置参数互斥，请只提供一种任务输入方式")
+		return "", "", "", fmt.Errorf("--from-file 与位置参数互斥，请只提供一种任务输入方式")
 	}
 
 	if packFromFile == "" && len(args) == 0 {
 		task, err := readTaskFromPrompt()
 		if err != nil {
-			return "", "", err
+			return "", "", "", err
 		}
-		return task, "", nil
+		return task, "", "prompt", nil
 	}
 
 	if packFromFile == "" {
@@ -88,27 +118,29 @@ func resolvePackTask(args []string) (string, string, error) {
 		if task == "" {
 			task, err := readTaskFromPrompt()
 			if err != nil {
-				return "", "", err
+				return "", "", "", err
 			}
-			return task, "", nil
+			return task, "", "prompt", nil
 		}
-		return task, "", nil
+		return task, "", "arg", nil
 	}
 
 	data, err := readTaskInput(packFromFile)
 	if err != nil {
-		return "", "", fmt.Errorf("读取任务文件失败: %w", err)
+		return "", "", "", fmt.Errorf("读取任务文件失败: %w", err)
 	}
 	task := cleanTaskContent(data)
 	if task == "" {
-		return "", "", fmt.Errorf("任务文件内容为空")
+		return "", "", "", fmt.Errorf("任务文件内容为空")
 	}
 
 	hint := strings.TrimSuffix(filepath.Base(packFromFile), filepath.Ext(packFromFile))
+	source := "file"
 	if packFromFile == "-" {
 		hint = "stdin"
+		source = "stdin"
 	}
-	return task, hint, nil
+	return task, hint, source, nil
 }
 
 func readTaskInput(path string) ([]byte, error) {

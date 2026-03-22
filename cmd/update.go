@@ -28,53 +28,82 @@ var updateCmd = &cobra.Command{
 	Short: "检测并更新 .kontext/ 物料 / Detect and update .kontext materials",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger := namedLogger(commandPathUpdate)
+		logger.Info("update started",
+			"dry_run", updateDryRun,
+			"file_filter", normalizedUpdateFilter(updateFile),
+			"since", updateSince,
+		)
+
 		if err := validateUpdateFilter(updateFile); err != nil {
+			logger.Warn("invalid update filter", "error", err)
 			return err
 		}
 
 		report, err := updater.DetectChanges(".kontext", ".", updateSince)
 		if err != nil {
+			logger.Error("detect changes failed", "error", err)
 			return fmt.Errorf("检测变更失败: %w", err)
 		}
+		logger.Info("change detection completed",
+			"directory_changes", len(report.DirectoryChanges),
+			"contract_changes", len(report.ContractChanges),
+			"manifest_reasons", len(report.ManifestReasons),
+			"affected_modules", len(report.AffectedModules),
+		)
 
 		actions := updater.PlanUpdates(report, normalizedUpdateFilter(updateFile))
+		logger.Info("update plan created", "planned_actions", len(actions))
 		if updateDryRun {
+			logger.Info("update dry run completed", "planned_actions", len(actions))
 			printUpdateReport(report, actions)
 			return nil
 		}
 
 		if len(actions) == 0 {
+			logger.Info("update skipped because no actions were planned")
 			fmt.Println("未检测到需要更新的物料。")
 			return nil
 		}
 
 		printPlannedUpdates(actions)
 		if !confirmPlannedUpdates() {
+			logger.Info("update cancelled by user", "planned_actions", len(actions))
 			fmt.Println("已取消更新。")
 			return nil
 		}
 
 		cfg, err := config.Load()
 		if err != nil {
+			logger.Error("load llm config failed", "error", err)
 			return fmt.Errorf("加载 LLM 配置失败: %w", err)
 		}
 
 		llmCfg := cfg.ToLLMConfig()
+		logger.Info("llm config loaded",
+			"base_url", llmCfg.BaseURL,
+			"model", llmCfg.Model,
+			"planned_actions", len(actions),
+		)
 		fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
+			logger.Error("create llm client failed", "error", err)
 			return err
 		}
 
 		updateUI.Start()
+		logger.Info("update execution started", "planned_actions", len(actions))
 		executor := updater.NewExecutor(client, ".kontext", ".")
 		executor.SetProgressHandler(printUpdateProgress)
 		updated, err := executor.Execute(report, actions)
 		updateUI.Stop()
 		if err != nil {
+			logger.Error("update execution failed", "error", err)
 			return fmt.Errorf("执行更新失败: %w", err)
 		}
 
+		logger.Info("update completed", "updated_count", len(updated))
 		fmt.Println("已更新以下物料：")
 		for _, path := range updated {
 			fmt.Printf("  %s\n", path)
@@ -175,6 +204,25 @@ func confirmPlannedUpdates() bool {
 }
 
 func printUpdateProgress(event updater.ProgressEvent) {
+	logger := namedLogger(commandPathUpdate)
+	switch event.Stage {
+	case updater.ProgressActionStart:
+		logger.Debug("update action started",
+			"target", event.Action.Target,
+			"index", event.Index,
+			"total", event.Total,
+			"module", event.Action.Module,
+			"change_type", event.Action.ChangeType,
+		)
+	case updater.ProgressActionDone:
+		logger.Debug("update action completed",
+			"target", event.Action.Target,
+			"index", event.Index,
+			"total", event.Total,
+			"target_path", event.TargetPath,
+			"duration_seconds", parseElapsedSeconds(event.Message),
+		)
+	}
 	updateUI.Handle(event)
 }
 

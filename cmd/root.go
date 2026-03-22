@@ -2,9 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/w1ndys/kontext/internal/logging"
+)
+
+var (
+	logLevel  string
+	logFormat string
 )
 
 var rootCmd = &cobra.Command{
@@ -16,9 +23,46 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		level := logLevel
+		if !cmd.Flags().Changed("log-level") {
+			if envLevel := os.Getenv(logging.EnvLogLevel); envLevel != "" {
+				level = envLevel
+			}
+		}
+
+		format := logFormat
+		if !cmd.Flags().Changed("log-format") {
+			if envFormat := os.Getenv(logging.EnvLogFormat); envFormat != "" {
+				format = envFormat
+			}
+		}
+
+		logger, err := logging.Init(logging.Options{
+			Level:  level,
+			Format: format,
+			Output: os.Stderr,
+		})
+		if err != nil {
+			return err
+		}
+
+		if shouldSkipCommandLifecycleLog(cmd) {
+			return nil
+		}
+
+		logger.Info("command started",
+			"command", cmd.CommandPath(),
+			"arg_count", len(args),
+		)
+		return nil
+	},
 }
 
 func init() {
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", logging.DefaultLevel, "日志级别 debug|info|warn|error / Log level")
+	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", logging.DefaultFormat, "日志格式 text|json / Log format")
+
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(packCmd)
@@ -38,6 +82,7 @@ func Execute() {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
+		slog.Error("command failed", "error", err)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

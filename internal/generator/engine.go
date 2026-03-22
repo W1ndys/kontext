@@ -436,8 +436,10 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 		// 优先尝试结构化输出
 		var structured SingleFileYAML
 		if _, err := client.ChatStructured(req, "single_file_yaml", &structured); err == nil {
-			if structured.Content != "" {
-				return structured.Content, nil
+			if content, valErr := firstValidYAMLCandidate(structured.Content); valErr == nil {
+				return content, nil
+			} else if strings.TrimSpace(structured.Content) != "" {
+				lastErr = fmt.Errorf("结构化输出中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
 			}
 		}
 
@@ -450,24 +452,48 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 
 		// 尝试解析 JSON 响应
 		parsed, err := ParseSingleFileYAML(resp.Content)
-		if err == nil && parsed.Content != "" {
-			return parsed.Content, nil
+		if err == nil {
+			if content, valErr := firstValidYAMLCandidate(parsed.Content); valErr == nil {
+				return content, nil
+			} else if strings.TrimSpace(parsed.Content) != "" {
+				lastErr = fmt.Errorf("JSON 响应中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+				continue
+			}
 		}
 
 		// JSON 解析失败，尝试直接提取 YAML 内容
-		yamlContent := extractYAMLFromResponse(resp.Content)
-		if yamlContent != "" {
-			return yamlContent, nil
-		}
-
-		// 如果响应不为空但解析失败，可能直接就是内容
-		if resp.Content != "" {
-			return resp.Content, nil
+		if content, valErr := firstValidYAMLCandidate(resp.Content, extractYAMLFromResponse(resp.Content)); valErr == nil {
+			return content, nil
+		} else if strings.TrimSpace(resp.Content) != "" {
+			lastErr = fmt.Errorf("LLM 返回了内容，但未能提取合法 YAML (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+			continue
 		}
 
 		lastErr = fmt.Errorf("LLM 返回内容为空 (尝试 %d/%d)", attempt+1, maxRetries)
 	}
 
+	return "", lastErr
+}
+
+func firstValidYAMLCandidate(candidates ...string) (string, error) {
+	var lastErr error
+
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+
+		if err := ValidateYAML(candidate); err == nil {
+			return candidate, nil
+		} else {
+			lastErr = err
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("候选内容为空")
+	}
 	return "", lastErr
 }
 

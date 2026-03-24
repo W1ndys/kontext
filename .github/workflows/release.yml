@@ -49,9 +49,11 @@ jobs:
       - name: Build binary
         shell: bash
         run: |
+          VERSION=${GITHUB_REF_NAME#v}
           mkdir -p dist
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
-            go build -o dist/${{ matrix.asset_name }} .
+            go build -ldflags "-X github.com/w1ndys/kontext/cmd.Version=${VERSION}" \
+            -o dist/${{ matrix.asset_name }} .
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

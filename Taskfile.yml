@@ -3,19 +3,21 @@ version: '3'
 vars:
   BINARY_NAME: kontext
   DIST_DIR: dist
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
 
 tasks:
   build:
     desc: Build for current platform
     cmds:
       - mkdir -p {{.DIST_DIR}}
-      - go build -o {{.DIST_DIR}}/{{.BINARY_NAME}} .
+      - go build -ldflags "-X github.com/w1ndys/kontext/cmd.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.BINARY_NAME}} .
 
   build:target:
     internal: true
     cmds:
       - mkdir -p {{.DIST_DIR}}
-      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -o {{.DIST_DIR}}/{{.OUTPUT}} .
+      - GOOS={{.GOOS}} GOARCH={{.GOARCH}} CGO_ENABLED=0 go build -ldflags "-X github.com/w1ndys/kontext/cmd.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.OUTPUT}} .
 
   build:darwin:amd64:
     desc: Build for macOS amd64

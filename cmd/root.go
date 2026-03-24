@@ -9,6 +9,9 @@ import (
 	"github.com/w1ndys/kontext/internal/logging"
 )
 
+// Version 在构建时通过 ldflags 注入，默认值为 dev。
+var Version = "dev"
+
 var (
 	logLevel  string
 	logFormat string
@@ -20,6 +23,7 @@ var rootCmd = &cobra.Command{
 	Long: `Kontext 将项目知识编译为高质量的 Markdown Prompt 文档，供大模型直接消费，提升 AI 辅助编程的准确性和效率。
 
 Kontext compiles project knowledge into high-quality Markdown prompt documents for LLM consumption, improving the accuracy and efficiency of AI-assisted programming.`,
+	Version: Version,
 	CompletionOptions: cobra.CompletionOptions{
 		DisableDefaultCmd: true,
 	},

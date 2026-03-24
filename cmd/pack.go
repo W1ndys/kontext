@@ -18,6 +18,7 @@ import (
 var (
 	packFromFile string
 	packNoRefine bool
+	packOutput   string
 )
 
 var packCmd = &cobra.Command{
@@ -43,8 +44,8 @@ var packCmd = &cobra.Command{
 			"disable_refine", packNoRefine,
 		)
 
-		kontextDir := ".kontext"
-		projectDir := "."
+		kontextDir := defaultKontextDir
+		projectDir := defaultProjectDir
 
 		cfg, err := config.Load()
 		if err != nil {
@@ -67,6 +68,7 @@ var packCmd = &cobra.Command{
 
 		engine := packer.NewEngine(client, kontextDir, projectDir)
 		engine.DisableRefine = packNoRefine
+		engine.OutputPath = packOutput
 		engine.OnProgress = func(stage, total int, msg string) {
 			fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", stage, total, msg)
 		}
@@ -93,6 +95,7 @@ var packCmd = &cobra.Command{
 func init() {
 	packCmd.Flags().StringVarP(&packFromFile, "from-file", "f", "", "从文件读取任务描述 / Read task description from file")
 	packCmd.Flags().BoolVar(&packNoRefine, "no-refine", false, "跳过 LLM 精筛，只使用关键词匹配 / Skip LLM-based context refinement")
+	packCmd.Flags().StringVarP(&packOutput, "output", "o", "", "指定输出文件路径 / Specify output file path")
 }
 
 func resolvePackTask(args []string) (string, string, error) {

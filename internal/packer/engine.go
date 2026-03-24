@@ -21,6 +21,7 @@ type Engine struct {
 	projectDir    string
 	OnProgress    func(stage, total int, msg string)
 	DisableRefine bool
+	OutputPath    string // 用户指定的输出文件路径，为空时自动生成
 }
 
 // NewEngine 创建一个新的 Pack 引擎。
@@ -140,10 +141,27 @@ func (e *Engine) Pack(task string) (string, error) {
 	}
 
 	e.progress(10, "保存文件...")
-	filename := promptdoc.GenerateFilename(task, filenameTitle)
-	outPath, err := promptdoc.SavePrompt(e.kontextDir, filename, resp.Content)
-	if err != nil {
-		return "", fmt.Errorf("阶段 10 (保存文档): %w", err)
+
+	var outPath string
+	if e.OutputPath != "" {
+		// 用户指定了输出路径
+		dir := filepath.Dir(e.OutputPath)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return "", fmt.Errorf("阶段 10 (创建输出目录): %w", err)
+			}
+		}
+		if err := os.WriteFile(e.OutputPath, []byte(resp.Content), 0o644); err != nil {
+			return "", fmt.Errorf("阶段 10 (保存文档): %w", err)
+		}
+		outPath = e.OutputPath
+	} else {
+		filename := promptdoc.GenerateFilename(task, filenameTitle)
+		var err error
+		outPath, err = promptdoc.SavePrompt(e.kontextDir, filename, resp.Content)
+		if err != nil {
+			return "", fmt.Errorf("阶段 10 (保存文档): %w", err)
+		}
 	}
 
 	absPath, _ := filepath.Abs(outPath)

@@ -40,7 +40,7 @@ var updateCmd = &cobra.Command{
 			return err
 		}
 
-		report, err := updater.DetectChanges(".kontext", ".", updateSince)
+		report, err := updater.DetectChanges(defaultKontextDir, defaultProjectDir, updateSince)
 		if err != nil {
 			logger.Error("detect changes failed", "error", err)
 			return fmt.Errorf("检测变更失败: %w", err)
@@ -94,7 +94,7 @@ var updateCmd = &cobra.Command{
 
 		updateUI.Start()
 		logger.Info("update execution started", "planned_actions", len(actions))
-		executor := updater.NewExecutor(client, ".kontext", ".")
+		executor := updater.NewExecutor(client, defaultKontextDir, defaultProjectDir)
 		executor.SetProgressHandler(printUpdateProgress)
 		updated, err := executor.Execute(report, actions)
 		updateUI.Stop()

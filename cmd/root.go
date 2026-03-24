@@ -12,6 +12,11 @@ import (
 // Version 在构建时通过 ldflags 注入，默认值为 dev。
 var Version = "dev"
 
+const (
+	defaultKontextDir = ".kontext"
+	defaultProjectDir = "."
+)
+
 var (
 	logLevel  string
 	logFormat string

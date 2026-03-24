@@ -183,6 +183,29 @@ $env:KONTEXT_LLM_TIMEOUT = "120"
 
 ## 如何使用
 
+### 命令速查
+
+| 命令 | 说明 |
+|------|------|
+| `kontext -v` | 查看版本号 |
+| `kontext init` | 交互式初始化 `.kontext/` 目录 |
+| `kontext init --scan` | 自动扫描源码生成配置 |
+| `kontext init --scan --fresh` | 忽略缓存，强制重新扫描 |
+| `kontext init --scan --resume` | 从检查点继续（不询问） |
+| `kontext validate` | 校验 `.kontext/` 下的 YAML 文件 |
+| `kontext pack "任务描述"` | 打包任务上下文为 Markdown Prompt |
+| `kontext pack -f task.md` | 从文件读取任务描述 |
+| `kontext pack "任务" -o out.md` | 指定输出路径 |
+| `kontext pack "任务" --no-refine` | 跳过 LLM 精筛 |
+| `kontext update` | 检测变更并更新物料 |
+| `kontext update --dry-run` | 只打印变更报告 |
+| `kontext update --file manifest` | 只更新指定物料 |
+| `kontext update --since <commit>` | 只分析指定 commit 之后的变更 |
+| `kontext config` | 交互式配置向导 |
+| `kontext config set <key> <value>` | 设置配置项 |
+| `kontext config get <key>` | 获取配置项 |
+| `kontext config list` | 列出所有配置 |
+
 ### 1. 初始化 `.kontext`
 
 #### 交互式初始化
@@ -251,26 +274,28 @@ kontext pack --from-file task.md
 kontext pack --from-file -
 ```
 
-可选参数：
+指定输出路径：
 
 ```bash
-kontext pack "优化 pack 流程" --no-refine
+kontext pack "优化 pack 流程" -o output.md
+kontext pack "添加新功能" --output /path/to/prompt.md
 ```
 
-- 默认会结合关键词匹配和 LLM 精筛
-- `--no-refine` 会跳过 LLM 精筛，只做本地匹配
+可选参数：
 
-输出结果会保存在：
+| 参数 | 简写 | 说明 |
+|------|------|------|
+| `--from-file <path>` | `-f` | 从文件读取任务描述，`-` 表示 stdin |
+| `--output <path>` | `-o` | 指定输出文件路径，默认自动生成到 `.kontext/prompts/` |
+| `--no-refine` | | 跳过 LLM 精筛，只做本地关键词匹配 |
+
+默认输出路径为 `.kontext/prompts/`，文件名由时间戳和任务摘要组成，例如：
 
 ```text
-.kontext/prompts/
+.kontext/prompts/20260322-153000-update命令补充单元测试.md
 ```
 
-文件名由时间戳和任务摘要组成，例如：
-
-```text
-20260322-153000_update命令补充单元测试.md
-```
+使用 `-o` 可将结果直接输出到指定位置，便于 CI/CD 集成和脚本化使用。
 
 ### 4. 根据代码变更更新 `.kontext`
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/w1ndys/kontext/internal/logging"
+	"go.yaml.in/yaml/v4"
 )
 
 // openaiClient 实现了兼容 OpenAI API 规范的 LLM 客户端。
@@ -231,6 +233,53 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 	return &ChatResponse{Content: content}, nil
 }
 
+// ChatYAML 调用 LLM 并将响应按 YAML 解析到 out 结构体。
+// 不使用 JSON Schema 约束，而是依赖提示词引导模型直接输出 YAML。
+func (c *openaiClient) ChatYAML(req *ChatRequest, out any) (*ChatResponse, error) {
+	startedAt := time.Now()
+	c.logChatRequestStart("chat_yaml", req)
+
+	if out == nil {
+		err := fmt.Errorf("YAML 输出目标不能为空")
+		c.logChatError("chat_yaml", req, err, startedAt)
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
+	defer cancel()
+
+	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{})
+	if err != nil {
+		wrappedErr := fmt.Errorf("调用 LLM API 失败: %w", err)
+		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
+		return nil, wrappedErr
+	}
+	if len(resp.Choices) == 0 {
+		wrappedErr := fmt.Errorf("LLM API 未返回任何结果")
+		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
+		return nil, wrappedErr
+	}
+
+	content := strings.TrimSpace(resp.Choices[0].Message.Content)
+	if content == "" {
+		wrappedErr := fmt.Errorf("解析 YAML 输出失败: 响应内容为空")
+		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
+		return nil, wrappedErr
+	}
+
+	cleaned := stripYAMLCodeBlock(content)
+	if err := yaml.Unmarshal([]byte(cleaned), out); err != nil {
+		wrappedErr := fmt.Errorf("解析 YAML 输出失败: %w（content=%s）", err, compactSnippet(content, 240))
+		c.logChatError("chat_yaml", req, wrappedErr, startedAt,
+			"response_content", content,
+		)
+		return nil, wrappedErr
+	}
+
+	c.logChatResponse("chat_yaml", req, content, startedAt)
+	return &ChatResponse{Content: content}, nil
+}
+
 // 调用 OpenAI Chat Completions API 创建对话补全请求
 func (c *openaiClient) createChatCompletion(
 	ctx context.Context,
@@ -420,7 +469,18 @@ func generateJSONSchema(v any) (map[string]any, error) {
 	return result, nil
 }
 
-// 将字符串压缩为单行并截断到指定长度，用于日志输出
+// stripYAMLCodeBlock 去除 LLM 返回内容中可能包裹的 markdown 代码块标记。
+// 支持 ```yaml、```yml、```json、无语言标记的 ``` 等。
+func stripYAMLCodeBlock(s string) string {
+	s = strings.TrimSpace(s)
+	re := regexp.MustCompile("(?s)^```(?:ya?ml|json)?\\s*\n?(.*?)\\s*```$")
+	if m := re.FindStringSubmatch(s); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return s
+}
+
+// compactSnippet 将字符串压缩为单行并截断到指定长度，用于日志输出
 func compactSnippet(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

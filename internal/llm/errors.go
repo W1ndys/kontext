@@ -15,6 +15,7 @@ func IsStructuredOutputError(err error) bool {
 		"调用结构化输出失败",
 		"解析结构化输出失败",
 		"生成 json schema 失败",
+		"解析 yaml 输出失败",
 	}
 	for _, marker := range structuredMarkers {
 		if strings.Contains(errStr, marker) {

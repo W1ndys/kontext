@@ -19,7 +19,6 @@ var (
 	updateDryRun bool
 	updateFile   string
 	updateSince  string
-	updateLogMu  sync.Mutex
 	updateUI     = newUpdateProgressUI()
 )
 
@@ -118,6 +117,7 @@ func init() {
 	updateCmd.Flags().StringVar(&updateSince, "since", "", "只分析指定 commit 之后的变更 / Analyze changes since commit")
 }
 
+// 校验 --file 参数值是否合法
 func validateUpdateFilter(filter string) error {
 	switch normalizedUpdateFilter(filter) {
 	case "", "all", "manifest", "architecture", "contracts":
@@ -127,10 +127,12 @@ func validateUpdateFilter(filter string) error {
 	}
 }
 
+// 将 filter 参数统一为小写并去除空白
 func normalizedUpdateFilter(filter string) string {
 	return strings.ToLower(strings.TrimSpace(filter))
 }
 
+// 打印 dry-run 模式下的完整变更检测报告
 func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAction) {
 	fmt.Println("=== Kontext 物料变更检测报告 ===")
 	fmt.Println()
@@ -141,9 +143,10 @@ func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAct
 	} else {
 		for _, change := range report.DirectoryChanges {
 			prefix := "~"
-			if change.Type == "added" {
+			switch change.Type {
+			case "added":
 				prefix = "+"
-			} else if change.Type == "removed" {
+			case "removed":
 				prefix = "-"
 			}
 			fmt.Printf("  %s %s\n", prefix, change.Path)
@@ -157,9 +160,10 @@ func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAct
 	} else {
 		for _, change := range report.ContractChanges {
 			prefix := "~"
-			if change.Type == "new_module" {
+			switch change.Type {
+			case "new_module":
 				prefix = "+"
-			} else if change.Type == "deleted_module" {
+			case "deleted_module":
 				prefix = "-"
 			}
 			fmt.Printf("  %s %s  (%s)\n", prefix, change.Module, change.Details)
@@ -185,6 +189,7 @@ func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAct
 	}
 }
 
+// 打印即将执行的更新动作列表
 func printPlannedUpdates(actions []updater.UpdateAction) {
 	fmt.Println("即将更新以下物料 / Planned updates:")
 	for i, action := range actions {
@@ -193,6 +198,7 @@ func printPlannedUpdates(actions []updater.UpdateAction) {
 	fmt.Println()
 }
 
+// 提示用户确认是否继续执行更新
 func confirmPlannedUpdates() bool {
 	fmt.Print("是否继续执行更新？[y/N] ")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -203,6 +209,7 @@ func confirmPlannedUpdates() bool {
 	return answer == "y" || answer == "yes"
 }
 
+// 处理更新进度事件，记录日志并更新 UI
 func printUpdateProgress(event updater.ProgressEvent) {
 	logger := namedLogger(commandPathUpdate)
 	switch event.Stage {
@@ -246,12 +253,14 @@ type updateTaskState struct {
 	doneText  string
 }
 
+// 创建更新进度 UI 实例
 func newUpdateProgressUI() *updateProgressUI {
 	return &updateProgressUI{
 		states: make(map[string]*updateTaskState),
 	}
 }
 
+// Start 启动进度 UI 的渲染循环
 func (ui *updateProgressUI) Start() {
 	ui.mu.Lock()
 	defer ui.mu.Unlock()
@@ -267,6 +276,7 @@ func (ui *updateProgressUI) Start() {
 	go ui.loop(ui.tickerStop, ui.tickerDone)
 }
 
+// Stop 停止进度 UI 的渲染循环并输出最终状态
 func (ui *updateProgressUI) Stop() {
 	ui.mu.Lock()
 	if !ui.running {
@@ -287,6 +297,7 @@ func (ui *updateProgressUI) Stop() {
 	ui.mu.Unlock()
 }
 
+// 后台定时刷新进度显示的循环
 func (ui *updateProgressUI) loop(stop <-chan struct{}, done chan<- struct{}) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -304,6 +315,7 @@ func (ui *updateProgressUI) loop(stop <-chan struct{}, done chan<- struct{}) {
 	}
 }
 
+// Handle 处理单个进度事件，更新任务状态并触发渲染
 func (ui *updateProgressUI) Handle(event updater.ProgressEvent) {
 	ui.mu.Lock()
 	defer ui.mu.Unlock()
@@ -341,10 +353,12 @@ func (ui *updateProgressUI) Handle(event updater.ProgressEvent) {
 	ui.renderLocked()
 }
 
+// 根据事件生成任务的唯一标识键
 func (ui *updateProgressUI) taskKey(event updater.ProgressEvent) string {
 	return fmt.Sprintf("%d:%s", event.Index, event.Action.Target)
 }
 
+// 在持锁状态下渲染所有任务行（覆盖式刷新）
 func (ui *updateProgressUI) renderLocked() {
 	lines := ui.linesLocked()
 	if ui.rendered > 0 {
@@ -360,6 +374,7 @@ func (ui *updateProgressUI) renderLocked() {
 	ui.rendered = len(lines)
 }
 
+// 在持锁状态下生成所有任务的显示行
 func (ui *updateProgressUI) linesLocked() []string {
 	if len(ui.order) == 0 {
 		return nil
@@ -389,6 +404,7 @@ func (ui *updateProgressUI) linesLocked() []string {
 	return lines
 }
 
+// 从耗时字符串中解析出秒数
 func parseElapsedSeconds(value string) int {
 	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "s")
 	seconds, err := strconv.Atoi(trimmed)

@@ -19,17 +19,12 @@ const (
 	commandPathValidate   = "kontext validate"
 )
 
-func commandLogger(cmd *cobra.Command) *slog.Logger {
-	if cmd == nil {
-		return logging.Default()
-	}
-	return logging.CommandLogger(cmd.CommandPath())
-}
-
+// namedLogger 根据命令路径字符串获取命名日志器
 func namedLogger(commandPath string) *slog.Logger {
 	return logging.CommandLogger(commandPath)
 }
 
+// 判断是否跳过 help/complete 等命令的生命周期日志
 func shouldSkipCommandLifecycleLog(cmd *cobra.Command) bool {
 	if cmd == nil {
 		return false
@@ -43,6 +38,7 @@ func shouldSkipCommandLifecycleLog(cmd *cobra.Command) bool {
 	return false
 }
 
+// 计算文本行数
 func countLines(text string) int {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -51,6 +47,7 @@ func countLines(text string) int {
 	return strings.Count(trimmed, "\n") + 1
 }
 
+// 判断配置键是否为敏感信息（如 api_key）
 func isSensitiveConfigKey(key string) bool {
 	return strings.EqualFold(strings.TrimSpace(key), "llm.api_key")
 }

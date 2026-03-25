@@ -110,23 +110,6 @@ func runAIInit(description string) error {
 	return nil
 }
 
-// runStaticInit 执行原有的静态模板初始化（带目录检查）。
-func runStaticInit() error {
-	logger := namedLogger(commandPathInit).With("mode", "static")
-
-	if fileutil.DirExists(defaultKontextDir) && fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml")) {
-		logger.Info("static init skipped because kontext already exists", "dir", defaultKontextDir)
-		fmt.Println(".kontext/ 已存在，跳过初始化。")
-		fmt.Println()
-		fmt.Println("如需重新生成，可使用以下方式：")
-		fmt.Println("  kontext init        - 交互式初始化（会提示是否覆盖）")
-		fmt.Println("  kontext init --scan - 自动扫描项目源码生成（会提示是否覆盖）")
-		return nil
-	}
-
-	return runStaticInitWithOverwrite()
-}
-
 // runStaticInitWithOverwrite 执行静态模板初始化（无目录检查，直接覆盖）。
 func runStaticInitWithOverwrite() error {
 	logger := namedLogger(commandPathInit).With("mode", "static")

@@ -52,6 +52,7 @@ func GenerateFilenameSuggestion(client llm.Client, task string, onRetry func(att
 	return title, nil
 }
 
+// 渲染文件名建议的用户提示词模板
 func renderFilenameSuggestionUserPrompt(data filenameSuggestionTemplateData) (string, error) {
 	tmpl, err := template.New("pack_generate_filename_user").Parse(templates.PackGenerateFilenameUser)
 	if err != nil {
@@ -65,6 +66,7 @@ func renderFilenameSuggestionUserPrompt(data filenameSuggestionTemplateData) (st
 	return buf.String(), nil
 }
 
+// 规范化文件名建议，去除引号并限制长度
 func normalizeFilenameSuggestion(s string) string {
 	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 	s = strings.Trim(s, `"'`+"`“”‘’「」『』《》【】")

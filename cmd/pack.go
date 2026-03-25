@@ -98,6 +98,7 @@ func init() {
 	packCmd.Flags().StringVarP(&packOutput, "output", "o", "", "指定输出文件路径 / Specify output file path")
 }
 
+// 解析任务输入来源（参数/文件/stdin/交互式），返回任务文本和来源标识
 func resolvePackTask(args []string) (string, string, error) {
 	if packFromFile != "" && len(args) > 0 {
 		return "", "", fmt.Errorf("--from-file 与位置参数互斥，请只提供一种任务输入方式")
@@ -139,6 +140,7 @@ func resolvePackTask(args []string) (string, string, error) {
 	return task, source, nil
 }
 
+// 从文件路径或 stdin 读取任务内容
 func readTaskInput(path string) ([]byte, error) {
 	if path == "-" {
 		return io.ReadAll(bufio.NewReader(os.Stdin))
@@ -146,11 +148,13 @@ func readTaskInput(path string) ([]byte, error) {
 	return fileutil.ReadFile(path)
 }
 
+// 清理任务文本（去除 BOM 和首尾空白）
 func cleanTaskContent(data []byte) string {
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 	return strings.TrimSpace(string(data))
 }
 
+// 交互式逐行读取任务描述，空行结束
 func readTaskFromPrompt() (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	var lines []string

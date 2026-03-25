@@ -119,6 +119,7 @@ func DetectChanges(kontextDir, projectDir, since string) (*ChangeReport, error) 
 	return report, nil
 }
 
+// actualPackages 从文件列表中提取所有包含源码文件的目录路径。
 func actualPackages(files []string) map[string]bool {
 	result := make(map[string]bool)
 	for _, relPath := range files {
@@ -134,6 +135,7 @@ func actualPackages(files []string) map[string]bool {
 	return result
 }
 
+// actualModules 从文件列表中提取模块名到文件列表的映射。
 func actualModules(files []string) map[string][]string {
 	result := make(map[string][]string)
 	for _, relPath := range files {
@@ -152,6 +154,7 @@ func actualModules(files []string) map[string][]string {
 	return result
 }
 
+// collectModuleSummaries 为每个模块收集代码摘要（每模块最多 8 个文件）。
 func collectModuleSummaries(projectDir string, modules map[string][]string) map[string]string {
 	result := make(map[string]string, len(modules))
 	for moduleName, files := range modules {
@@ -171,6 +174,7 @@ func collectModuleSummaries(projectDir string, modules map[string][]string) map[
 	return result
 }
 
+// detectStaleContract 通过比对契约中 owns 条目和代码导出符号检测契约是否过期。
 func detectStaleContract(contract schema.ModuleContract, summary string) string {
 	if strings.TrimSpace(summary) == "" {
 		return "当前代码摘要为空，无法验证契约内容"
@@ -206,6 +210,7 @@ func detectStaleContract(contract schema.ModuleContract, summary string) string 
 	return strings.Join(reasons, "；")
 }
 
+// normalizedOwnsProbe 将 owns 条目规范化为可用于代码匹配的小写探针。
 func normalizedOwnsProbe(item string) (string, bool) {
 	trimmed := strings.TrimSpace(strings.ToLower(item))
 	if trimmed == "" {
@@ -227,6 +232,7 @@ func normalizedOwnsProbe(item string) (string, bool) {
 	return trimmed, true
 }
 
+// extractExportedSymbols 从代码摘要中提取导出的函数和类型名。
 func extractExportedSymbols(summary string) []string {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`func\s+(?:\([^)]+\)\s+)?([A-Z]\w*)\s*\(`),
@@ -249,6 +255,7 @@ func extractExportedSymbols(summary string) []string {
 	return symbols
 }
 
+// contractMentionsSymbol 检查契约中是否提及指定的导出符号。
 func contractMentionsSymbol(contract schema.ModuleContract, symbol string) bool {
 	lowerSymbol := strings.ToLower(symbol)
 	for _, item := range contract.Owns {
@@ -264,6 +271,7 @@ func contractMentionsSymbol(contract schema.ModuleContract, symbol string) bool 
 	return false
 }
 
+// gitChangedFiles 通过 git diff 获取指定 commit 以来的变更文件列表。
 func gitChangedFiles(projectDir, since string) ([]string, error) {
 	cmd := exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..HEAD", since))
 	cmd.Dir = projectDir
@@ -283,6 +291,7 @@ func gitChangedFiles(projectDir, since string) ([]string, error) {
 	return files, nil
 }
 
+// affectedModulesFromFiles 从变更文件列表推导受影响的模块。
 func affectedModulesFromFiles(files []string) []string {
 	var modules []string
 	seen := make(map[string]bool)
@@ -298,6 +307,7 @@ func affectedModulesFromFiles(files []string) []string {
 	return modules
 }
 
+// manifestReasonsFromFiles 根据变更文件列表生成 Manifest 更新原因。
 func manifestReasonsFromFiles(files []string) []string {
 	signals := map[string]string{
 		"go.mod":       "go.mod 发生变化，技术栈或依赖可能需要更新",
@@ -316,6 +326,7 @@ func manifestReasonsFromFiles(files []string) []string {
 	return reasons
 }
 
+// manifestReasonsFromSignals 根据项目信号（语言检测不匹配等）生成 Manifest 更新原因。
 func manifestReasonsFromSignals(bundle *schema.Bundle, files []string) []string {
 	var reasons []string
 
@@ -333,6 +344,7 @@ func manifestReasonsFromSignals(bundle *schema.Bundle, files []string) []string 
 	return reasons
 }
 
+// containsFile 检查文件列表中是否包含指定文件。
 func containsFile(files []string, target string) bool {
 	for _, relPath := range files {
 		if filepath.ToSlash(relPath) == target {
@@ -342,6 +354,7 @@ func containsFile(files []string, target string) bool {
 	return false
 }
 
+// deriveModuleName 从文件相对路径推导模块名（cmd->cmd, internal/x->x 等）。
 func deriveModuleName(relPath string) string {
 	normalized := filepath.ToSlash(relPath)
 	parts := strings.Split(normalized, "/")
@@ -360,6 +373,7 @@ func deriveModuleName(relPath string) string {
 	return ""
 }
 
+// isSourceFile 判断文件是否为源码文件。
 func isSourceFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
@@ -370,6 +384,7 @@ func isSourceFile(path string) bool {
 	}
 }
 
+// sortedKeys 将 map 的键排序后返回切片。
 func sortedKeys(m map[string]bool) []string {
 	keys := make([]string, 0, len(m))
 	for key := range m {
@@ -379,6 +394,7 @@ func sortedKeys(m map[string]bool) []string {
 	return keys
 }
 
+// uniqueStrings 对字符串切片去重。
 func uniqueStrings(values []string) []string {
 	seen := make(map[string]bool, len(values))
 	var result []string

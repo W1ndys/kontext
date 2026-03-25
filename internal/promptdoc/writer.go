@@ -17,6 +17,7 @@ func GenerateFilename(task, title string) string {
 	return generateFilenameAt(time.Now(), task, title)
 }
 
+// 根据指定时间生成带时间戳前缀的文件名
 func generateFilenameAt(now time.Time, task, title string) string {
 	base := task
 	if trimmedTitle := strings.TrimSpace(title); trimmedTitle != "" {
@@ -45,6 +46,7 @@ func SavePrompt(kontextDir, filename, content string) (string, error) {
 	return outPath, nil
 }
 
+// 将字符串清理为安全的文件名片段，去除特殊字符并用连字符连接
 func sanitizeFilenameBase(s string) string {
 	s = strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
 	if s == "" {
@@ -76,6 +78,7 @@ func sanitizeFilenameBase(s string) string {
 	return truncateFilenameBase(cleaned, maxFilenameBaseRunes)
 }
 
+// 将文件名片段截断到指定的最大 rune 数，尽量在连字符处断开
 func truncateFilenameBase(s string, maxRunes int) string {
 	runes := []rune(s)
 	if len(runes) <= maxRunes {

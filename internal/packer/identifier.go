@@ -29,6 +29,7 @@ func IdentifyRelevantFiles(client llm.Client, task string, candidatePaths []stri
 	return mergeMentionedFiles(batchResults), nil
 }
 
+// 合并多个批次的文件识别结果，去重并限制最大数量
 func mergeMentionedFiles(results []*MentionedFiles) *MentionedFiles {
 	merged := &MentionedFiles{
 		Paths:   make([]string, 0, maxIdentifiedFiles),
@@ -59,6 +60,7 @@ func mergeMentionedFiles(results []*MentionedFiles) *MentionedFiles {
 	return merged
 }
 
+// 对单个批次的候选文件调用 LLM 进行相关性识别
 func identifyRelevantFilesBatch(client llm.Client, task string, candidatePaths []string, projectRoot, architectureSummary, moduleSummary string, onRetry func(attempt int, err error, backoff time.Duration)) (*MentionedFiles, error) {
 	data := identifyTemplateData{
 		Task:                task,

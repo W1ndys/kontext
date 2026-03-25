@@ -82,6 +82,7 @@ func CollectContext(bundle *schema.Bundle, task string, root string, mentionedFi
 	return ctx, nil
 }
 
+// PreloadIdentifiedFiles 预加载已识别文件的内容到上下文中，支持大小限制和截断处理。
 func PreloadIdentifiedFiles(root string, ctx *CandidateContext) error {
 	if len(ctx.MatchedFiles) == 0 {
 		ctx.CodeSnippets = make(map[string]string)
@@ -115,6 +116,7 @@ func HydrateContext(task string, ctx *CandidateContext, refine *RefineResult) {
 	ctx.IdentifiedFiles = buildIdentifiedFiles(selected, ctx.CodeSnippets, ctx.MentionedReasons)
 }
 
+// 根据精筛后的相关文件列表构建 IdentifiedFile 切片
 func buildIdentifiedFiles(files []FileRelevance, snippets map[string]string, reasons map[string]string) []IdentifiedFile {
 	result := make([]IdentifiedFile, 0, len(files))
 	for _, file := range files {
@@ -141,6 +143,7 @@ func buildIdentifiedFiles(files []FileRelevance, snippets map[string]string, rea
 	return result
 }
 
+// 根据路径列表构建 IdentifiedFile 切片
 func buildIdentifiedFilesFromPaths(paths []string, snippets map[string]string, reasons map[string]string) []IdentifiedFile {
 	result := make([]IdentifiedFile, 0, len(paths))
 	for _, path := range paths {
@@ -162,6 +165,7 @@ func buildIdentifiedFilesFromPaths(paths []string, snippets map[string]string, r
 	return result
 }
 
+// 从全部文件列表中筛选出支持的源码文件
 func collectSourceFiles(allFiles []string) []string {
 	files := make([]string, 0, len(allFiles))
 	for _, relPath := range allFiles {
@@ -172,6 +176,7 @@ func collectSourceFiles(allFiles []string) []string {
 	return files
 }
 
+// 根据精筛结果选择最终的相关文件列表
 func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRelevance {
 	if refine == nil || len(refine.RelevantFiles) == 0 {
 		selected := make([]FileRelevance, 0, min(maxContextFiles, len(ctx.MatchedFiles)))
@@ -210,6 +215,7 @@ func selectRelevantFiles(ctx *CandidateContext, refine *RefineResult) []FileRele
 	return ordered
 }
 
+// 读取单个识别文件的内容，支持大小限制和截断
 func readIdentifiedFileContent(root, relPath string, totalBytes *int) (string, bool, error) {
 	fullPath := filepath.Join(root, relPath)
 	data, err := fileutil.ReadFile(fullPath)
@@ -237,6 +243,7 @@ func readIdentifiedFileContent(root, relPath string, totalBytes *int) (string, b
 	return strings.TrimSpace(string(data)), truncated, nil
 }
 
+// 根据相关文件过滤出对应模块的契约
 func filterContractsByRelevantFiles(task string, contracts []schema.ModuleContract, files []FileRelevance) []schema.ModuleContract {
 	if len(files) == 0 {
 		return MatchContracts(task, contracts)
@@ -267,6 +274,7 @@ func filterContractsByRelevantFiles(task string, contracts []schema.ModuleContra
 	return filtered
 }
 
+// 从文件路径推导所属模块名
 func moduleNameFromPath(relPath string) string {
 	normalized := filepath.ToSlash(relPath)
 	parts := strings.Split(normalized, "/")
@@ -285,6 +293,7 @@ func moduleNameFromPath(relPath string) string {
 	return ""
 }
 
+// 返回两个整数中的较小值
 func min(a, b int) int {
 	if a < b {
 		return a

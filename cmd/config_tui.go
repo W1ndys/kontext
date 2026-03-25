@@ -16,6 +16,7 @@ type modelItem struct {
 	isManual  bool // 是否为"手动输入"选项
 }
 
+// Title 返回模型项的显示标题
 func (i modelItem) Title() string {
 	if i.isManual {
 		return "✏️  手动输入模型名称..."
@@ -25,7 +26,9 @@ func (i modelItem) Title() string {
 	}
 	return i.name
 }
+// Description 返回模型项的描述（始终为空）
 func (i modelItem) Description() string { return "" }
+// FilterValue 返回用于搜索过滤的文本
 func (i modelItem) FilterValue() string {
 	if i.isManual {
 		return "手动输入 manual input"
@@ -40,10 +43,12 @@ type modelSelector struct {
 	quitting bool
 }
 
+// Init 是 Bubble Tea 初始化命令（无操作）
 func (m modelSelector) Init() tea.Cmd {
 	return nil
 }
 
+// Update 是 Bubble Tea 消息处理，响应键盘事件
 func (m modelSelector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -68,6 +73,7 @@ func (m modelSelector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// View 是 Bubble Tea 视图渲染
 func (m modelSelector) View() string {
 	if m.quitting {
 		return ""

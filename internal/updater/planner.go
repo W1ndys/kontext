@@ -50,6 +50,7 @@ func PlanUpdates(report *ChangeReport, filter string) []UpdateAction {
 	return actions
 }
 
+// allowTarget 判断给定的 filter 是否允许指定目标。
 func allowTarget(filter, target string) bool {
 	return filter == "" || filter == "all" || filter == target
 }

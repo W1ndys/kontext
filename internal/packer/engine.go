@@ -168,12 +168,14 @@ func (e *Engine) Pack(task string) (string, error) {
 	return absPath, nil
 }
 
+// 触发进度回调通知，若未设置回调则忽略
 func (e *Engine) progress(stage int, msg string) {
 	if e.OnProgress != nil {
 		e.OnProgress(stage, packStages, msg)
 	}
 }
 
+// 构建包含 system 和 user 消息的 LLM 聊天请求
 func buildChatRequest(systemPrompt, userPrompt string) *llm.ChatRequest {
 	return &llm.ChatRequest{
 		Messages: []llm.Message{

@@ -77,6 +77,7 @@ func extractKeywords(task string) []string {
 	return keywords
 }
 
+// 判断字符串是否全部由汉字组成
 func isHanString(s string) bool {
 	for _, r := range s {
 		if !unicode.Is(unicode.Han, r) {
@@ -86,6 +87,7 @@ func isHanString(s string) bool {
 	return s != ""
 }
 
+// 将汉字字符串展开为多个不同长度的子串用于模糊匹配
 func expandHanKeywords(s string) []string {
 	runes := []rune(s)
 	if len(runes) == 0 {

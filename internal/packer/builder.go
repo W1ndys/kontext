@@ -113,6 +113,7 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 	return data
 }
 
+// 根据文件扩展名返回 Markdown 代码块的语言标识
 func markdownFenceLanguage(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":

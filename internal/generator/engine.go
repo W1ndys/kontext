@@ -212,6 +212,7 @@ func ValidateYAML(content string) error {
 	return yaml.Unmarshal([]byte(content), &out)
 }
 
+// interviewStep 执行一轮 LLM 对话，优先使用结构化输出解析 InterviewResponse，失败时回退到传统 JSON 解析。
 func interviewStep(
 	client llm.Client,
 	messages []llm.Message,
@@ -365,6 +366,7 @@ func ParseModuleDependencyGraph(content string) (*ModuleDependencyGraph, error) 
 	return &graph, nil
 }
 
+// generateLegacyYAML 使用传统（非结构化）方式调用 LLM 生成 YAML，作为结构化输出的回退方案。
 func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{
@@ -475,6 +477,7 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 	return "", lastErr
 }
 
+// firstValidYAMLCandidate 从多个候选字符串中返回第一个合法的 YAML 内容。
 func firstValidYAMLCandidate(candidates ...string) (string, error) {
 	var lastErr error
 

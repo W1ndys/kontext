@@ -122,6 +122,7 @@ func LoadStageResultPart(stage int, part int, out interface{}) error {
 	return nil
 }
 
+// 根据阶段编号生成缓存结果文件的路径
 func stageResultPath(parts ...int) string {
 	segments := make([]string, 0, len(parts))
 	for _, part := range parts {

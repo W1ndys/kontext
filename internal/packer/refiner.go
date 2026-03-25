@@ -81,6 +81,7 @@ func RefineContext(client llm.Client, task string, candidates []CandidateFile, c
 	return &RefineResult{RelevantFiles: filtered}, nil
 }
 
+// 渲染精筛用户提示词模板
 func renderPackRefineUserPrompt(data refineTemplateData) (string, error) {
 	tmpl, err := template.New("pack_refine_user").Parse(templates.PackRefineUser)
 	if err != nil {

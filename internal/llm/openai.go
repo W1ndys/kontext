@@ -231,6 +231,7 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 	return &ChatResponse{Content: content}, nil
 }
 
+// 调用 OpenAI Chat Completions API 创建对话补全请求
 func (c *openaiClient) createChatCompletion(
 	ctx context.Context,
 	req *ChatRequest,
@@ -244,6 +245,7 @@ func (c *openaiClient) createChatCompletion(
 	return c.client.Chat.Completions.New(ctx, params)
 }
 
+// 构建 Chat Completions API 的请求参数，将内部消息格式转换为 OpenAI SDK 格式
 func (c *openaiClient) buildChatCompletionParams(
 	req *ChatRequest,
 	responseFormat openai.ChatCompletionNewParamsResponseFormatUnion,
@@ -304,6 +306,7 @@ func (c *openaiClient) ListModels() ([]string, error) {
 	return models, nil
 }
 
+// 返回带有公共属性的结构化日志记录器
 func (c *openaiClient) logger() *slog.Logger {
 	return logging.Default().With(
 		"component", "llm",
@@ -313,6 +316,7 @@ func (c *openaiClient) logger() *slog.Logger {
 	)
 }
 
+// 记录 Generate 请求开始的日志
 func (c *openaiClient) logGenerateRequestStart(req *GenerateRequest) {
 	c.logger().Debug("llm request started",
 		"method", "generate",
@@ -321,6 +325,7 @@ func (c *openaiClient) logGenerateRequestStart(req *GenerateRequest) {
 	)
 }
 
+// 记录 Generate 响应成功的日志
 func (c *openaiClient) logGenerateResponse(req *GenerateRequest, content string, startedAt time.Time) {
 	c.logger().Debug("llm response received",
 		"method", "generate",
@@ -332,6 +337,7 @@ func (c *openaiClient) logGenerateResponse(req *GenerateRequest, content string,
 	)
 }
 
+// 记录 Generate 请求失败的日志
 func (c *openaiClient) logGenerateError(req *GenerateRequest, err error, startedAt time.Time) {
 	c.logger().Error("llm request failed",
 		"method", "generate",
@@ -342,6 +348,7 @@ func (c *openaiClient) logGenerateError(req *GenerateRequest, err error, started
 	)
 }
 
+// 记录 Chat 系列请求开始的日志
 func (c *openaiClient) logChatRequestStart(method string, req *ChatRequest, extra ...any) {
 	attrs := []any{
 		"method", method,
@@ -352,6 +359,7 @@ func (c *openaiClient) logChatRequestStart(method string, req *ChatRequest, extr
 	c.logger().Debug("llm request started", attrs...)
 }
 
+// 记录 Chat 系列响应成功的日志
 func (c *openaiClient) logChatResponse(method string, req *ChatRequest, content string, startedAt time.Time, extra ...any) {
 	attrs := []any{
 		"method", method,
@@ -365,6 +373,7 @@ func (c *openaiClient) logChatResponse(method string, req *ChatRequest, content 
 	c.logger().Debug("llm response received", attrs...)
 }
 
+// 记录 Chat 系列请求失败的日志
 func (c *openaiClient) logChatError(method string, req *ChatRequest, err error, startedAt time.Time, extra ...any) {
 	attrs := []any{
 		"method", method,
@@ -377,6 +386,7 @@ func (c *openaiClient) logChatError(method string, req *ChatRequest, err error, 
 	c.logger().Error("llm request failed", attrs...)
 }
 
+// 计算 ChatRequest 中所有消息内容的总字符数
 func chatRequestChars(req *ChatRequest) int {
 	if req == nil {
 		return 0
@@ -389,6 +399,7 @@ func chatRequestChars(req *ChatRequest) int {
 	return total
 }
 
+// 通过反射生成目标类型的 JSON Schema，用于结构化输出约束
 func generateJSONSchema(v any) (map[string]any, error) {
 	reflector := jsonschema.Reflector{
 		AllowAdditionalProperties: false,
@@ -409,6 +420,7 @@ func generateJSONSchema(v any) (map[string]any, error) {
 	return result, nil
 }
 
+// 将字符串压缩为单行并截断到指定长度，用于日志输出
 func compactSnippet(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
 	if s == "" {

@@ -123,6 +123,7 @@ func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]stri
 	return updated, nil
 }
 
+// executeContractBatch 并行执行一批模块契约的更新动作。
 func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAction, start, total int) ([]string, error) {
 	results := make(chan actionResult, len(actions))
 	sem := make(chan struct{}, contractUpdateConcurrency)
@@ -193,6 +194,7 @@ func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAc
 	return updated, firstErr
 }
 
+// generateContent 为单个更新动作生成新的 YAML 内容，含 LLM 调用和语义校验。
 func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
 	currentPath, err := e.targetPath(action)
 	if err != nil {
@@ -255,6 +257,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	return "", fmt.Errorf("LLM 返回的 YAML 仍不合法: %w", lastValidationErr)
 }
 
+// generateYAMLEnvelope 调用 LLM 结构化输出生成 YAML 信封，失败时回退到传统模式。
 func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
 	var out yamlEnvelope
 	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &out, 3, nil)
@@ -281,6 +284,7 @@ func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest, action UpdateActio
 	return fallbackResp, fallbackContent, nil
 }
 
+// generateYAMLEnvelopeLegacy 使用传统（非结构化）方式调用 LLM 生成 YAML 信封。
 func (e *Executor) generateYAMLEnvelopeLegacy(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
 	resp, err := llm.ChatWithRetry(e.client, req, 3, nil)
 	if err != nil {
@@ -310,6 +314,7 @@ func (e *Executor) generateYAMLEnvelopeLegacy(req *llm.ChatRequest) (*llm.ChatRe
 	return retryResp, content, nil
 }
 
+// renderUserPrompt 根据更新动作类型渲染对应的用户提示词。
 func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, currentYAML string) (string, bool, error) {
 	switch action.Target {
 	case "architecture":
@@ -341,6 +346,7 @@ func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, c
 	return "", false, fmt.Errorf("不支持的更新目标: %s", action.Target)
 }
 
+// applyAction 将生成的内容应用到目标文件（含备份和删除逻辑）。
 func (e *Executor) applyAction(targetPath string, action UpdateAction, content string) error {
 	if err := e.backupIfExists(targetPath); err != nil {
 		return err
@@ -356,6 +362,7 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 	return fileutil.WriteFile(targetPath, []byte(content))
 }
 
+// backupIfExists 如果目标文件存在则备份到 .backup/ 目录。
 func (e *Executor) backupIfExists(path string) error {
 	if !fileutil.FileExists(path) {
 		return nil
@@ -373,6 +380,7 @@ func (e *Executor) backupIfExists(path string) error {
 	return fileutil.WriteFile(backupPath, data)
 }
 
+// pruneBackups 清理超过 5 个的旧备份目录。
 func (e *Executor) pruneBackups() error {
 	backupRoot := filepath.Join(e.kontextDir, ".backup")
 	if !fileutil.DirExists(backupRoot) {
@@ -404,6 +412,7 @@ func (e *Executor) pruneBackups() error {
 	return nil
 }
 
+// targetPath 根据更新动作类型返回目标文件路径。
 func (e *Executor) targetPath(action UpdateAction) (string, error) {
 	switch action.Target {
 	case "architecture":
@@ -418,6 +427,7 @@ func (e *Executor) targetPath(action UpdateAction) (string, error) {
 	return "", fmt.Errorf("未知目标: %s", action.Target)
 }
 
+// formatDirectoryChanges 将目录变更列表格式化为文本。
 func formatDirectoryChanges(changes []DirectoryChange) string {
 	if len(changes) == 0 {
 		return "没有检测到目录结构变化"
@@ -430,6 +440,7 @@ func formatDirectoryChanges(changes []DirectoryChange) string {
 	return strings.Join(lines, "\n")
 }
 
+// formatContractChanges 将指定模块的契约变更格式化为文本。
 func formatContractChanges(changes []ContractChange, moduleName string) string {
 	var lines []string
 	for _, change := range changes {
@@ -444,6 +455,7 @@ func formatContractChanges(changes []ContractChange, moduleName string) string {
 	return strings.Join(lines, "\n")
 }
 
+// formatManifestSignals 将 Manifest 更新信号格式化为文本。
 func formatManifestSignals(report *ChangeReport) string {
 	var lines []string
 	for _, reason := range report.ManifestReasons {
@@ -461,6 +473,7 @@ func formatManifestSignals(report *ChangeReport) string {
 	return strings.Join(lines, "\n")
 }
 
+// fallbackYAML 若内容为空则返回占位注释。
 func fallbackYAML(content string) string {
 	if strings.TrimSpace(content) == "" {
 		return "# 当前文件为空"
@@ -468,6 +481,7 @@ func fallbackYAML(content string) string {
 	return content
 }
 
+// fallbackText 若内容为空则返回指定的回退文本。
 func fallbackText(content, fallback string) string {
 	if strings.TrimSpace(content) == "" {
 		return fallback
@@ -475,6 +489,7 @@ func fallbackText(content, fallback string) string {
 	return content
 }
 
+// readTextIfExists 读取文件内容，文件不存在或读取失败时返回空字符串。
 func readTextIfExists(path string) string {
 	if !fileutil.FileExists(path) {
 		return ""
@@ -486,6 +501,7 @@ func readTextIfExists(path string) string {
 	return string(data)
 }
 
+// parseYAMLEnvelope 从 LLM 响应中解析 JSON 信封提取 YAML 内容。
 func parseYAMLEnvelope(raw string) (string, error) {
 	cleaned := strings.TrimSpace(raw)
 	if strings.HasPrefix(cleaned, "```") {
@@ -506,12 +522,14 @@ func parseYAMLEnvelope(raw string) (string, error) {
 	return strings.TrimSpace(out.Content), nil
 }
 
+// emitProgress 触发进度回调通知。
 func (e *Executor) emitProgress(event ProgressEvent) {
 	if e.onProgress != nil {
 		e.onProgress(event)
 	}
 }
 
+// validateGeneratedContent 校验生成的 YAML 内容是否合法且符合对应结构。
 func validateGeneratedContent(action UpdateAction, content string) error {
 	if err := generator.ValidateYAML(content); err != nil {
 		return err
@@ -544,10 +562,12 @@ func validateGeneratedContent(action UpdateAction, content string) error {
 	return nil
 }
 
+// isContractAction 判断更新动作是否为契约类型。
 func isContractAction(action UpdateAction) bool {
 	return strings.HasPrefix(action.Target, "contract:")
 }
 
+// startLLMHeartbeat 启动 LLM 调用的心跳定时器，定期发送进度事件。
 func (e *Executor) startLLMHeartbeat(action UpdateAction, index, total int, targetPath string) func() {
 	done := make(chan struct{})
 	var once sync.Once
@@ -580,6 +600,7 @@ func (e *Executor) startLLMHeartbeat(action UpdateAction, index, total int, targ
 	}
 }
 
+// formatElapsedDuration 将耗时格式化为 "Ns" 字符串。
 func formatElapsedDuration(elapsed time.Duration) string {
 	seconds := int(elapsed.Round(time.Second) / time.Second)
 	if seconds < 1 {

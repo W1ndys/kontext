@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,10 +21,6 @@ const (
 	contractUpdateConcurrency = 4
 	llmProgressInterval       = 15 * time.Second
 )
-
-type yamlEnvelope struct {
-	Content string `json:"content"`
-}
 
 type actionResult struct {
 	index      int
@@ -225,7 +220,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		})
 
 		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-		resp, content, err := e.generateYAMLEnvelope(req, action, index, total, targetPath)
+		resp, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
 		stopHeartbeat()
 		if err != nil {
 			return "", err
@@ -249,7 +244,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 			})
 			req.Messages = append(req.Messages,
 				llm.Message{Role: "assistant", Content: resp.Content},
-				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的 YAML 无法解析：%v。请保持最小修改并返回合法 YAML。", validateErr)},
+				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的 YAML 无法解析：%v。请保持最小修改，直接返回完整、合法的 YAML 文本，不要使用 JSON 包装。", validateErr)},
 			)
 		}
 	}
@@ -257,64 +252,35 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	return "", fmt.Errorf("LLM 返回的 YAML 仍不合法: %w", lastValidationErr)
 }
 
-// generateYAMLEnvelope 调用 LLM 结构化输出生成 YAML 信封，失败时回退到传统模式。
-func (e *Executor) generateYAMLEnvelope(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
-	var out yamlEnvelope
-	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &out, 3, nil)
-	if err == nil {
-		return resp, strings.TrimSpace(out.Content), nil
-	}
-	if !llm.IsStructuredOutputError(err) {
-		return nil, "", err
-	}
-
-	e.emitProgress(ProgressEvent{
-		Stage:      ProgressStructuredFallback,
-		Action:     action,
-		Index:      index,
-		Total:      total,
-		TargetPath: targetPath,
-		Message:    err.Error(),
-	})
-
-	fallbackResp, fallbackContent, fallbackErr := e.generateYAMLEnvelopeLegacy(req)
-	if fallbackErr != nil {
-		return nil, "", fmt.Errorf("结构化输出失败: %v；回退到传统 JSON 模式也失败: %w", err, fallbackErr)
-	}
-	return fallbackResp, fallbackContent, nil
-}
-
-// generateYAMLEnvelopeLegacy 使用传统（非结构化）方式调用 LLM 生成 YAML 信封。
-func (e *Executor) generateYAMLEnvelopeLegacy(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
+// generateYAMLContent 调用 LLM 生成 YAML 内容，直接返回纯 YAML 文本。
+func (e *Executor) generateYAMLContent(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
 	resp, err := llm.ChatWithRetry(e.client, req, 3, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("调用 LLM 生成 YAML 失败: %w", err)
 	}
 
-	content, err := parseYAMLEnvelope(resp.Content)
-	if err == nil {
-		return resp, content, nil
-	}
-
-	retryReq := &llm.ChatRequest{Messages: append([]llm.Message{}, req.Messages...)}
-	retryReq.Messages = append(retryReq.Messages,
-		llm.Message{Role: "assistant", Content: resp.Content},
-		llm.Message{Role: "user", Content: fmt.Sprintf("上次返回的 JSON 格式不正确，错误: %v。请重新返回合法 JSON，且只包含 content 字段。", err)},
-	)
-
-	retryResp, retryErr := llm.ChatWithRetry(e.client, retryReq, 3, nil)
-	if retryErr != nil {
-		return nil, "", retryErr
-	}
-
-	content, err = parseYAMLEnvelope(retryResp.Content)
-	if err != nil {
-		return nil, "", fmt.Errorf("解析传统 JSON 响应失败: %w", err)
-	}
-	return retryResp, content, nil
+	content := extractYAMLContent(resp.Content)
+	return resp, content, nil
 }
 
-// renderUserPrompt 根据更新动作类型渲染对应的用户提示词。
+// extractYAMLContent 从 LLM 响应中提取纯 YAML 内容。
+// 去除 markdown 代码块包裹，返回清理后的 YAML 文本。
+func extractYAMLContent(raw string) string {
+	cleaned := strings.TrimSpace(raw)
+	if strings.HasPrefix(cleaned, "```") {
+		lines := strings.Split(cleaned, "\n")
+		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") {
+			lines = lines[1:]
+			if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1]) == "```" {
+				lines = lines[:n-1]
+			}
+			cleaned = strings.TrimSpace(strings.Join(lines, "\n"))
+		}
+	}
+	return cleaned
+}
+
+// emitProgress 触发进度回调通知。
 func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, currentYAML string) (string, bool, error) {
 	switch action.Target {
 	case "architecture":
@@ -499,27 +465,6 @@ func readTextIfExists(path string) string {
 		return ""
 	}
 	return string(data)
-}
-
-// parseYAMLEnvelope 从 LLM 响应中解析 JSON 信封提取 YAML 内容。
-func parseYAMLEnvelope(raw string) (string, error) {
-	cleaned := strings.TrimSpace(raw)
-	if strings.HasPrefix(cleaned, "```") {
-		lines := strings.Split(cleaned, "\n")
-		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") {
-			lines = lines[1:]
-			if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1]) == "```" {
-				lines = lines[:n-1]
-			}
-			cleaned = strings.TrimSpace(strings.Join(lines, "\n"))
-		}
-	}
-
-	var out yamlEnvelope
-	if err := json.Unmarshal([]byte(cleaned), &out); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out.Content), nil
 }
 
 // emitProgress 触发进度回调通知。

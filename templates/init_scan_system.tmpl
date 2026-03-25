@@ -2,18 +2,20 @@
 
 你将收到一个项目的目录树、依赖文件和关键源码片段。请根据这些信息生成 kontext 项目配置文件。
 
-你必须严格以 JSON 格式回复，不要添加任何 markdown 代码块标记或其他内容。
+你必须严格以 YAML 格式回复，不要添加任何 markdown 代码块标记或其他内容。
 
 返回格式：
-{
-  "project_manifest": "YAML内容",
-  "architecture_map": "YAML内容",
-  "conventions": "YAML内容",
-  "module_contracts": {
-    "模块名": "该模块的CONTRACT YAML内容",
-    "另一个模块名": "该模块的CONTRACT YAML内容"
-  }
-}
+project_manifest: |
+  YAML内容
+architecture_map: |
+  YAML内容
+conventions: |
+  YAML内容
+module_contracts:
+  模块名: |
+    该模块的CONTRACT YAML内容
+  另一个模块名: |
+    该模块的CONTRACT YAML内容
 
 注意：module_contracts 的键是模块名（如 "cmd"、"config"、"packer"），不需要带 _CONTRACT 后缀。
 

@@ -3,7 +3,6 @@ package generator
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -212,7 +211,7 @@ func ValidateYAML(content string) error {
 	return yaml.Unmarshal([]byte(content), &out)
 }
 
-// interviewStep 执行一轮 LLM 对话，优先使用结构化输出解析 InterviewResponse，失败时回退到传统 JSON 解析。
+// interviewStep 执行一轮 LLM 对话，优先使用 JSON Schema 结构化输出解析 InterviewResponse，失败时回退到文本解析。
 func interviewStep(
 	client llm.Client,
 	messages []llm.Message,
@@ -238,7 +237,7 @@ func interviewStep(
 	return resp, parsed, nil
 }
 
-// GenerateStructuredYAML 调用 LLM 生成结构化 YAML，优先使用结构化输出，失败时回退到传统 JSON 模式。
+// GenerateStructuredYAML 调用 LLM 生成结构化 YAML，优先使用 YAML 结构化输出，失败时回退到文本解析。
 func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
@@ -248,12 +247,12 @@ func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*G
 	}
 
 	var structured GeneratedYAML
-	if _, err := client.ChatStructured(req, "generated_yaml", &structured); err == nil {
+	if _, err := client.ChatYAML(req, &structured); err == nil {
 		return &structured, nil
 	} else {
-		generated, legacyErr := generateLegacyYAML(client, systemPrompt, userMsg)
-		if legacyErr != nil {
-			return nil, fmt.Errorf("结构化输出失败: %v；回退到传统 JSON 模式也失败: %w", err, legacyErr)
+		generated, fallbackErr := generateYAMLWithRetry(client, systemPrompt, userMsg)
+		if fallbackErr != nil {
+			return nil, fmt.Errorf("YAML 结构化输出失败: %v；回退解析也失败: %w", err, fallbackErr)
 		}
 		return generated, nil
 	}
@@ -268,13 +267,13 @@ func AnalyzeProjectFiles(client llm.Client, systemPrompt, userMsg string) (*Anal
 		},
 	}
 
-	// 优先尝试结构化输出
+	// 优先尝试 JSON Schema 结构化输出
 	var structured AnalyzedFiles
 	if _, err := client.ChatStructured(req, "analyzed_files", &structured); err == nil {
 		return &structured, nil
 	}
 
-	// 回退到传统 JSON 解析
+	// 回退到文本解析
 	resp, err := client.Chat(req)
 	if err != nil {
 		return nil, fmt.Errorf("调用 LLM 分析文件失败: %w", err)
@@ -297,13 +296,13 @@ func SelectKeyFiles(client llm.Client, systemPrompt, userMsg string) (*SelectedF
 		},
 	}
 
-	// 优先尝试结构化输出
+	// 优先尝试 JSON Schema 结构化输出
 	var structured SelectedFiles
 	if _, err := client.ChatStructured(req, "selected_files", &structured); err == nil {
 		return &structured, nil
 	}
 
-	// 回退到传统 JSON 解析
+	// 回退到文本解析
 	resp, err := client.Chat(req)
 	if err != nil {
 		return nil, fmt.Errorf("调用 LLM 选择重点文件失败: %w", err)
@@ -326,13 +325,13 @@ func GenerateDependencyGraph(client llm.Client, systemPrompt, userMsg string) (*
 		},
 	}
 
-	// 优先尝试结构化输出
+	// 优先尝试 JSON Schema 结构化输出
 	var structured ModuleDependencyGraph
 	if _, err := client.ChatStructured(req, "module_dependency_graph", &structured); err == nil {
 		return &structured, nil
 	}
 
-	// 回退到传统 JSON 解析
+	// 回退到文本解析
 	resp, err := client.Chat(req)
 	if err != nil {
 		return nil, fmt.Errorf("调用 LLM 生成依赖图失败：%w", err)
@@ -346,28 +345,28 @@ func GenerateDependencyGraph(client llm.Client, systemPrompt, userMsg string) (*
 	return result, nil
 }
 
-// ParseModuleDependencyGraph 解析模块依赖关系图的 JSON 响应。
+// ParseModuleDependencyGraph 解析模块依赖关系图的 YAML 响应。
 func ParseModuleDependencyGraph(content string) (*ModuleDependencyGraph, error) {
 	content = strings.TrimSpace(content)
 
-	// 尝试提取 JSON（去除 markdown 代码块）
+	// 尝试提取代码块（去除 markdown 代码块）
 	if strings.HasPrefix(content, "```") {
-		re := regexp.MustCompile("(?s)```(?:json)?\\s*\\n(.+?)\\n```")
+		re := regexp.MustCompile("(?s)```(?:ya?ml|json)?\\s*\\n(.+?)\\n```")
 		if matches := re.FindStringSubmatch(content); len(matches) >= 2 {
 			content = strings.TrimSpace(matches[1])
 		}
 	}
 
 	var graph ModuleDependencyGraph
-	if err := json.Unmarshal([]byte(content), &graph); err != nil {
-		return nil, fmt.Errorf("解析 JSON 失败：%w", err)
+	if err := yaml.Unmarshal([]byte(content), &graph); err != nil {
+		return nil, fmt.Errorf("解析 YAML 失败：%w", err)
 	}
 
 	return &graph, nil
 }
 
-// generateLegacyYAML 使用传统（非结构化）方式调用 LLM 生成 YAML，作为结构化输出的回退方案。
-func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
+// generateYAMLWithRetry 使用文本模式调用 LLM 生成 YAML，作为 YAML 结构化输出的回退方案。
+func generateYAMLWithRetry(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -383,7 +382,7 @@ func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*Gener
 		return generated, nil
 	}
 
-	retryMsg := fmt.Sprintf("上次生成的 JSON 格式不正确，错误: %s\n请重新生成，确保返回合法的 JSON。", err.Error())
+	retryMsg := fmt.Sprintf("上次生成的 YAML 格式不正确，错误: %s\n请重新生成，确保直接返回合法的 YAML，不要使用 JSON，不要添加额外说明。", err.Error())
 	resp, err = client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -398,7 +397,7 @@ func generateLegacyYAML(client llm.Client, systemPrompt, userMsg string) (*Gener
 
 	generated, err = ParseGeneratedYAML(resp.Content)
 	if err != nil {
-		return nil, fmt.Errorf("LLM 生成的 JSON 格式不正确: %w", err)
+		return nil, fmt.Errorf("LLM 生成的 YAML 格式不正确: %w", err)
 	}
 
 	return generated, nil
@@ -435,35 +434,35 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 			time.Sleep(backoff)
 		}
 
-		// 优先尝试结构化输出
+		// 优先尝试 YAML 结构化输出
 		var structured SingleFileYAML
-		if _, err := client.ChatStructured(req, "single_file_yaml", &structured); err == nil {
+		if _, err := client.ChatYAML(req, &structured); err == nil {
 			if content, valErr := firstValidYAMLCandidate(structured.Content); valErr == nil {
 				return content, nil
 			} else if strings.TrimSpace(structured.Content) != "" {
-				lastErr = fmt.Errorf("结构化输出中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+				lastErr = fmt.Errorf("YAML 结构化输出中的内容不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
 			}
 		}
 
-		// 回退到传统解析
+		// 回退到文本解析
 		resp, err := client.Chat(req)
 		if err != nil {
 			lastErr = fmt.Errorf("调用 LLM 生成配置失败 (尝试 %d/%d): %w", attempt+1, maxRetries, err)
 			continue
 		}
 
-		// 尝试解析 JSON 响应
+		// 尝试解析 YAML 响应
 		parsed, err := ParseSingleFileYAML(resp.Content)
 		if err == nil {
 			if content, valErr := firstValidYAMLCandidate(parsed.Content); valErr == nil {
 				return content, nil
 			} else if strings.TrimSpace(parsed.Content) != "" {
-				lastErr = fmt.Errorf("JSON 响应中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+				lastErr = fmt.Errorf("响应中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
 				continue
 			}
 		}
 
-		// JSON 解析失败，尝试直接提取 YAML 内容
+		// 解析失败，尝试直接提取 YAML 内容
 		if content, valErr := firstValidYAMLCandidate(resp.Content, extractYAMLFromResponse(resp.Content)); valErr == nil {
 			return content, nil
 		} else if strings.TrimSpace(resp.Content) != "" {
@@ -519,9 +518,9 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 			time.Sleep(backoff)
 		}
 
-		// 优先尝试结构化输出
+		// 优先尝试 YAML 结构化输出
 		var structured ModuleContractYAML
-		if _, err := client.ChatStructured(req, "module_contract_yaml", &structured); err == nil {
+		if _, err := client.ChatYAML(req, &structured); err == nil {
 			// 如果 LLM 返回的模块名为空，使用传入的模块名
 			if structured.ModuleName == "" {
 				structured.ModuleName = moduleName
@@ -529,14 +528,14 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 			return &structured, nil
 		}
 
-		// 回退到传统解析
+		// 回退到文本解析
 		resp, err := client.Chat(req)
 		if err != nil {
 			lastErr = fmt.Errorf("调用 LLM 生成模块契约失败 (尝试 %d/%d): %w", attempt+1, maxRetries, err)
 			continue
 		}
 
-		// 尝试解析 JSON 响应
+		// 尝试解析 YAML 响应
 		parsed, err := ParseModuleContractYAML(resp.Content)
 		if err == nil {
 			if parsed.ModuleName == "" {
@@ -545,7 +544,7 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 			return parsed, nil
 		}
 
-		// JSON 解析失败，尝试直接提取 YAML 内容
+		// 解析失败，尝试直接提取 YAML 内容
 		yamlContent := extractYAMLFromResponse(resp.Content)
 		if yamlContent != "" {
 			return &ModuleContractYAML{

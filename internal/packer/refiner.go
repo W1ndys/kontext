@@ -14,21 +14,21 @@ import (
 
 // CandidateFile 是发送给精筛模型的候选文件。
 type CandidateFile struct {
-	Path    string `json:"path"`
-	Summary string `json:"summary"`
+	Path    string `yaml:"path" json:"path"`
+	Summary string `yaml:"summary" json:"summary"`
 }
 
 // FileRelevance 描述单个文件与任务的相关度。
 type FileRelevance struct {
-	Path       string   `json:"path"`
-	Relevance  string   `json:"relevance"`
-	Reason     string   `json:"reason"`
-	FocusAreas []string `json:"focus_areas"`
+	Path       string   `yaml:"path" json:"path"`
+	Relevance  string   `yaml:"relevance" json:"relevance"`
+	Reason     string   `yaml:"reason" json:"reason"`
+	FocusAreas []string `yaml:"focus_areas" json:"focus_areas"`
 }
 
 // RefineResult 是 LLM 精筛后的结构化结果。
 type RefineResult struct {
-	RelevantFiles []FileRelevance `json:"relevant_files"`
+	RelevantFiles []FileRelevance `yaml:"relevant_files" json:"relevant_files"`
 }
 
 type refineTemplateData struct {

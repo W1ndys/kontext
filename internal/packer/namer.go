@@ -14,7 +14,7 @@ import (
 const maxFilenameSuggestionRunes = 24
 
 type filenameSuggestion struct {
-	Title string `json:"title"`
+	Title string `yaml:"title" json:"title"`
 }
 
 type filenameSuggestionTemplateData struct {

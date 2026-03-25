@@ -83,6 +83,10 @@ func (s *stubLLMClient) ChatStructured(req *llm.ChatRequest, schemaName string, 
 	return s.chatStructuredFn(req, schemaName, out)
 }
 
+func (s *stubLLMClient) ChatYAML(req *llm.ChatRequest, out any) (*llm.ChatResponse, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (s *stubLLMClient) ListModels() ([]string, error) {
 	return nil, errors.New("not implemented")
 }

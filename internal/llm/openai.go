@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -222,6 +223,14 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 	}
 	content = stripJSONCodeBlock(content)
 	if err := json.Unmarshal([]byte(content), out); err != nil {
+		// 兼容不支持 structured output 的中转站：LLM 可能返回数组而非对象，
+		// 尝试用 schema 中第一个数组类型字段名包装后重新解析
+		if wrapped, ok := tryWrapArray(content, out); ok {
+			if retryErr := json.Unmarshal([]byte(wrapped), out); retryErr == nil {
+				c.logChatResponse("chat_structured", req, wrapped, startedAt, "schema_name", schemaName, "array_wrapped", true)
+				return &ChatResponse{Content: wrapped}, nil
+			}
+		}
 		wrappedErr := fmt.Errorf("解析结构化输出失败: %w（content=%s）", err, compactSnippet(content, 240))
 		c.logChatError("chat_structured", req, wrappedErr, startedAt,
 			"schema_name", schemaName,
@@ -432,6 +441,43 @@ func stripJSONCodeBlock(s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return s
+}
+
+// tryWrapArray 尝试将 JSON 数组包装为对象。
+// 当 LLM 返回 `[...]` 而目标类型期望 `{"field": [...]}` 时，
+// 通过反射找到目标结构体中第一个 slice 类型字段的 json tag，
+// 将数组包装成 `{"tag": [...]}` 后返回。
+func tryWrapArray(content string, out any) (string, bool) {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return "", false
+	}
+
+	t := reflect.TypeOf(out)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return "", false
+	}
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if field.Type.Kind() == reflect.Slice {
+			tag := field.Tag.Get("json")
+			if tag == "" || tag == "-" {
+				continue
+			}
+			// 取逗号前的字段名（如 "relevant_files,omitempty" → "relevant_files"）
+			if idx := strings.Index(tag, ","); idx != -1 {
+				tag = tag[:idx]
+			}
+			wrapped := fmt.Sprintf(`{%q:%s}`, tag, trimmed)
+			return wrapped, true
+		}
+	}
+
+	return "", false
 }
 
 // compactSnippet 将字符串压缩为单行并截断到指定长度，用于日志输出

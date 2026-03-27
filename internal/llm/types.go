@@ -84,6 +84,5 @@ type Client interface {
 	Chat(req *ChatRequest) (*ChatResponse, error)
 	ChatStream(req *ChatRequest, onChunk func(string) error) (*ChatResponse, error)
 	ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error)
-	ChatYAML(req *ChatRequest, out any) (*ChatResponse, error)
 	ListModels() ([]string, error)
 }

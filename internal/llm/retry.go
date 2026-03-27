@@ -78,39 +78,6 @@ func ChatStructuredWithRetry(client Client, req *ChatRequest, schemaName string,
 	return nil, fmt.Errorf("重试 %d 次后仍然失败: %w", maxRetries, lastErr)
 }
 
-// ChatYAMLWithRetry 带自动重试的 ChatYAML 调用。
-func ChatYAMLWithRetry(client Client, req *ChatRequest, out any, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error) {
-	if maxRetries <= 0 {
-		maxRetries = DefaultMaxRetries
-	}
-
-	var lastErr error
-	for i := 0; i < maxRetries; i++ {
-		resp, err := client.ChatYAML(req, out)
-		if err == nil {
-			return resp, nil
-		}
-
-		if !isRetryableError(err) {
-			return nil, err
-		}
-
-		lastErr = err
-		backoff := time.Duration(math.Pow(2, float64(i))) * time.Second
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-
-		if onRetry != nil {
-			onRetry(i+1, err, backoff)
-		}
-
-		time.Sleep(backoff)
-	}
-
-	return nil, fmt.Errorf("重试 %d 次后仍然失败: %w", maxRetries, lastErr)
-}
-
 // ChatStreamWithRetry 带自动重试的 ChatStream 调用。
 func ChatStreamWithRetry(client Client, req *ChatRequest, onChunk func(string) error, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error) {
 	if maxRetries <= 0 {

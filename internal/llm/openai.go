@@ -14,7 +14,6 @@ import (
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/w1ndys/kontext/internal/logging"
-	"go.yaml.in/yaml/v4"
 )
 
 // openaiClient 实现了兼容 OpenAI API 规范的 LLM 客户端。
@@ -220,6 +219,7 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 		)
 		return nil, wrappedErr
 	}
+	content = stripJSONCodeBlock(content)
 	if err := json.Unmarshal([]byte(content), out); err != nil {
 		wrappedErr := fmt.Errorf("解析结构化输出失败: %w（content=%s）", err, compactSnippet(content, 240))
 		c.logChatError("chat_structured", req, wrappedErr, startedAt,
@@ -230,53 +230,6 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 	}
 
 	c.logChatResponse("chat_structured", req, content, startedAt, "schema_name", schemaName)
-	return &ChatResponse{Content: content}, nil
-}
-
-// ChatYAML 调用 LLM 并将响应按 YAML 解析到 out 结构体。
-// 不使用 JSON Schema 约束，而是依赖提示词引导模型直接输出 YAML。
-func (c *openaiClient) ChatYAML(req *ChatRequest, out any) (*ChatResponse, error) {
-	startedAt := time.Now()
-	c.logChatRequestStart("chat_yaml", req)
-
-	if out == nil {
-		err := fmt.Errorf("YAML 输出目标不能为空")
-		c.logChatError("chat_yaml", req, err, startedAt)
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.GetTimeout())
-	defer cancel()
-
-	resp, err := c.createChatCompletion(ctx, req, openai.ChatCompletionNewParamsResponseFormatUnion{})
-	if err != nil {
-		wrappedErr := fmt.Errorf("调用 LLM API 失败: %w", err)
-		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
-		return nil, wrappedErr
-	}
-	if len(resp.Choices) == 0 {
-		wrappedErr := fmt.Errorf("LLM API 未返回任何结果")
-		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
-		return nil, wrappedErr
-	}
-
-	content := strings.TrimSpace(resp.Choices[0].Message.Content)
-	if content == "" {
-		wrappedErr := fmt.Errorf("解析 YAML 输出失败: 响应内容为空")
-		c.logChatError("chat_yaml", req, wrappedErr, startedAt)
-		return nil, wrappedErr
-	}
-
-	cleaned := stripYAMLCodeBlock(content)
-	if err := yaml.Unmarshal([]byte(cleaned), out); err != nil {
-		wrappedErr := fmt.Errorf("解析 YAML 输出失败: %w（content=%s）", err, compactSnippet(content, 240))
-		c.logChatError("chat_yaml", req, wrappedErr, startedAt,
-			"response_content", content,
-		)
-		return nil, wrappedErr
-	}
-
-	c.logChatResponse("chat_yaml", req, content, startedAt)
 	return &ChatResponse{Content: content}, nil
 }
 
@@ -469,11 +422,11 @@ func generateJSONSchema(v any) (map[string]any, error) {
 	return result, nil
 }
 
-// stripYAMLCodeBlock 去除 LLM 返回内容中可能包裹的 markdown 代码块标记。
-// 支持 ```yaml、```yml、```json、无语言标记的 ``` 等。
-func stripYAMLCodeBlock(s string) string {
+// stripJSONCodeBlock 去除 LLM 返回内容中可能包裹的 markdown 代码块标记（JSON 场景）。
+// 支持 ```json、无语言标记的 ``` 等。
+func stripJSONCodeBlock(s string) string {
 	s = strings.TrimSpace(s)
-	re := regexp.MustCompile("(?s)^```(?:ya?ml|json)?\\s*\n?(.*?)\\s*```$")
+	re := regexp.MustCompile("(?s)^```(?:json)?\\s*\n?(.*?)\\s*```$")
 	if m := re.FindStringSubmatch(s); len(m) == 2 {
 		return strings.TrimSpace(m[1])
 	}

@@ -62,3 +62,14 @@ go test ./internal/packer/ -run TestCollector
 ## 日志
 
 通过 `log/slog` 实现结构化日志。在 `cmd/root.go` 的 `PersistentPreRunE` 中初始化。`cmd/logging_helpers.go` 负责敏感信息脱敏（API Key 等）。日志文件输出到 `.kontext/logs/`。
+
+## 项目上下文
+
+本项目使用 Kontext 生成了结构化上下文，存放在 `.kontext/` 目录中。开始任务前请先阅读以下制品：
+
+- `.kontext/PROJECT_MANIFEST.yaml` — 项目清单（定位、技术栈、核心流程）
+- `.kontext/ARCHITECTURE_MAP.yaml` — 架构分层与模块归属
+- `.kontext/CONVENTIONS.yaml` — 编码规范与约束
+- `.kontext/module_contracts/` — 各模块的职责边界与接口契约
+
+请基于这些上下文理解项目结构后再进行开发。

@@ -2,7 +2,7 @@
 
 你将收到一个项目的目录树、依赖文件和关键源码片段。请根据这些信息生成 PROJECT_MANIFEST.yaml 配置文件。
 
-你必须直接返回 PROJECT_MANIFEST.yaml 的完整 YAML 内容，不要使用 JSON 包装，不要添加 markdown 代码块标记，也不要输出任何解释性文字。
+你必须以 JSON 格式返回，结构为 {"content": "完整的 YAML 文本"}。content 字段的值是 PROJECT_MANIFEST.yaml 的合法 YAML 内容。不要添加 markdown 代码块标记或解释性文字。
 
 ## PROJECT_MANIFEST.yaml 的 schema
 

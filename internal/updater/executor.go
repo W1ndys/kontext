@@ -316,7 +316,7 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 	return fileutil.WriteFile(targetPath, []byte(content))
 }
 
-// backupIfExists 如果目标文件存在则备份到 .backup/ 目录。
+// backupIfExists 如果目标文件存在则备份到 backup/ 目录。
 func (e *Executor) backupIfExists(path string) error {
 	if !fileutil.FileExists(path) {
 		return nil
@@ -326,7 +326,7 @@ func (e *Executor) backupIfExists(path string) error {
 	if err != nil {
 		return err
 	}
-	backupPath := filepath.Join(e.kontextDir, ".backup", e.backupStamp, relPath)
+	backupPath := filepath.Join(e.kontextDir, "backup", e.backupStamp, relPath)
 	data, err := fileutil.ReadFile(path)
 	if err != nil {
 		return err
@@ -336,7 +336,7 @@ func (e *Executor) backupIfExists(path string) error {
 
 // pruneBackups 清理超过 5 个的旧备份目录。
 func (e *Executor) pruneBackups() error {
-	backupRoot := filepath.Join(e.kontextDir, ".backup")
+	backupRoot := filepath.Join(e.kontextDir, "backup")
 	if !fileutil.DirExists(backupRoot) {
 		return nil
 	}

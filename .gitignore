@@ -12,7 +12,7 @@ build/
 # kontext specific ignores
 .kontext/logs
 .kontext/.cache
-.kontext/.backup
+.kontext/backup
 
 # Build output
 /dist

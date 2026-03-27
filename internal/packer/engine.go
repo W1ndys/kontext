@@ -121,16 +121,12 @@ func (e *Engine) Pack(task string) (string, error) {
 		return "", fmt.Errorf("阶段 8 (渲染用户提示词): %w", err)
 	}
 
-	resp, err := llm.ChatStreamWithRetry(e.llmClient, buildChatRequest(systemPrompt, userPrompt), func(delta string) error {
-		_, writeErr := fmt.Fprint(os.Stderr, delta)
-		return writeErr
-	}, 3, func(attempt int, retryErr error, backoff time.Duration) {
+	resp, err := llm.ChatWithRetry(e.llmClient, buildChatRequest(systemPrompt, userPrompt), 3, func(attempt int, retryErr error, backoff time.Duration) {
 		fmt.Fprintf(os.Stderr, "\n⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
 	})
 	if err != nil {
 		return "", fmt.Errorf("阶段 8 (LLM 生成): %w", err)
 	}
-	fmt.Fprintln(os.Stderr)
 
 	e.progress(9, "生成输出文件名...")
 	filenameTitle, err := GenerateFilenameSuggestion(e.llmClient, task, func(attempt int, retryErr error, backoff time.Duration) {

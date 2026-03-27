@@ -87,7 +87,8 @@ func (c *openaiClient) Chat(req *ChatRequest) (*ChatResponse, error) {
 		return nil, wrappedErr
 	}
 
-	content := resp.Choices[0].Message.Content
+	choice := resp.Choices[0]
+	content := choice.Message.Content
 	c.logChatResponse("chat", req, content, startedAt)
 	return &ChatResponse{Content: content}, nil
 }

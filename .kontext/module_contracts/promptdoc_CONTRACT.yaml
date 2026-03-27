@@ -23,9 +23,15 @@ depends_on:
     reason: "使用 fileutil 提供的文件系统工具完成目录创建与文件写入"
 
 public_interface:
+  - name: "maxFilenameBaseRunes"
+    signature: "const maxFilenameBaseRunes = 50"
+    description: "文件名基础部分允许的最大 rune 数量，用于防止生成过长的文件名。（包内常量）"
   - name: "GenerateFilename"
     signature: "func GenerateFilename(task, title string) string"
     description: "根据任务描述和标题生成带时间戳前缀的 Markdown 文件名；优先使用 title，title 为空时回退到 task，均不可用时返回默认文件名。"
+  - name: "generateFilenameAt"
+    signature: "func generateFilenameAt(now time.Time, task, title string) string"
+    description: "根据指定时间生成带时间戳前缀的文件名，为 GenerateFilename 的可测试内部实现。（包内非导出函数，供 GenerateFilename 调用及测试使用）"
   - name: "SavePrompt"
     signature: "func SavePrompt(kontextDir, filename, content string) (string, error)"
     description: "确保输出目录存在后，将 Prompt 内容写入指定文件名对应的 Markdown 文件，并返回最终文件路径。"

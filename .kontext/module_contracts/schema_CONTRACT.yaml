@@ -76,6 +76,15 @@ public_interface:
   - name: "CoreFlow"
     signature: "type CoreFlow struct { Name string `yaml:\"name\"`; Steps []string `yaml:\"steps\"` }"
     description: "描述一条核心业务流程的名称和步骤"
+  - name: "TechStack"
+    signature: "type TechStack struct"
+    description: "描述项目的技术栈信息，包括语言、框架和主要依赖等"
+  - name: "Scale"
+    signature: "type Scale struct"
+    description: "描述项目的规模指标，如代码行数、模块数量等"
+  - name: "Status"
+    signature: "type Status struct"
+    description: "描述项目当前的状态信息，如开发阶段、成熟度等"
 
 modification_rules:
   - rule: "新增或修改 .kontext 物料字段时，必须先在 schema 中扩展对应结构体与 yaml 标签，再允许其他模块读写该字段。"

@@ -1,8 +1,7 @@
 layers:
   - name: "CLI 命令入口层"
-    description: "以 cmd 和 main 为入口，负责解析命令行参数、与用户交互、组装运行参数，并调用内部应用服务执行 init、pack、update、validate、config 等工作流。该层不直接承载核心领域规则，主要承担流程编排与终端展示职责。"
+    description: "以 cmd 为入口，负责解析命令行参数、与用户交互、组装运行参数，并调用内部应用服务执行 init、pack、update、validate、config 等工作流。该层不直接承载核心领域规则，主要承担流程编排与终端展示职责。"
     packages:
-      - "main"
       - "cmd"
 
   - name: "应用流程编排层"
@@ -30,15 +29,13 @@ layers:
       - "internal/promptdoc"
 
   - name: "底层支撑设施层"
-    description: "提供与业务无关但被多处复用的基础能力，包括文件系统访问、目录扫描、内容读写、文件摘要提取、扫描检查点缓存与哈希计算等，是上层流程的运行时支撑。"
+    description: "提供与业务无关但被多处复用的基础能力，包括文件系统访问、目录扫描、内容读写、文件摘要提取、扫描检查点缓存与哈希计算、结构化日志输出等，是上层流程的运行时支撑。"
     packages:
       - "internal/fileutil"
       - "internal/cache"
+      - "internal/logging"
 
 rules:
-  - rule: "main 只能作为程序启动入口调用 cmd.Execute，不承载业务逻辑。"
-    reason: "main.go 仅导入 cmd 包并调用 Execute，说明项目明确将 CLI 入口与实际命令实现分离。"
-
   - rule: "cmd 层负责参数解析、交互确认、进度展示与错误转译，不应实现 YAML 解析、LLM 协议细节或文件筛选算法。"
     reason: "cmd/init.go、cmd/update.go、cmd/pack.go 都以命令为中心做 I/O 和流程触发，实际生成、打包、更新逻辑分别委托给 generator、packer、updater、schema、llm。"
 
@@ -86,6 +83,9 @@ rules:
 
   - rule: "文件系统访问、目录扫描、读写和摘要提取统一通过 fileutil 提供，业务层不应在多个包中重复实现底层 I/O。"
     reason: "generator、schema、packer、updater、cmd 多处都依赖 internal/fileutil，说明其被定位为统一基础设施。"
+
+  - rule: "日志输出统一通过 internal/logging 提供，业务层不应自行实现日志格式化或级别控制。"
+    reason: "internal/logging 作为独立基础设施包，为各层提供结构化日志能力，避免日志实现散落在多个包中。"
 
   - rule: "update 功能采用先检测再规划再执行的三段式结构，其中 detector 只负责发现偏差，planner 只负责生成动作，executor 只负责落地更新。"
     reason: "internal/updater 被拆分为 detector.go、planner.go、executor.go、types.go，职责边界在文件与调用关系上都很明确。"

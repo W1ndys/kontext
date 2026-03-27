@@ -28,6 +28,11 @@ type actionResult struct {
 	err        error
 }
 
+// UpdatedYAML 是 LLM 更新制品时返回的 JSON 结构。
+type UpdatedYAML struct {
+	Content string `json:"content"` // 更新后的 YAML 文本
+}
+
 // Executor 执行 update 计划。
 type Executor struct {
 	client      llm.Client
@@ -244,40 +249,23 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 			})
 			req.Messages = append(req.Messages,
 				llm.Message{Role: "assistant", Content: resp.Content},
-				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的 YAML 无法解析：%v。请保持最小修改，直接返回完整、合法的 YAML 文本，不要使用 JSON 包装。", validateErr)},
+				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的内容无法解析：%v。请保持最小修改，以 JSON 格式返回 {\"content\": \"完整、合法的 YAML 文本\"}。", validateErr)},
 			)
 		}
 	}
 
-	return "", fmt.Errorf("LLM 返回的 YAML 仍不合法: %w", lastValidationErr)
+	return "", fmt.Errorf("LLM 返回的内容仍不合法: %w", lastValidationErr)
 }
 
-// generateYAMLContent 调用 LLM 生成 YAML 内容，直接返回纯 YAML 文本。
+// generateYAMLContent 调用 LLM 生成 YAML 内容，通过 JSON 结构化输出返回。
 func (e *Executor) generateYAMLContent(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
-	resp, err := llm.ChatWithRetry(e.client, req, 3, nil)
+	var result UpdatedYAML
+	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &result, 3, nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("调用 LLM 生成 YAML 失败: %w", err)
+		return nil, "", fmt.Errorf("调用 LLM 生成内容失败: %w", err)
 	}
 
-	content := extractYAMLContent(resp.Content)
-	return resp, content, nil
-}
-
-// extractYAMLContent 从 LLM 响应中提取纯 YAML 内容。
-// 去除 markdown 代码块包裹，返回清理后的 YAML 文本。
-func extractYAMLContent(raw string) string {
-	cleaned := strings.TrimSpace(raw)
-	if strings.HasPrefix(cleaned, "```") {
-		lines := strings.Split(cleaned, "\n")
-		if len(lines) >= 2 && strings.HasPrefix(lines[0], "```") {
-			lines = lines[1:]
-			if n := len(lines); n > 0 && strings.TrimSpace(lines[n-1]) == "```" {
-				lines = lines[:n-1]
-			}
-			cleaned = strings.TrimSpace(strings.Join(lines, "\n"))
-		}
-	}
-	return cleaned
+	return resp, result.Content, nil
 }
 
 // emitProgress 触发进度回调通知。

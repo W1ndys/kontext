@@ -78,6 +78,18 @@ public_interface:
   - name: "RefineContext"
     signature: "func RefineContext(client llm.Client, task string, candidates []CandidateFile, contracts []schema.ModuleContract, identifiedFiles []IdentifiedFile, onRetry func(attempt int, err error, backoff time.Duration)) (*RefineResult, error)"
     description: "调用 LLM 对候选文件和契约进行进一步精筛，返回最终相关上下文"
+  - name: "FileRelevance"
+    signature: "type FileRelevance struct { Path string `json:\"path\"`; Score float64 `json:\"score\"`; Reason string `json:\"reason\"` }"
+    description: "表示精筛阶段返回的单个文件相关性评分与原因"
+  - name: "RefineResult"
+    signature: "type RefineResult struct { RelevantFiles []FileRelevance `json:\"relevant_files\"`; RelevantContracts []string `json:\"relevant_contracts\"` }"
+    description: "表示上下文精筛阶段的完整返回结果，包含相关文件列表和相关契约名称列表"
+  - name: "TemplateData"
+    signature: "type TemplateData struct { Task string; ProjectName string; ProjectOneLine string; ProjectType string; Phase string; ArchitectureSummary string; TechStack []string; Conventions []string; Contracts []schema.ModuleContract; ContextFiles []ContextFileData; DirectoryTree string }"
+    description: "最终 Prompt 模板渲染所需的完整数据结构"
+  - name: "ContextFileData"
+    signature: "type ContextFileData struct { Path string; Language string; Content string; Reason string; Truncated bool }"
+    description: "表示模板渲染中单个上下文文件的路径、语言标识、内容、原因及截断标记"
 
 modification_rules:
   - rule: "必须保持 Pack 流水线的阶段顺序与职责边界，不得将文件识别、精筛、模板渲染或保存步骤随意交叉或合并。"

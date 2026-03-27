@@ -14,6 +14,7 @@ owns:
   - "编排 pack 的任务解析、任务文件读取与调用打包引擎"
   - "调用 schema 校验 .kontext 物料并向终端输出校验结果"
   - "为配置命令提供命令行与 TUI 交互入口"
+  - "提供命令层日志辅助工具，统一命令路径常量与敏感信息过滤"
 
 not_responsible_for:
   - "不负责定义 .kontext YAML 的数据结构与校验规则"
@@ -33,6 +34,8 @@ depends_on:
     reason: "init 命令通过该模块执行交互式生成、扫描分析与 YAML 物料产出"
   - module: "llm"
     reason: "命令层在读取配置后创建统一的 LLM 客户端供 init、pack、update 流程使用"
+  - module: "logging"
+    reason: "命令层通过 logging 模块获取带命令路径标签的结构化日志记录器"
   - module: "packer"
     reason: "pack 命令将任务描述与上下文打包工作委托给打包引擎"
   - module: "schema"
@@ -46,6 +49,18 @@ public_interface:
   - name: "Execute"
     signature: "func Execute()"
     description: "CLI 程序主入口，初始化默认 help 命令描述并执行根命令；执行失败时向标准错误输出并退出进程。"
+  - name: "namedLogger"
+    signature: "func namedLogger(commandPath string) *slog.Logger"
+    description: "根据命令路径字符串返回带有 command 标签的结构化日志记录器，供各命令文件统一使用。"
+  - name: "shouldSkipCommandLifecycleLog"
+    signature: "func shouldSkipCommandLifecycleLog(cmd *cobra.Command) bool"
+    description: "判断指定 Cobra 命令是否应跳过生命周期日志记录（如 help、completion 等辅助命令）。"
+  - name: "countLines"
+    signature: "func countLines(text string) int"
+    description: "统计文本中的行数，用于日志摘要等场景。"
+  - name: "isSensitiveConfigKey"
+    signature: "func isSensitiveConfigKey(key string) bool"
+    description: "判断配置键名是否属于敏感信息（如 API Key），用于日志脱敏。"
 
 modification_rules:
   - rule: "新增命令必须通过 rootCmd.AddCommand 注册到根命令，而不是在 main 或其他包中分散挂载。"

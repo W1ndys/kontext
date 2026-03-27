@@ -11,6 +11,8 @@ owns:
   - "递归扫描项目目录并生成文件清单"
   - "按忽略规则过滤目录和文件"
   - "提取文件摘要用于上层上下文构建"
+  - "读取源码文件的前 N 行代码片段"
+  - "查找项目中的 Go 源码文件"
 
 not_responsible_for:
   - "不负责 YAML 结构定义、解析语义或业务校验"
@@ -22,11 +24,11 @@ depends_on: []
 
 public_interface:
   - name: "ReadFile"
-    signature: "func ReadFile(path string) (string, error)"
-    description: "读取指定路径文件内容并返回字符串形式的完整文本。"
+    signature: "func ReadFile(path string) ([]byte, error)"
+    description: "读取指定路径文件的全部内容并返回字节切片。"
   - name: "WriteFile"
-    signature: "func WriteFile(path string, content string) error"
-    description: "将文本内容写入指定文件路径，供配置物料和文档输出复用。"
+    signature: "func WriteFile(path string, data []byte) error"
+    description: "将字节数据写入指定文件路径，如果父目录不存在则自动创建。"
   - name: "FileExists"
     signature: "func FileExists(path string) bool"
     description: "判断指定路径的文件是否存在。"
@@ -36,12 +38,18 @@ public_interface:
   - name: "EnsureDir"
     signature: "func EnsureDir(path string) error"
     description: "确保目录存在，不存在时递归创建。"
-  - name: "ScanFiles"
-    signature: "func ScanFiles(root string, maxDepth int) ([]string, error)"
-    description: "扫描根目录下的文件列表，并依据深度和内置忽略规则过滤无关路径。"
+  - name: "ScanDirectoryTree"
+    signature: "func ScanDirectoryTree(root string, maxDepth int) ([]string, error)"
+    description: "扫描根目录下的目录树结构，依据深度和内置忽略规则过滤无关路径，返回文件路径列表。"
+  - name: "ReadCodeSnippets"
+    signature: "func ReadCodeSnippets(root string, paths []string, maxLines int) map[string]string"
+    description: "批量读取指定源码文件的前 N 行内容，返回路径到代码片段的映射。"
   - name: "ExtractFileSummary"
-    signature: "func ExtractFileSummary(path string, maxLines int) (string, error)"
-    description: "提取文件的摘要文本，通常用于候选文件说明或上下文预览。"
+    signature: "func ExtractFileSummary(path string) (string, error)"
+    description: "提取文件的签名级摘要文本，通常用于候选文件说明或上下文预览。"
+  - name: "FindGoFiles"
+    signature: "func FindGoFiles(root string) ([]string, error)"
+    description: "递归查找指定根目录下的所有 Go 源码文件（.go），返回文件路径列表。"
 
 modification_rules:
   - rule: "新增或修改扫描逻辑时，必须保持该模块只返回通用文件事实，不嵌入 pack、init 或 update 的业务判断。"

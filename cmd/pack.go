@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -154,35 +157,72 @@ func cleanTaskContent(data []byte) string {
 	return strings.TrimSpace(string(data))
 }
 
-// 交互式逐行读取任务描述，空行结束
+// 通过临时文件和 $EDITOR 交互式获取任务描述
 func readTaskFromPrompt() (string, error) {
-	reader := bufio.NewReader(os.Stdin)
-	var lines []string
-
-	for {
-		if len(lines) == 0 {
-			fmt.Fprintln(os.Stderr, "请输入任务描述，输入空行结束:")
-		}
-		fmt.Fprint(os.Stderr, "> ")
-		line, err := reader.ReadString('\n')
-		line = strings.TrimRight(line, "\r\n")
-		if strings.TrimSpace(line) == "" {
-			if len(lines) > 0 {
-				return strings.TrimSpace(strings.Join(lines, "\n")), nil
-			}
-			if err == io.EOF {
-				return "", fmt.Errorf("任务描述不能为空")
-			}
-			continue
-		}
-
-		lines = append(lines, line)
-
-		if err != nil {
-			if err == io.EOF {
-				return strings.TrimSpace(strings.Join(lines, "\n")), nil
-			}
-			return "", fmt.Errorf("读取任务描述失败: %w", err)
-		}
+	tmpFile, err := os.CreateTemp(".", ".kontext_task_*.md")
+	if err != nil {
+		return "", fmt.Errorf("创建临时文件失败: %w", err)
 	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	// 写入提示注释
+	hint := "<!-- 请在此处输入任务描述，保存并关闭编辑器即可。本注释行会被自动忽略。 -->\n"
+	if _, err := tmpFile.WriteString(hint); err != nil {
+		tmpFile.Close()
+		return "", fmt.Errorf("写入临时文件失败: %w", err)
+	}
+	tmpFile.Close()
+
+	// 检测编辑器：$EDITOR > code --wait > vi
+	editor, editorArgs := detectEditor()
+
+	fmt.Fprintf(os.Stderr, "正在打开编辑器 (%s)，请输入任务描述...\n", editor)
+
+	cmdArgs := append(editorArgs, tmpPath)
+	cmd := exec.Command(editor, cmdArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("编辑器退出异常: %w", err)
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return "", fmt.Errorf("读取临时文件失败: %w", err)
+	}
+
+	// 去除 HTML 注释行
+	content := stripHTMLComments(string(data))
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return "", fmt.Errorf("任务描述不能为空")
+	}
+
+	return content, nil
+}
+
+// stripHTMLComments 去除文本中的 HTML 注释（<!-- ... -->）
+func stripHTMLComments(s string) string {
+	re := regexp.MustCompile(`(?s)<!--.*?-->`)
+	return re.ReplaceAllString(s, "")
+}
+
+// detectEditor 检测可用的编辑器，返回命令名和额外参数。
+// 优先级：$EDITOR > code --wait > vi (Unix) / notepad (Windows)
+func detectEditor() (string, []string) {
+	// 优先检测 VS Code
+	if path, err := exec.LookPath("code"); err == nil {
+		return path, []string{"--wait"}
+	}
+	// 用户自定义编辑器
+	if editor := os.Getenv("EDITOR"); editor != "" {
+		return editor, nil
+	}
+	// 按系统降级
+	if runtime.GOOS == "windows" {
+		return "notepad", nil
+	}
+	return "vi", nil
 }

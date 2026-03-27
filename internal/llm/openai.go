@@ -222,6 +222,7 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 		return nil, wrappedErr
 	}
 	content = stripJSONCodeBlock(content)
+	content = extractJSONFromText(content)
 	if err := json.Unmarshal([]byte(content), out); err != nil {
 		// 兼容不支持 structured output 的中转站：LLM 可能返回数组而非对象，
 		// 尝试用 schema 中第一个数组类型字段名包装后重新解析
@@ -441,6 +442,61 @@ func stripJSONCodeBlock(s string) string {
 		return strings.TrimSpace(m[1])
 	}
 	return s
+}
+
+// extractJSONFromText 从混合文本中提取 JSON 对象或数组。
+// 兼容某些模型（如通过中转站调用的 Claude）在返回结构化输出时，
+// 先输出思考过程文本再输出 JSON 的情况。
+func extractJSONFromText(s string) string {
+	trimmed := strings.TrimSpace(s)
+	// 如果已经以 { 或 [ 开头，无需提取
+	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return trimmed
+	}
+
+	// 策略 1：查找空行后紧跟 { 的位置（模型通常在思考文本和 JSON 之间留空行）
+	if idx := strings.Index(trimmed, "\n\n{"); idx >= 0 {
+		candidate := strings.TrimSpace(trimmed[idx:])
+		if json.Valid([]byte(candidate)) {
+			return candidate
+		}
+	}
+	if idx := strings.Index(trimmed, "\n{"); idx >= 0 {
+		candidate := strings.TrimSpace(trimmed[idx:])
+		if json.Valid([]byte(candidate)) {
+			return candidate
+		}
+	}
+
+	// 策略 2：从最后一个顶层 { 向前搜索（JSON 总在思考文本之后）
+	// 逆序查找每个 { 的位置，尝试截取到末尾并验证
+	for i := len(trimmed) - 1; i >= 0; i-- {
+		if trimmed[i] == '{' {
+			candidate := strings.TrimSpace(trimmed[i:])
+			if json.Valid([]byte(candidate)) {
+				return candidate
+			}
+		}
+	}
+
+	// 策略 3：从第一个 { 到最后一个 } 截取（兜底，不检查有效性）
+	if start := strings.Index(trimmed, "{"); start >= 0 {
+		if end := strings.LastIndex(trimmed, "}"); end > start {
+			return trimmed[start : end+1]
+		}
+	}
+
+	// 同理处理 JSON 数组
+	if start := strings.Index(trimmed, "["); start >= 0 {
+		if end := strings.LastIndex(trimmed, "]"); end > start {
+			candidate := trimmed[start : end+1]
+			if json.Valid([]byte(candidate)) {
+				return candidate
+			}
+		}
+	}
+
+	return trimmed
 }
 
 // tryWrapArray 尝试将 JSON 数组包装为对象。

@@ -18,6 +18,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
+	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/templates"
 	"go.yaml.in/yaml/v4"
 )
@@ -33,7 +34,7 @@ func RunInteractiveInit(client llm.Client, description string) error {
 	}
 
 	// 阶段 2：生成 YAML 配置文件
-	fmt.Fprintln(os.Stdout, "\n需求澄清完成！正在生成配置文件...")
+	fmt.Fprintln(os.Stdout, "\n需求澄清完成，开始分阶段生成配置文件...")
 	return generateAndWrite(client, summary, conversation)
 }
 
@@ -58,9 +59,16 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 
 	scanner := bufio.NewScanner(input)
 
+	tracker := ui.NewTracker()
+	tracker.Start()
+	defer tracker.Stop()
+
 	for round := 1; round <= maxRounds; round++ {
+		task := tracker.AddTask(fmt.Sprintf("AI 正在思考第 %d 个问题", round))
 		resp, interview, err := interviewStep(client, messages)
 		if err != nil {
+			task.Fail(err)
+			tracker.Stop()
 			return "", "", fmt.Errorf("解析 LLM 响应失败: %w", err)
 		}
 
@@ -68,11 +76,17 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Content})
 
 		if interview.Type == "done" {
+			task.DoneWithLabel("需求澄清完成")
+			tracker.Stop()
 			conversationLog.WriteString(fmt.Sprintf("需求摘要: %s\n", interview.Summary))
 			return interview.Summary, conversationLog.String(), nil
 		}
 
-		// 显示问题和选项
+		task.DoneWithLabel(fmt.Sprintf("第 %d 个问题已生成", round))
+
+		// 暂停 tracker 渲染，显示问题和选项，等待用户输入
+		tracker.Stop()
+
 		fmt.Fprintf(output, "\n[问题 %d/%d] %s\n", round, maxRounds, interview.Question)
 		for i, opt := range interview.Options {
 			fmt.Fprintf(output, "  %d. %s\n", i+1, opt)
@@ -101,6 +115,10 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 
 		// 将用户回答加入消息历史
 		messages = append(messages, llm.Message{Role: "user", Content: answer})
+
+		// 重新启动 tracker 以显示下一轮的 spinner
+		tracker = ui.NewTracker()
+		tracker.Start()
 	}
 
 	// 达到最大轮数，强制要求总结
@@ -109,10 +127,14 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 		Content: "已达到最大提问次数，请根据目前收集到的信息生成需求摘要。请以 JSON 格式回复：{\"type\": \"done\", \"summary\": \"...\"}",
 	})
 
+	task := tracker.AddTask("AI 正在生成需求摘要")
 	resp, interview, err := interviewStep(client, messages)
 	if err != nil {
+		task.Fail(err)
+		tracker.Stop()
 		return "", "", fmt.Errorf("解析摘要响应失败: %w", err)
 	}
+	task.DoneWithLabel("需求摘要生成完成")
 
 	summary := interview.Summary
 	if summary == "" {
@@ -124,69 +146,107 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 }
 
 // generateAndWrite 分阶段调用 LLM 生成 YAML 并写入文件。
+// 每个制品生成后立即保存到磁盘，防止网络中断导致前序结果丢失。
 // 阶段 1: 生成 PROJECT_MANIFEST
 // 阶段 2: 生成 ARCHITECTURE_MAP（引用 manifest）
 // 阶段 3: 生成 CONVENTIONS（引用 manifest + architecture）
 // 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT
 func generateAndWrite(client llm.Client, summary, conversation string) error {
+	// 确保目录结构存在
+	kontextDir := ".kontext"
+	for _, d := range []string{kontextDir, filepath.Join(kontextDir, "module_contracts"), filepath.Join(kontextDir, "prompts")} {
+		if err := fileutil.EnsureDir(d); err != nil {
+			return fmt.Errorf("创建目录 %s 失败: %w", d, err)
+		}
+	}
+
+	tracker := ui.NewTracker()
+	tracker.Start()
+
 	// ── 阶段 1: 生成 PROJECT_MANIFEST ──
-	fmt.Println("  [1/4] 生成 PROJECT_MANIFEST.yaml ...")
+	task := tracker.AddTask("生成 PROJECT_MANIFEST.yaml")
 	manifestUserMsg, err := RenderTemplate(templates.InitGenerateManifestUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
 	})
 	if err != nil {
+		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
+		tracker.Stop()
 		return fmt.Errorf("渲染 manifest 用户模板失败: %w", err)
 	}
 	manifestContent, err := GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
 	if err != nil {
+		task.Fail(err)
+		tracker.Stop()
 		return fmt.Errorf("生成 PROJECT_MANIFEST 失败: %w", err)
 	}
-	fmt.Println("  [1/4] PROJECT_MANIFEST.yaml 生成完成")
+	if err := writeYAMLFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"), manifestContent); err != nil {
+		task.Fail(err)
+		tracker.Stop()
+		return err
+	}
+	task.DoneWithLabel("PROJECT_MANIFEST.yaml 已保存")
 
 	// ── 阶段 2: 生成 ARCHITECTURE_MAP ──
-	fmt.Println("  [2/4] 生成 ARCHITECTURE_MAP.yaml ...")
+	task = tracker.AddTask("生成 ARCHITECTURE_MAP.yaml")
 	archUserMsg, err := RenderTemplate(templates.InitGenerateArchitectureUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
 		"Manifest":     manifestContent,
 	})
 	if err != nil {
+		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
+		tracker.Stop()
 		return fmt.Errorf("渲染 architecture 用户模板失败: %w", err)
 	}
 	archContent, err := GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
 	if err != nil {
+		task.Fail(err)
+		tracker.Stop()
 		return fmt.Errorf("生成 ARCHITECTURE_MAP 失败: %w", err)
 	}
-	fmt.Println("  [2/4] ARCHITECTURE_MAP.yaml 生成完成")
+	if err := writeYAMLFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"), archContent); err != nil {
+		task.Fail(err)
+		tracker.Stop()
+		return err
+	}
+	task.DoneWithLabel("ARCHITECTURE_MAP.yaml 已保存")
 
 	// ── 阶段 3: 生成 CONVENTIONS ──
-	fmt.Println("  [3/4] 生成 CONVENTIONS.yaml ...")
+	task = tracker.AddTask("生成 CONVENTIONS.yaml")
 	convUserMsg, err := RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
 		"Summary":      summary,
 		"Manifest":     manifestContent,
 		"Architecture": archContent,
 	})
 	if err != nil {
+		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
+		tracker.Stop()
 		return fmt.Errorf("渲染 conventions 用户模板失败: %w", err)
 	}
 	convContent, err := GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
 	if err != nil {
+		task.Fail(err)
+		tracker.Stop()
 		return fmt.Errorf("生成 CONVENTIONS 失败: %w", err)
 	}
-	fmt.Println("  [3/4] CONVENTIONS.yaml 生成完成")
+	if err := writeYAMLFile(filepath.Join(kontextDir, "CONVENTIONS.yaml"), convContent); err != nil {
+		task.Fail(err)
+		tracker.Stop()
+		return err
+	}
+	task.DoneWithLabel("CONVENTIONS.yaml 已保存")
 
 	// ── 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT ──
 	modules := extractModulesFromArchitecture(archContent)
 	if len(modules) == 0 {
-		fmt.Println("  [4/4] 未从架构中识别到模块，跳过契约生成")
-	} else {
-		fmt.Printf("  [4/4] 生成模块契约 (%d 个模块) ...\n", len(modules))
+		tracker.Stop()
+		fmt.Println("\n.kontext/ 初始化完成！（未识别到模块，跳过契约生成）")
+		return nil
 	}
 
-	contractResults := make(map[string]string)
 	for i, mod := range modules {
-		fmt.Printf("    [%d/%d] 生成模块 %s 的契约 ...\n", i+1, len(modules), mod)
+		task = tracker.AddTask(fmt.Sprintf("[%d/%d] 生成模块契约 %s", i+1, len(modules), mod))
 		contractUserMsg, err := RenderTemplate(templates.InitGenerateContractUser, map[string]string{
 			"Summary":      summary,
 			"Manifest":     manifestContent,
@@ -194,27 +254,39 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 			"ModuleName":   mod,
 		})
 		if err != nil {
-			return fmt.Errorf("渲染模块 %s 契约用户模板失败: %w", mod, err)
+			task.Fail(fmt.Errorf("渲染模板失败: %v", err))
+			continue
 		}
 
 		contract, err := GenerateModuleContractStream(client, templates.InitScanContractSystem, contractUserMsg, mod, nil)
 		if err != nil {
-			fmt.Printf("    [%d/%d] 模块 %s 契约生成失败: %v，跳过\n", i+1, len(modules), mod, err)
+			task.Fail(err)
 			continue
 		}
-		contractResults[mod] = contract.Content
-		fmt.Printf("    [%d/%d] 模块 %s 契约生成完成\n", i+1, len(modules), mod)
+
+		filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
+		contractPath := filepath.Join(kontextDir, "module_contracts", filename)
+		if err := writeYAMLFile(contractPath, contract.Content); err != nil {
+			task.Fail(err)
+			continue
+		}
+		task.DoneWithLabel(fmt.Sprintf("%s_CONTRACT.yaml 已保存", mod))
 	}
 
-	// 组装 GeneratedYAML 并写入
-	generated := &GeneratedYAML{
-		ProjectManifest: manifestContent,
-		ArchitectureMap: archContent,
-		Conventions:     convContent,
-		ModuleContracts: contractResults,
-	}
+	tracker.Stop()
+	fmt.Println("\n.kontext/ 初始化完成！")
+	return nil
+}
 
-	return WriteGeneratedYAML(generated)
+// writeYAMLFile 校验 YAML 合法性并写入文件。
+func writeYAMLFile(path, content string) error {
+	if err := ValidateYAML(content); err != nil {
+		return fmt.Errorf("生成的 %s 不合法: %w", filepath.Base(path), err)
+	}
+	if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+		return fmt.Errorf("写入 %s 失败: %w", path, err)
+	}
+	return nil
 }
 
 // extractModulesFromArchitecture 从 ARCHITECTURE_MAP YAML 中提取模块名列表。

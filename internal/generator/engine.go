@@ -23,7 +23,7 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-const maxRounds = 10
+const maxRounds = 20
 
 // RunInteractiveInit 执行 AI 交互式初始化的完整两阶段流程。
 func RunInteractiveInit(client llm.Client, description string) error {

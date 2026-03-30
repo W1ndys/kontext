@@ -1,0 +1,152 @@
+{
+  "module": {
+    "name": "llm",
+    "path": "internal/llm",
+    "purpose": "封装与 OpenAI 兼容接口的模型调用能力，向上层提供统一的 LLM 客户端抽象。该模块负责读取运行时配置、创建客户端、执行普通文本生成、多轮对话、流式输出、结构化输出（JSON Schema 与 YAML）与模型列表查询，并在结构化输出场景中基于目标类型生成 JSON Schema、完成响应解析与错误包装。同时提供带自动重试的调用辅助函数与结构化输出错误判断工具。\n"
+  },
+  "owns": [
+    "定义 LLM 客户端配置、请求与响应相关类型及默认超时语义",
+    "根据配置创建统一的 Client 实例并校验必要参数",
+    "实现基于 OpenAI 兼容协议的文本生成与多轮对话调用",
+    "实现流式对话输出并通过回调逐块返回新增内容",
+    "实现基于 JSON Schema 的结构化输出请求与反序列化",
+    "实现基于 YAML 格式的结构化输出请求与反序列化",
+    "封装模型列表查询能力，屏蔽底层 SDK 细节",
+    "统一处理 LLM 调用中的超时控制、错误包装与响应内容裁剪",
+    "提供带自动重试与指数退避的 Chat / ChatStructured / ChatYAML / ChatStream 辅助函数",
+    "提供结构化输出错误判断工具函数，辅助上层决定是否降级"
+  ],
+  "not_responsible_for": [
+    "不负责 CLI 参数解析、终端交互或命令流程编排",
+    "不负责提示词模板选择、渲染与业务提示词内容设计",
+    "不负责 .kontext YAML 物料的领域结构定义、加载或校验",
+    "不负责文件系统扫描、源码读取、上下文筛选或 Prompt 文档落盘",
+    "不负责上层业务中的重试编排、任务规划或更新策略决策"
+  ],
+  "depends_on": [],
+  "public_interface": [
+    {
+      "name": "Client",
+      "signature": "type Client interface { Generate(req *GenerateRequest) (*GenerateResponse, error); Chat(req *ChatRequest) (*ChatResponse, error); ChatStream(req *ChatRequest, onChunk func(string) error) (*ChatResponse, error); ChatStructured(req *ChatRequest, schemaName string, out any) (*ChatResponse, error); ChatYAML(req *ChatRequest, out any) (*ChatResponse, error); ListModels() ([]string, error) }",
+      "description": "对上层暴露的统一 LLM 客户端抽象，屏蔽具体提供商 SDK，实现普通生成、多轮对话、流式输出、JSON Schema 结构化输出、YAML 结构化输出与模型查询。"
+    },
+    {
+      "name": "Config",
+      "signature": "type Config struct { BaseURL string; APIKey string; Model string; Timeout time.Duration }",
+      "description": "保存 LLM 连接配置，包括兼容接口地址、鉴权信息、模型名和调用超时时间。"
+    },
+    {
+      "name": "DefaultTimeout",
+      "signature": "const DefaultTimeout = 300 * time.Second",
+      "description": "LLM API 调用的默认超时时间，当配置未显式指定 Timeout 时使用。"
+    },
+    {
+      "name": "DefaultMaxRetries",
+      "signature": "const DefaultMaxRetries = 3",
+      "description": "带重试辅助函数的默认最大重试次数。"
+    },
+    {
+      "name": "Message",
+      "signature": "type Message struct { Role string; Content string }",
+      "description": "表示多轮对话中的单条消息，供 Chat、ChatStream、ChatStructured 和 ChatYAML 使用。"
+    },
+    {
+      "name": "GenerateRequest",
+      "signature": "type GenerateRequest struct { SystemPrompt string; UserPrompt string }",
+      "description": "普通单轮生成请求，包含系统提示词和用户提示词。"
+    },
+    {
+      "name": "GenerateResponse",
+      "signature": "type GenerateResponse struct { Content string }",
+      "description": "普通单轮生成返回结果，封装模型输出文本。"
+    },
+    {
+      "name": "ChatRequest",
+      "signature": "type ChatRequest struct { Messages []Message }",
+      "description": "多轮对话请求，要求调用方提供完整消息历史。"
+    },
+    {
+      "name": "ChatResponse",
+      "signature": "type ChatResponse struct { Content string }",
+      "description": "多轮对话、流式对话和结构化对话的统一响应类型。"
+    },
+    {
+      "name": "NewClient",
+      "signature": "func NewClient(cfg *Config) (Client, error)",
+      "description": "根据配置创建 LLM 客户端实例；当 APIKey 缺失时返回错误。"
+    },
+    {
+      "name": "(*Config) GetTimeout",
+      "signature": "func (c *Config) GetTimeout() time.Duration",
+      "description": "返回有效超时时间；当 Timeout 为 0 时回退到 DefaultTimeout。"
+    },
+    {
+      "name": "ConfigFromEnv",
+      "signature": "func ConfigFromEnv() (*Config, error)",
+      "description": "从环境变量读取 LLM 配置并构造 Config。"
+    },
+    {
+      "name": "ChatWithRetry",
+      "signature": "func ChatWithRetry(client Client, req *ChatRequest, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error)",
+      "description": "带自动重试与指数退避的 Chat 调用，遇到可重试错误时自动重试。"
+    },
+    {
+      "name": "ChatStructuredWithRetry",
+      "signature": "func ChatStructuredWithRetry(client Client, req *ChatRequest, schemaName string, out any, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error)",
+      "description": "带自动重试与指数退避的 ChatStructured 调用。"
+    },
+    {
+      "name": "ChatYAMLWithRetry",
+      "signature": "func ChatYAMLWithRetry(client Client, req *ChatRequest, out any, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error)",
+      "description": "带自动重试与指数退避的 ChatYAML 调用。"
+    },
+    {
+      "name": "ChatStreamWithRetry",
+      "signature": "func ChatStreamWithRetry(client Client, req *ChatRequest, onChunk func(string) error, maxRetries int, onRetry func(attempt int, err error, backoff time.Duration)) (*ChatResponse, error)",
+      "description": "带自动重试与指数退避的 ChatStream 调用。"
+    },
+    {
+      "name": "IsStructuredOutputError",
+      "signature": "func IsStructuredOutputError(err error) bool",
+      "description": "判断错误是否属于结构化输出本身的失败，仅用于调用方决定是否可安全降级到普通 Chat 模式。"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "所有上层模块只能依赖 Client 抽象和公开类型，不得泄漏 openai-go 的具体类型到 public_interface。",
+      "reason": "该模块的职责是屏蔽底层提供商实现细节，保证 generator、packer、updater、cmd 不与具体 SDK 耦合。"
+    },
+    {
+      "rule": "新增模型提供商或调用方式时，必须保持 NewClient 返回的仍是 Client 接口实现。",
+      "reason": "架构要求上层只依赖统一抽象，避免因底层实现变更引发跨模块修改。"
+    },
+    {
+      "rule": "所有外部 API 调用都必须使用 Config.GetTimeout 生成 context 超时控制。",
+      "reason": "源码中 Generate、Chat、ChatStream、ChatStructured、ChatYAML 均依赖统一超时语义，避免请求失控或行为不一致。"
+    },
+    {
+      "rule": "结构化输出必须继续以 ChatStructured 和 ChatYAML 为入口，并在模块内部完成 Schema 生成、格式解析与反序列化。",
+      "reason": "上层流程依赖这些方法获得受约束的结构化结果，若将 Schema 或解析逻辑外泄会破坏边界。"
+    },
+    {
+      "rule": "错误信息必须保留调用阶段语义，并在必要时附带裁剪后的原始响应片段，避免直接暴露超长原文。",
+      "reason": "当前实现通过 fmt.Errorf 包装失败原因并使用 compactSnippet 控制错误上下文长度，有利于排障且避免日志污染。"
+    },
+    {
+      "rule": "ChatRequest 中消息角色的支持范围变更时，必须同步维护 buildChatCompletionParams 的角色映射与错误分支。",
+      "reason": "该方法是消息协议转换的唯一入口，角色不一致会直接导致运行时请求失败。"
+    },
+    {
+      "rule": "流式输出必须保持按增量块回调 onChunk，并在最终返回完整聚合内容。",
+      "reason": "上层 pack 流程依赖实时输出与最终完整文本两种结果，改变语义会破坏调用方体验。"
+    },
+    {
+      "rule": "环境变量读取逻辑仅限于 ConfigFromEnv，其他公开调用路径不得隐式读取环境变量。",
+      "reason": "配置来源需要可预测，避免客户端创建时出现隐藏副作用。"
+    },
+    {
+      "rule": "重试辅助函数（ChatWithRetry 等）的可重试错误判断逻辑集中在 isRetryableError 内部，上层不应自行判断是否可重试。",
+      "reason": "可重试条件与底层 API 行为紧耦合，集中维护避免判断逻辑分散。"
+    }
+  ]
+}

@@ -1,0 +1,196 @@
+{
+  "module": {
+    "name": "cmd",
+    "path": "cmd",
+    "purpose": "Kontext CLI 命令入口层，实现 init、pack、update、validate、config 等命令的定义、参数解析、终端交互与错误转译，将业务流程委托给内部模块执行。\n"
+  },
+  "owns": [
+    "定义根命令及各子命令，通过 rootCmd.AddCommand 完成 Cobra 命令注册",
+    "解析命令行参数、flag 与位置参数，转换为内部流程可消费的输入",
+    "处理用户交互，包括覆盖确认、更新确认、任务输入读取与配置输入",
+    "加载运行时配置并创建 LLM 客户端后交给下层模块使用",
+    "编排 init 的交互式、静态、扫描初始化以及断点恢复入口",
+    "编排 update 的变更检测、更新计划展示、执行确认与进度输出",
+    "编排 pack 的任务解析、任务文件读取与调用打包引擎",
+    "调用 schema 校验 .kontext 物料并向终端输出校验结果",
+    "为配置命令提供命令行与 TUI 交互入口，包括 set/get/list 子命令与交互式配置向导",
+    "提供命令层日志辅助工具，统一命令路径常量与敏感信息过滤（isSensitiveConfigKey）",
+    "提供命令生命周期日志判断（shouldSkipCommandLifecycleLog）与文本行数统计（countLines）等辅助函数",
+    "提供 init 扫描流程中的本地文件分析、进度输出与辅助函数",
+    "提供 config TUI 模型选择器界面（modelSelector / modelItem），实现 tea.Model 与 list.Item 接口的导出方法（Init、Update、View、Title、Description、FilterValue）",
+    "提供配置显示辅助函数（maskKey）用于敏感配置值的脱敏展示"
+  ],
+  "not_responsible_for": [
+    "不负责定义 .kontext YAML 的数据结构与校验规则",
+    "不负责实现 OpenAI 兼容协议、流式输出或重试策略",
+    "不负责实现初始化生成、Prompt 打包或增量更新的核心业务算法",
+    "不负责底层文件扫描、目录遍历、通用读写与摘要提取算法",
+    "不负责维护模板内容本身，只负责触发使用对应模板的流程"
+  ],
+  "depends_on": [
+    {
+      "module": "cache",
+      "reason": "init --scan 流程需要检查检查点有效性、清理缓存并支持断点恢复"
+    },
+    {
+      "module": "config",
+      "reason": "init、update、config、pack 等命令需要读取和保存全局 LLM 配置，并转换为 llm.Config"
+    },
+    {
+      "module": "fileutil",
+      "reason": "命令层在初始化与打包入口中需要检查目录/文件是否存在以及进行基础文件读取辅助"
+    },
+    {
+      "module": "generator",
+      "reason": "init 命令通过该模块执行交互式生成、扫描分析与 YAML 物料产出"
+    },
+    {
+      "module": "llm",
+      "reason": "命令层在读取配置后创建统一的 LLM 客户端供 init、pack、update 流程使用"
+    },
+    {
+      "module": "logging",
+      "reason": "命令层通过 logging 模块获取带命令路径标签的结构化日志记录器"
+    },
+    {
+      "module": "packer",
+      "reason": "pack 命令将任务描述与上下文打包工作委托给打包引擎"
+    },
+    {
+      "module": "schema",
+      "reason": "validate 命令依赖 schema.ValidateBundle 校验 .kontext 物料完整性"
+    },
+    {
+      "module": "updater",
+      "reason": "update 命令依赖该模块完成变更检测、更新计划生成、执行与进度事件输出"
+    },
+    {
+      "module": "templates",
+      "reason": "init 扫描初始化入口会直接引用模板资源参与阶段性生成与默认初始化"
+    },
+    {
+      "module": "ui",
+      "reason": "命令层在交互式初始化、配置与扫描流程中使用 ui 模块提供的终端样式与提示输出"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "Execute",
+      "signature": "func Execute()",
+      "description": "CLI 程序主入口，初始化默认 help 命令描述并执行根命令；执行失败时向标准错误输出并退出进程。"
+    },
+    {
+      "name": "extractModulesFromArch",
+      "signature": "func extractModulesFromArch(archContent string, allFiles []string) []string",
+      "description": "包内辅助函数（未导出），从架构描述文本中提取模块名称列表，并与实际文件列表交叉验证。"
+    },
+    {
+      "name": "normalizeModuleName",
+      "signature": "func normalizeModuleName(pkg string) string",
+      "description": "包内辅助函数（未导出），将包路径或模块标识规范化为统一的模块名称格式。"
+    },
+    {
+      "name": "fallbackExtractModules",
+      "signature": "func fallbackExtractModules(allFiles []string) []string",
+      "description": "包内辅助函数（未导出），当 LLM 架构分析失败时，根据目录结构自动推断模块列表作为回退方案。"
+    },
+    {
+      "name": "extractFailedModuleNames",
+      "signature": "func extractFailedModuleNames(errors []error) []string",
+      "description": "包内辅助函数（未导出），从批量生成错误列表中提取失败模块的名称，用于断点恢复与重试。"
+    },
+    {
+      "name": "executeScanStages6to9",
+      "signature": "func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error)",
+      "description": "包内辅助函数（未导出），执行扫描初始化流水线的第 6 至第 9 阶段（模块级物料生成与汇总）。"
+    },
+    {
+      "name": "namedLogger",
+      "signature": "func namedLogger(commandPath string) *slog.Logger",
+      "description": "包内辅助函数（未导出），根据命令路径返回带 command 标签的结构化日志记录器。"
+    },
+    {
+      "name": "runScanPipeline",
+      "signature": "func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) error",
+      "description": "包内辅助函数（未导出），执行扫描初始化的多阶段流水线，支持从指定阶段断点恢复。"
+    },
+    {
+      "name": "localAnalyzeFiles",
+      "signature": "func localAnalyzeFiles(allFiles []string) *generator.AnalyzedFiles",
+      "description": "包内辅助函数（未导出），使用本地规则按文件名与扩展名对文件列表进行分类识别，作为 LLM 文件识别的回退方案。"
+    },
+    {
+      "name": "runModelSelector",
+      "signature": "func runModelSelector(models []string, currentModel string) (string, error)",
+      "description": "包内辅助函数（未导出），启动 Bubble Tea TUI 模型选择器，供用户从预设模型列表中选择或手动输入模型名称。"
+    },
+    {
+      "name": "modelSelector",
+      "signature": "type modelSelector struct",
+      "description": "Bubble Tea TUI 模型，实现 config 命令中模型选择列表的浏览、筛选与手动输入交互。导出方法包括 Init、Update、View。"
+    },
+    {
+      "name": "modelItem",
+      "signature": "type modelItem struct",
+      "description": "实现 list.Item 接口的模型条目，携带模型名称、是否当前选中及是否为手动输入选项的元数据。导出方法包括 Title、Description、FilterValue。"
+    },
+    {
+      "name": "shouldSkipCommandLifecycleLog",
+      "signature": "func shouldSkipCommandLifecycleLog(cmd *cobra.Command) bool",
+      "description": "包内辅助函数（未导出），判断指定命令是否应跳过生命周期日志记录（如 help、completion 等）。"
+    },
+    {
+      "name": "countLines",
+      "signature": "func countLines(text string) int",
+      "description": "包内辅助函数（未导出），统计给定文本的行数。"
+    },
+    {
+      "name": "isSensitiveConfigKey",
+      "signature": "func isSensitiveConfigKey(key string) bool",
+      "description": "包内辅助函数（未导出），判断配置键名是否为敏感字段（如 api_key），用于日志脱敏。"
+    },
+    {
+      "name": "maskKey",
+      "signature": "func maskKey(key string) string",
+      "description": "包内辅助函数（未导出），对敏感配置值进行脱敏处理，仅保留首尾少量字符。"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "新增命令必须通过 rootCmd.AddCommand 注册到根命令。",
+      "reason": "命令树集中在 cmd/root.go 维护，保证 CLI 入口统一。"
+    },
+    {
+      "rule": "cmd 层只负责参数解析、交互与流程触发，不得包含 YAML 解析、LLM 协议细节或复杂业务规则。",
+      "reason": "核心逻辑已分别归属 generator、packer、updater、schema、llm 等模块。"
+    },
+    {
+      "rule": "读取 LLM 配置时必须先走 config.Load 与 ToLLMConfig，再调用 llm.NewClient。",
+      "reason": "配置持久化与运行时转换集中在 config 模块，避免命令层重复拼装。"
+    },
+    {
+      "rule": "涉及覆盖用户文件或批量更新的命令必须保留显式确认步骤。",
+      "reason": "init 与 update 在破坏性操作前询问用户，属于既有安全边界。"
+    },
+    {
+      "rule": "validate 命令只能复用 schema 提供的统一校验入口，不得复制校验逻辑。",
+      "reason": "YAML 结构约束保持单一事实来源。"
+    },
+    {
+      "rule": "update 命令须维持检测 → 计划展示 → 用户确认 → 执行的流程。",
+      "reason": "通过 printPlannedUpdates 与 confirmPlannedUpdates 建立可审查的更新流程。"
+    },
+    {
+      "rule": "init --scan 的缓存恢复必须继续依赖 cache 模块，不得引入独立缓存格式。",
+      "reason": "断点续跑由 internal/cache 提供统一检查点语义。"
+    },
+    {
+      "rule": "根命令 Execute 应继续作为 main 调用的唯一公开入口。",
+      "reason": "main.go 只依赖 cmd.Execute，保持启动入口单一。"
+    },
+    {
+      "rule": "新增命令路径常量须统一定义在 logging_helpers.go 中，并与 namedLogger 配合使用。",
+      "reason": "命令标识集中管理，便于日志过滤与审计。"
+    }
+  ]
+}

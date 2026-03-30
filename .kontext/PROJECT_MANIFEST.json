@@ -1,0 +1,116 @@
+{
+  "project": {
+    "name": "Kontext",
+    "one_line": "将项目知识编译为可供大模型直接消费的上下文配置与 Prompt 文档的 AI 原生 CLI 工具",
+    "type": "cli_tool",
+    "business_context": "该项目面向 AI 辅助开发场景，解决大型语言模型在理解真实工程代码库时缺乏稳定上下文、难以把握项目结构与约束的问题。Kontext 通过扫描源码、分析目录与模块、生成结构化 YAML 物料，并进一步把这些项目知识打包成高质量 Markdown Prompt 文档，让开发者能够把“项目背景、架构分层、模块契约、编码约定、相关源码片段”以标准化形式提供给 LLM。\n\n从源码可以看出，Kontext 既支持交互式初始化，也支持自动扫描项目源码生成 .kontext 目录；支持对已有物料进行 validate 校验与 update 增量更新；还支持 pack 流水线，根据开发任务自动识别相关文件、筛选上下文并生成最终 Prompt 文档。因此它不是单纯的配置生成器，而是一个围绕“项目上下文生产、维护、消费”形成闭环的 AI 开发基础设施工具。\n\n项目主要用户是需要在本地代码仓库中高频使用大模型进行编程协作的开发者、团队技术负责人和 AI 工程实践者。其价值在于把零散的人类知识和代码事实转化为可维护、可校验、可更新、可复用的上下文资产，降低模型幻觉，提升需求理解、代码修改和架构演进时的准确率与效率。\n",
+    "core_flows": [
+      {
+        "name": "交互式初始化项目上下文",
+        "steps": "用户执行 kontext init；若已有 .kontext 配置则提示是否覆盖；用户输入项目描述；系统通过多轮 LLM 对话澄清需求并生成需求摘要；随后调用生成引擎产出 PROJECT_MANIFEST.yaml、ARCHITECTURE_MAP.yaml、CONVENTIONS.yaml 与模块契约文件，并写入 .kontext 目录。",
+        "entry_point": "cmd/init.go"
+      },
+      {
+        "name": "静态模板初始化",
+        "steps": "用户执行 kontext init 且不输入项目描述；系统跳过 LLM 交互，直接使用默认模板初始化 .kontext 目录，用于快速起步或离线场景。",
+        "entry_point": "cmd/init.go"
+      },
+      {
+        "name": "自动扫描源码生成 Kontext 配置",
+        "steps": "用户执行 kontext init --scan；系统扫描项目目录树与关键源码，结合缓存检查点决定从头执行或恢复；按阶段分析文件、选择关键文件、生成依赖图、提炼模块信息，并调用 LLM 分阶段生成 manifest、架构图、规范与模块契约，最终写入 .kontext。",
+        "entry_point": "cmd/init.go"
+      },
+      {
+        "name": "校验 Kontext 配置物料",
+        "steps": "用户执行 kontext validate；系统从 .kontext 目录读取 PROJECT_MANIFEST.yaml、ARCHITECTURE_MAP.yaml、CONVENTIONS.yaml 与 module_contracts 下的契约文件；逐个执行 YAML 解析与必填字段校验；输出通过结果或错误列表。",
+        "entry_point": "cmd/validate.go"
+      },
+      {
+        "name": "基于任务打包 Prompt 文档",
+        "steps": "用户执行 kontext pack 并提供任务描述或任务文件；系统加载 .kontext 配置，扫描项目文件生成候选清单；调用 LLM 识别与任务相关的文件；收集目录树、模块契约、文件摘要和代码片段；必要时进一步进行上下文精筛；构建提示词模板并通过流式 LLM 生成最终 Markdown Prompt 文档，保存到 .kontext/prompts。",
+        "entry_point": "cmd/pack.go"
+      },
+      {
+        "name": "检测变更并增量更新物料",
+        "steps": "用户执行 kontext update；系统比较当前源码与 .kontext 物料的差异，可结合 git since 范围分析变更；生成更新计划并展示；用户确认后，系统调用 LLM 重新生成 manifest、architecture 或 contract 文件，按目标路径备份并覆盖，最后再次校验整体物料有效性。",
+        "entry_point": "cmd/update.go"
+      },
+      {
+        "name": "配置 LLM 连接参数",
+        "steps": "用户执行 kontext config；系统通过命令行或 Bubble Tea 交互界面配置 Base URL、API Key、Model 等全局参数，并将配置保存到用户目录下，供 init、pack、update 等命令复用。",
+        "entry_point": "cmd/config.go"
+      }
+    ]
+  },
+  "tech_stack": {
+    "language": "Go 1.24.2",
+    "key_decisions": [
+      {
+        "decision": "采用 Go + Cobra 构建跨平台单二进制 CLI",
+        "reason": "目录结构以 cmd 为命令入口、main.go 为启动点，适合实现 init、pack、update、validate、config 等命令式工作流；Taskfile 也体现了多平台编译产物输出。",
+        "constraint": "项目形态以本地命令行为主，不是长期运行的服务；功能组织需围绕命令和内部包进行模块化。"
+      },
+      {
+        "decision": "以 .kontext 目录中的 YAML 文件作为项目知识的标准中间表示",
+        "reason": "schema 包集中定义 ProjectManifest、ArchitectureMap、Conventions、ModuleContract，并由 loader 统一加载和校验，说明 YAML 是核心数据交换格式。",
+        "constraint": "所有生成与更新结果都必须保持合法 YAML 且兼容既有 schema，避免破坏下游 pack 与 validate 流程。"
+      },
+      {
+        "decision": "深度依赖 LLM 进行结构化生成、文件识别、上下文精筛和物料更新",
+        "reason": "generator、packer、updater 都显式调用 llm.Client，且 openai.go 支持 Chat、ChatStream、ChatStructured 与 JSON Schema 约束输出。",
+        "constraint": "运行关键流程需要有效 API Key、模型和超时配置；外部模型质量与可用性会直接影响结果。"
+      },
+      {
+        "decision": "通过 OpenAI 兼容接口屏蔽底层模型提供商差异",
+        "reason": "internal/llm/openai.go 支持 BaseURL 可配置，说明目标不是绑定单一官方服务，而是兼容 OpenAI 协议的多种后端。",
+        "constraint": "调用能力需受限于兼容接口的行为；结构化输出和流式能力依赖供应商实现一致性。"
+      },
+      {
+        "decision": "Pack 流水线采用分阶段上下文构建，而非一次性把全仓库喂给模型",
+        "reason": "engine 中存在扫描候选、LLM 文件识别、粗筛收集、精筛 refine、模板构建、流式生成等 9 个阶段，collector 中还有文件数量与内容大小限制。",
+        "constraint": "需要在上下文完整性与 token 成本之间折中，无法无上限包含全部源码。"
+      },
+      {
+        "decision": "扫描初始化支持检查点缓存与断点续跑",
+        "reason": "cmd/init.go 引入 internal/cache，存在 --fresh、--resume、IsCheckpointValid、runScanInitFromCheckpoint 等逻辑。",
+        "constraint": "缓存有效性依赖项目目录和扫描深度等条件，缓存命中与恢复逻辑增加了流程复杂度。"
+      },
+      {
+        "decision": "更新模块契约时采用并发批处理",
+        "reason": "updater/executor.go 中 executeContractBatch 使用 goroutine、WaitGroup 和 semaphore，并设置 contractUpdateConcurrency=4。",
+        "constraint": "并发更新必须保证错误聚合、进度显示和最终校验正确，且仍受 LLM API 限流影响。"
+      },
+      {
+        "decision": "命令行配置界面引入 Bubble Tea / Bubbles / Lipgloss 提升交互体验",
+        "reason": "config 命令使用 Charmbracelet 生态组件，说明部分场景需要更友好的 TUI 交互而非纯文本输入。",
+        "constraint": "交互式体验主要适用于终端环境，自动化脚本场景仍需兼容普通命令参数与环境变量。"
+      }
+    ]
+  },
+  "scale": {
+    "estimated_files": "60-90",
+    "modules": "10",
+    "phase": "development"
+  },
+  "status": {
+    "completed_modules": [
+      "CLI 命令骨架（root、init、pack、update、validate、config）",
+      "LLM 客户端封装与 OpenAI 兼容适配",
+      "YAML schema 定义、加载与校验机制",
+      "交互式初始化与结构化 YAML 生成",
+      "Pack 上下文收集、相关文件识别与 Prompt 生成主流程",
+      "Update 变更检测、计划生成与执行框架",
+      "模板嵌入与多阶段提示词体系",
+      "基础缓存、文件扫描与 I/O 工具能力"
+    ],
+    "in_progress": [
+      "自动扫描初始化流水线的持续优化与阶段细化",
+      "Pack 文件识别、智能命名与上下文精筛能力增强",
+      "模块契约生成与更新流程优化",
+      "基于设计文档持续迭代的架构增强方案"
+    ],
+    "not_started": [
+      "未从现有源码中发现明确独立且尚未开工的大型模块"
+    ]
+  }
+}

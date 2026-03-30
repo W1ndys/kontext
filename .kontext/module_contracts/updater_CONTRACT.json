@@ -1,0 +1,144 @@
+{
+  "module": {
+    "name": "updater",
+    "path": "internal/updater",
+    "purpose": "负责维护 .kontext 物料与当前源码状态的一致性，围绕“检测变更 -> 规划动作 -> 执行更新”提供完整的增量更新流程。\n该模块会分析源码包与模块变化、识别受影响的契约与目录结构、生成更新动作清单，并在用户确认后调用 LLM 与模板重新生成 manifest、architecture 或 contract 内容，完成备份、覆盖写入与最终校验。\n"
+  },
+  "owns": [
+    "检测当前项目源码与 .kontext 物料之间的偏差并生成 ChangeReport",
+    "根据变更报告生成 manifest、architecture、contracts 的更新动作列表",
+    "执行更新动作并调用 LLM 生成新的 YAML 内容",
+    "对 contract 更新执行受限并发批处理与错误聚合",
+    "在覆盖写入前创建备份并在完成后清理过期备份",
+    "在更新结束后调用 schema 校验整个 .kontext 物料包是否合法",
+    "向上层 CLI 暴露更新进度事件，支持动作开始、完成与 LLM 心跳反馈"
+  ],
+  "not_responsible_for": [
+    "命令行参数解析、用户交互确认与终端输出格式化",
+    "定义 .kontext YAML 的结构模型与底层校验规则",
+    "底层 OpenAI 兼容协议、重试策略与流式/结构化请求实现",
+    "初始化生成流程或 Prompt 打包流水线",
+    "模板资源文件本身的维护与嵌入"
+  ],
+  "depends_on": [
+    {
+      "module": "fileutil",
+      "reason": "用于扫描项目文件、读取现有 YAML、处理路径与执行文件系统读写相关操作。"
+    },
+    {
+      "module": "generator",
+      "reason": "复用生成侧的 YAML/提示词相关能力，协助构建更新阶段所需的生成输入与内容。"
+    },
+    {
+      "module": "llm",
+      "reason": "通过 llm.Client 发起结构化或普通生成请求，生成新的物料内容。"
+    },
+    {
+      "module": "schema",
+      "reason": "加载既有 .kontext 物料、读取模块契约结构，并在更新后执行 ValidateBundle 校验。"
+    },
+    {
+      "module": "templates",
+      "reason": "渲染 update_manifest、update_architecture、update_contract 等更新模板作为模型提示词。"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "DetectChanges",
+      "signature": "func DetectChanges(kontextDir, projectDir, since string) (*ChangeReport, error)",
+      "description": "检测当前源码与 .kontext 物料之间的差异，返回包含目录变更、契约变更与 manifest 信号的变更报告。"
+    },
+    {
+      "name": "PlanUpdates",
+      "signature": "func PlanUpdates(report *ChangeReport, filter string) []UpdateAction",
+      "description": "根据 ChangeReport 规划需要执行的更新动作，并支持按目标类型过滤。"
+    },
+    {
+      "name": "NewExecutor",
+      "signature": "func NewExecutor(client llm.Client, kontextDir, projectDir string) *Executor",
+      "description": "创建更新执行器，绑定 LLM 客户端、.kontext 目录与项目根目录。"
+    },
+    {
+      "name": "Executor",
+      "signature": "type Executor struct",
+      "description": "更新执行器，负责按计划生成内容、写入文件、发送进度事件并完成最终校验。"
+    },
+    {
+      "name": "SetProgressHandler",
+      "signature": "func (e *Executor) SetProgressHandler(handler func(ProgressEvent))",
+      "description": "为执行器设置进度回调，用于向 CLI 或调用方报告更新阶段与动作状态。"
+    },
+    {
+      "name": "Execute",
+      "signature": "func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]string, error)",
+      "description": "执行更新计划，按动作生成并应用新内容，返回已更新的目标文件路径列表。"
+    },
+    {
+      "name": "ChangeReport",
+      "signature": "type ChangeReport struct",
+      "description": "描述源码与 .kontext 物料之间的差异结果，是计划生成与内容渲染的核心输入。"
+    },
+    {
+      "name": "DirectoryChange",
+      "signature": "type DirectoryChange struct",
+      "description": "表示目录、包或模块层面的结构变化，用于 architecture 与 manifest 更新判断。"
+    },
+    {
+      "name": "ContractChange",
+      "signature": "type ContractChange struct",
+      "description": "表示某个模块契约的新增、缺失、过时或需要刷新等变化。"
+    },
+    {
+      "name": "UpdateAction",
+      "signature": "type UpdateAction struct",
+      "description": "描述一次具体更新动作的目标、原因、优先级及关联模块信息。"
+    },
+    {
+      "name": "ProgressEvent",
+      "signature": "type ProgressEvent struct",
+      "description": "描述更新过程中的进度事件，包含阶段、动作、索引、目标路径与提示消息。"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "必须保持“检测、规划、执行”三段式职责分离，不得把变更探测规则直接混入 Executor 或把写入逻辑塞入 Planner。",
+      "reason": "当前模块已通过 detector.go、planner.go、executor.go 明确分层，这能避免规则耦合并便于测试与演进。"
+    },
+    {
+      "rule": "新增依赖时只能指向 fileutil、generator、llm、schema、templates，不得反向依赖 cmd、packer 或其他上层流程模块。",
+      "reason": "依赖图要求 updater 处于应用流程编排层，只能依赖更底层能力，避免形成循环依赖。"
+    },
+    {
+      "rule": "所有生成出的更新内容在写入前都必须经过 YAML 合法性与目标类型校验。",
+      "reason": "更新结果最终会被 schema.LoadBundle 与 ValidateBundle 消费，非法内容会破坏整个 .kontext 物料包。"
+    },
+    {
+      "rule": "任何覆盖写入都必须先执行备份逻辑，并保留 pruneBackups 的收尾清理语义。",
+      "reason": "update 属于破坏性修改流程，备份是防止生成错误或中断导致用户物料损坏的最后保护。"
+    },
+    {
+      "rule": "contract 更新的并发执行只能用于彼此独立的契约文件，且必须继续保留错误聚合与最早失败优先返回的行为。",
+      "reason": "当前 executeContractBatch 通过 semaphore 和 WaitGroup 控制并发，既提升吞吐，也避免错误顺序失真。"
+    },
+    {
+      "rule": "Execute 完成后必须继续执行 schema.ValidateBundle 的整体校验，不能因单文件成功写入而跳过。",
+      "reason": "单个 YAML 文件合法并不代表整个 bundle 一致，最终整体验证是 update 流程的核心安全保证。"
+    },
+    {
+      "rule": "进度事件字段与阶段语义必须保持稳定，新增阶段时需保证 CLI 调用方仍能正确消费。",
+      "reason": "cmd 层依赖 ProgressEvent 展示实时状态，随意修改会破坏用户可见的更新反馈。"
+    },
+    {
+      "rule": "变更检测应尽量基于源码事实、现有 bundle 内容与 git 变更信号，不得在 detector 中引入 LLM 依赖。",
+      "reason": "检测阶段应保持快速、可重复、低成本，并与生成阶段的模型不确定性隔离。"
+    },
+    {
+      "rule": "renderUserPrompt 与模板拼装逻辑应聚焦更新语境，避免复制 generator 或 packer 的通用业务流程。",
+      "reason": "updater 只负责增量更新物料，不应演变成新的初始化生成器或 Prompt 打包器。"
+    },
+    {
+      "rule": "targetPath 规则必须与 .kontext 目录布局保持一致，修改路径映射时需同时保证 schema.LoadBundle 可读取更新结果。",
+      "reason": "更新器生成的文件最终由 schema 统一加载，路径约定错误会导致物料缺失或无法校验。"
+    }
+  ]
+}

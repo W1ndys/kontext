@@ -1,0 +1,111 @@
+{
+  "module": {
+    "name": "logging",
+    "path": "internal/logging",
+    "purpose": "提供全局结构化日志基础设施，基于 slog 封装，支持多输出（控制台+文件）、\n可配置日志级别与格式，并管理日志文件的生命周期。\n"
+  },
+  "owns": [
+    "slog 全局 logger 的初始化与默认实例管理",
+    "日志级别解析与配置（通过环境变量或 Options）",
+    "日志输出格式选择（text/json）",
+    "日志文件路径计算、目录创建与文件打开（openLogFile）",
+    "fanout handler 实现（fanoutHandler），支持同时向多个输出写日志",
+    "按命令名创建子 logger（CommandLogger）",
+    "日志 handler 的创建与格式化（newHandler / newFanoutHandler）"
+  ],
+  "not_responsible_for": [
+    "日志内容的业务语义定义（由各业务模块自行决定日志内容）",
+    "日志轮转与清理策略",
+    "配置文件的读取与解析（仅消费 Options 结构体和环境变量）"
+  ],
+  "depends_on": [
+    {
+      "module": "stdlib",
+      "reason": "依赖 log/slog、os、io、context、filepath、sync、time、fmt、strings 等标准库"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "Init",
+      "signature": "func Init(opts Options) (*slog.Logger, error)",
+      "description": "根据配置选项初始化全局 logger，设置输出目标、级别和格式"
+    },
+    {
+      "name": "Default",
+      "signature": "func Default() *slog.Logger",
+      "description": "返回当前全局默认 logger 实例"
+    },
+    {
+      "name": "ParseLevel",
+      "signature": "func ParseLevel(level string) (slog.Level, error)",
+      "description": "将字符串日志级别解析为 slog.Level"
+    },
+    {
+      "name": "CommandLogger",
+      "signature": "func CommandLogger(commandName string) *slog.Logger",
+      "description": "为指定命令名创建带命令属性的子 logger"
+    },
+    {
+      "name": "CurrentLogFilePath",
+      "signature": "func CurrentLogFilePath() string",
+      "description": "返回当前正在使用的日志文件路径"
+    },
+    {
+      "name": "DefaultLogFilePath",
+      "signature": "func DefaultLogFilePath(now time.Time) (string, error)",
+      "description": "根据给定时间计算默认日志文件路径"
+    },
+    {
+      "name": "DefaultLogDirPath",
+      "signature": "func DefaultLogDirPath() (string, error)",
+      "description": "返回默认日志目录路径"
+    },
+    {
+      "name": "Options",
+      "signature": "struct Options",
+      "description": "日志初始化配置结构体，包含级别、格式、输出路径等选项"
+    },
+    {
+      "name": "DefaultLevel",
+      "signature": "const DefaultLevel = \"info\"",
+      "description": "默认日志级别"
+    },
+    {
+      "name": "DefaultFormat",
+      "signature": "const DefaultFormat = \"text\"",
+      "description": "默认日志输出格式"
+    },
+    {
+      "name": "EnvLogLevel",
+      "signature": "const EnvLogLevel = \"KONTEXT_LOG_LEVEL\"",
+      "description": "控制日志级别的环境变量名"
+    },
+    {
+      "name": "EnvLogFormat",
+      "signature": "const EnvLogFormat = \"KONTEXT_LOG_FORMAT\"",
+      "description": "控制日志格式的环境变量名"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "Init 函数必须保持幂等安全，多次调用不应导致资源泄漏",
+      "reason": "全局 logger 可能在测试或重新配置场景中被多次初始化"
+    },
+    {
+      "rule": "新增日志输出目标时必须通过 fanoutHandler 机制扩展，不要绕过现有架构",
+      "reason": "保持多输出的统一管理和一致性"
+    },
+    {
+      "rule": "公开常量和环境变量名变更需同步更新文档和相关配置模块",
+      "reason": "其他模块和用户脚本可能依赖这些常量值"
+    },
+    {
+      "rule": "不要在此模块中引入业务层依赖",
+      "reason": "logging 是基础设施模块，应保持零业务耦合以避免循环依赖"
+    },
+    {
+      "rule": "fanoutHandler 必须完整实现 slog.Handler 接口（Enabled/Handle/WithAttrs/WithGroup）",
+      "reason": "确保作为 slog.Handler 使用时行为正确，所有方法需正确传播到子 handler"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "module": {
+    "name": "config",
+    "path": "internal/config",
+    "purpose": "负责管理用户级全局 LLM 配置，包括定位 ~/.kontext/config.yaml、读取与保存配置文件、对配置值进行规范化处理，并将持久化配置转换为 internal/llm 可直接消费的运行时配置对象。\n"
+  },
+  "owns": [
+    "定义全局配置文件的数据结构，包括顶层 FileConfig 与 llm 配置段",
+    "解析用户目录下的全局配置文件路径并确保配置文件落盘位置一致",
+    "从 YAML 配置文件加载 LLM 相关参数",
+    "将 LLM 配置写回 YAML 文件并负责持久化格式",
+    "对 Base URL 做标准化处理，减少不同 OpenAI 兼容端点写法差异",
+    "将配置文件中的 LLMConfig 转换为 llm.Config 运行时对象"
+  ],
+  "not_responsible_for": [
+    "不负责实际发起模型请求、流式输出或重试逻辑",
+    "不负责 CLI 参数解析、交互式表单或终端界面展示",
+    "不负责 .kontext 项目物料的加载、校验或生成",
+    "不负责环境变量之外的业务级配置合并策略"
+  ],
+  "depends_on": [
+    {
+      "module": "llm",
+      "reason": "需要将持久化的 LLMConfig 转换为 llm.Config，供上层创建模型客户端时使用"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "FileConfig",
+      "signature": "type FileConfig struct { LLM LLMConfig `yaml:\"llm\"` }",
+      "description": "全局配置文件 ~/.kontext/config.yaml 的顶层 YAML 结构，当前包含 llm 配置段"
+    },
+    {
+      "name": "GlobalConfigPath",
+      "signature": "func GlobalConfigPath() (string, error)",
+      "description": "返回全局配置文件的标准路径，用于读写用户级配置"
+    },
+    {
+      "name": "Load",
+      "signature": "func Load() (*LLMConfig, error)",
+      "description": "从全局配置文件加载 LLM 配置并返回可供上层使用的配置对象"
+    },
+    {
+      "name": "Save",
+      "signature": "func Save(cfg *LLMConfig) error",
+      "description": "将给定的 LLM 配置写入全局配置文件，必要时创建目录或覆盖已有文件"
+    },
+    {
+      "name": "ToLLMConfig",
+      "signature": "func (c *LLMConfig) ToLLMConfig() *llm.Config",
+      "description": "把配置文件中的 LLMConfig 转换为 internal/llm 使用的运行时配置结构"
+    },
+    {
+      "name": "NormalizeBaseURL",
+      "signature": "func NormalizeBaseURL(url string) string",
+      "description": "对输入的 Base URL 做标准化，统一结尾路径或格式细节"
+    },
+    {
+      "name": "NormalizeBaseURLWithHint",
+      "signature": "func NormalizeBaseURLWithHint(url string) (string, bool, string)",
+      "description": "标准化 Base URL，并返回是否发生修正及提示信息，便于 CLI 向用户展示建议"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "新增或调整配置字段时，必须同时更新 YAML 读写逻辑，并保证旧配置文件尽可能向后兼容",
+      "reason": "config 是用户级持久化入口，字段变更会直接影响已有安装环境中的配置可读性"
+    },
+    {
+      "rule": "任何运行时使用的 LLM 参数都应先通过 LLMConfig 到 llm.Config 的转换入口输出，不要让上层自行拼装",
+      "reason": "这样可以把默认值、格式规范化和兼容处理集中在 config 模块内，避免调用方行为分叉"
+    },
+    {
+      "rule": "Base URL 的规范化规则必须保持幂等，重复调用不应持续改变结果",
+      "reason": "Load、Save 与 CLI 展示可能多次调用该逻辑，非幂等实现会导致配置内容抖动"
+    },
+    {
+      "rule": "修改配置文件路径规则时，必须继续保持 GlobalConfigPath 作为唯一定位入口",
+      "reason": "统一路径解析可以避免不同命令在不同位置读写配置，造成状态不一致"
+    },
+    {
+      "rule": "不要在该模块中引入具体模型请求或 provider 协议处理逻辑",
+      "reason": "模块边界要求 config 只负责配置持久化与转换，实际模型交互应留在 llm 模块"
+    }
+  ]
+}

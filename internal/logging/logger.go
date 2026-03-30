@@ -28,10 +28,11 @@ const (
 )
 
 type Options struct {
-	Level  string
-	Format string
-	Output io.Writer
-	File   string
+	Level      string
+	Format     string
+	Output     io.Writer
+	File       string
+	ConsoleLog bool // 是否同时输出到控制台（默认 false，仅写日志文件）
 }
 
 var (
@@ -88,7 +89,10 @@ func Init(opts Options) (*slog.Logger, error) {
 		}
 	}
 
-	handlers := []slog.Handler{consoleHandler}
+	var handlers []slog.Handler
+	if opts.ConsoleLog {
+		handlers = append(handlers, consoleHandler)
+	}
 	var file *os.File
 	var fileOpenErr error
 	if filePath != "" {

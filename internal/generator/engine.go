@@ -61,7 +61,6 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 
 	tracker := ui.NewTracker()
 	tracker.Start()
-	defer tracker.Stop()
 
 	for round := 1; round <= maxRounds; round++ {
 		task := tracker.AddTask(fmt.Sprintf("AI 正在思考第 %d 个问题", round))
@@ -87,7 +86,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 		// 暂停 tracker 渲染，显示问题和选项，等待用户输入
 		tracker.Stop()
 
-		fmt.Fprintf(output, "\n[问题 %d/%d] %s\n", round, maxRounds, interview.Question)
+		fmt.Fprintf(output, "\n[问题 %d] %s\n", round, interview.Question)
 		for i, opt := range interview.Options {
 			fmt.Fprintf(output, "  %d. %s\n", i+1, opt)
 		}
@@ -135,6 +134,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 		return "", "", fmt.Errorf("解析摘要响应失败: %w", err)
 	}
 	task.DoneWithLabel("需求摘要生成完成")
+	tracker.Stop()
 
 	summary := interview.Summary
 	if summary == "" {

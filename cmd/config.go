@@ -107,7 +107,7 @@ func runInteractiveConfig() error {
 	fmt.Println(strings.Repeat("-", 40))
 
 	// Base URL
-	fmt.Printf("API 地址 [%s]: ", cfg.BaseURL)
+	fmt.Printf("API 地址 [%s]（需填写完整路由，如 /v1、/v4 等）: ", cfg.BaseURL)
 	if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
 		cfg.BaseURL = strings.TrimSpace(input)
 	}

@@ -47,18 +47,20 @@ var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "设置配置项 / Set a configuration value",
 	Long: `设置指定的配置项。支持的 key：
-  llm.base_url   API 地址
-  llm.api_key    API 密钥
-  llm.model      模型名称
-  llm.timeout    超时时间（秒）
+  llm.base_url     API 地址
+  llm.api_key      API 密钥
+  llm.model        模型名称
+  llm.timeout      超时时间（秒）
+  llm.max_tokens   最大输出 token 数
 
 ---
 
 Set a configuration value. Supported keys:
-  llm.base_url   API endpoint URL
-  llm.api_key    API key
-  llm.model      Model name
-  llm.timeout    Timeout in seconds`,
+  llm.base_url     API endpoint URL
+  llm.api_key      API key
+  llm.model        Model name
+  llm.timeout      Timeout in seconds
+  llm.max_tokens   Max output tokens`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runConfigSet(args[0], args[1])
@@ -249,9 +251,16 @@ func runConfigSet(key, value string) error {
 			return fmt.Errorf("超时时间必须是正整数（秒）")
 		}
 		cfg.Timeout = seconds
+	case "llm.max_tokens":
+		tokens, err := strconv.Atoi(value)
+		if err != nil || tokens <= 0 {
+			logger.Warn("invalid max_tokens value")
+			return fmt.Errorf("最大输出 token 数必须是正整数")
+		}
+		cfg.MaxTokens = tokens
 	default:
 		logger.Warn("unknown config key")
-		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout", key)
+		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout, llm.max_tokens", key)
 	}
 
 	if err := config.Save(cfg); err != nil {
@@ -270,6 +279,8 @@ func runConfigSet(key, value string) error {
 		attrs = append(attrs, "model", cfg.Model)
 	case "llm.timeout":
 		attrs = append(attrs, "timeout_seconds", cfg.Timeout)
+	case "llm.max_tokens":
+		attrs = append(attrs, "max_tokens", cfg.MaxTokens)
 	}
 	logger.Info("config value updated", attrs...)
 
@@ -302,9 +313,15 @@ func runConfigGet(key string) error {
 		} else {
 			value = fmt.Sprintf("%d (默认)", int(llm.DefaultTimeout.Seconds()))
 		}
+	case "llm.max_tokens":
+		if cfg.MaxTokens > 0 {
+			value = strconv.Itoa(cfg.MaxTokens)
+		} else {
+			value = fmt.Sprintf("%d (默认)", llm.DefaultMaxTokens)
+		}
 	default:
 		logger.Warn("unknown config key")
-		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout", key)
+		return fmt.Errorf("未知的配置项: %s\n支持的配置项: llm.base_url, llm.api_key, llm.model, llm.timeout, llm.max_tokens", key)
 	}
 
 	if isSensitiveConfigKey(key) {
@@ -331,9 +348,14 @@ func runConfigList() error {
 	fmt.Printf("llm.api_key  = %s\n", maskKey(cfg.APIKey))
 	fmt.Printf("llm.model    = %s\n", cfg.Model)
 	if cfg.Timeout > 0 {
-		fmt.Printf("llm.timeout  = %d 秒\n", cfg.Timeout)
+		fmt.Printf("llm.timeout    = %d 秒\n", cfg.Timeout)
 	} else {
-		fmt.Printf("llm.timeout  = %d 秒 (默认)\n", int(llm.DefaultTimeout.Seconds()))
+		fmt.Printf("llm.timeout    = %d 秒 (默认)\n", int(llm.DefaultTimeout.Seconds()))
+	}
+	if cfg.MaxTokens > 0 {
+		fmt.Printf("llm.max_tokens = %d\n", cfg.MaxTokens)
+	} else {
+		fmt.Printf("llm.max_tokens = %d (默认)\n", llm.DefaultMaxTokens)
 	}
 	logger.Info("config list completed",
 		"base_url", cfg.BaseURL,

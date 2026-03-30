@@ -10,7 +10,7 @@ import (
 const DefaultTimeout = 300 * time.Second // 5 分钟
 
 // DefaultMaxTokens 是 LLM API 调用的默认最大输出 token 数。
-const DefaultMaxTokens int64 = 1000000
+const DefaultMaxTokens int64 = 128000
 
 // Config 保存 LLM 客户端的配置信息。
 type Config struct {

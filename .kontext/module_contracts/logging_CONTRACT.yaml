@@ -61,6 +61,20 @@ public_interface:
     signature: 'const EnvLogFormat = "KONTEXT_LOG_FORMAT"'
     description: "控制日志格式的环境变量名"
 
+internal_details:
+  - name: "openLogFile"
+    signature: "func openLogFile(path string) (*os.File, error)"
+    description: "根据路径创建或打开日志文件，确保父目录存在（内部函数）"
+  - name: "newHandler"
+    signature: "func newHandler(format string, output io.Writer, opts *slog.HandlerOptions) (slog.Handler, error)"
+    description: "根据格式类型创建对应的 slog.Handler 实例（内部函数）"
+  - name: "newFanoutHandler"
+    signature: "func newFanoutHandler(handlers ...slog.Handler) slog.Handler"
+    description: "创建 fanoutHandler 实例，将日志同时分发到多个 handler（内部函数）"
+  - name: "fanoutHandler"
+    signature: "struct fanoutHandler"
+    description: "实现 slog.Handler 接口，将日志分发到多个底层 handler（内部类型）"
+
 modification_rules:
   - rule: "Init 函数必须保持幂等安全，多次调用不应导致资源泄漏"
     reason: "全局 logger 可能在测试或重新配置场景中被多次初始化"

@@ -19,10 +19,11 @@ type FileConfig struct {
 
 // LLMConfig 表示配置文件中的 llm 部分。
 type LLMConfig struct {
-	BaseURL string `yaml:"base_url"`
-	APIKey  string `yaml:"api_key"`
-	Model   string `yaml:"model"`
-	Timeout int    `yaml:"timeout"` // 超时时间（秒），0 表示使用默认值
+	BaseURL   string `yaml:"base_url"`
+	APIKey    string `yaml:"api_key"`
+	Model     string `yaml:"model"`
+	Timeout   int    `yaml:"timeout"`    // 超时时间（秒），0 表示使用默认值
+	MaxTokens int    `yaml:"max_tokens"` // 最大输出 token 数，0 表示使用默认值
 }
 
 // GlobalConfigPath 返回全局配置文件路径 ~/.kontext/config.yaml。
@@ -61,6 +62,11 @@ func Load() (*LLMConfig, error) {
 	if v := os.Getenv("KONTEXT_LLM_TIMEOUT"); v != "" {
 		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
 			cfg.Timeout = seconds
+		}
+	}
+	if v := os.Getenv("KONTEXT_LLM_MAX_TOKENS"); v != "" {
+		if tokens, err := strconv.Atoi(v); err == nil && tokens > 0 {
+			cfg.MaxTokens = tokens
 		}
 	}
 
@@ -110,10 +116,11 @@ func (c *LLMConfig) ToLLMConfig() *llm.Config {
 		timeout = time.Duration(c.Timeout) * time.Second
 	}
 	return &llm.Config{
-		BaseURL: c.BaseURL,
-		APIKey:  c.APIKey,
-		Model:   c.Model,
-		Timeout: timeout,
+		BaseURL:   c.BaseURL,
+		APIKey:    c.APIKey,
+		Model:     c.Model,
+		Timeout:   timeout,
+		MaxTokens: int64(c.MaxTokens),
 	}
 }
 

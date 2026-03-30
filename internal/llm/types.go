@@ -9,12 +9,16 @@ import (
 // DefaultTimeout 是 LLM API 调用的默认超时时间。
 const DefaultTimeout = 300 * time.Second // 5 分钟
 
+// DefaultMaxTokens 是 LLM API 调用的默认最大输出 token 数。
+const DefaultMaxTokens int64 = 1000000
+
 // Config 保存 LLM 客户端的配置信息。
 type Config struct {
-	BaseURL string
-	APIKey  string
-	Model   string
-	Timeout time.Duration // API 调用超时时间，0 表示使用默认值
+	BaseURL   string
+	APIKey    string
+	Model     string
+	Timeout   time.Duration // API 调用超时时间，0 表示使用默认值
+	MaxTokens int64         // 最大输出 token 数，0 表示使用默认值
 }
 
 // GetTimeout 返回配置的超时时间，如果未设置则返回默认值。
@@ -23,6 +27,14 @@ func (c *Config) GetTimeout() time.Duration {
 		return DefaultTimeout
 	}
 	return c.Timeout
+}
+
+// GetMaxTokens 返回配置的最大输出 token 数，如果未设置则返回默认值。
+func (c *Config) GetMaxTokens() int64 {
+	if c.MaxTokens <= 0 {
+		return DefaultMaxTokens
+	}
+	return c.MaxTokens
 }
 
 // ConfigFromEnv 从环境变量读取 LLM 配置。
@@ -46,6 +58,12 @@ func ConfigFromEnv() (*Config, error) {
 	if timeoutStr := os.Getenv("KONTEXT_LLM_TIMEOUT"); timeoutStr != "" {
 		if seconds, err := strconv.Atoi(timeoutStr); err == nil && seconds > 0 {
 			cfg.Timeout = time.Duration(seconds) * time.Second
+		}
+	}
+	// 解析最大输出 token 数
+	if maxTokensStr := os.Getenv("KONTEXT_LLM_MAX_TOKENS"); maxTokensStr != "" {
+		if tokens, err := strconv.ParseInt(maxTokensStr, 10, 64); err == nil && tokens > 0 {
+			cfg.MaxTokens = tokens
 		}
 	}
 	return cfg, nil

@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -226,6 +227,22 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		resp, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
 		stopHeartbeat()
 		if err != nil {
+			// 截断错误：追加消息要求 LLM 精简输出后重试
+			if errors.Is(err, llm.ErrOutputTruncated) && semanticAttempt == 0 {
+				lastValidationErr = err
+				e.emitProgress(ProgressEvent{
+					Stage:      ProgressYAMLRetry,
+					Action:     action,
+					Index:      index,
+					Total:      total,
+					TargetPath: targetPath,
+					Message:    "输出被截断，要求精简后重试",
+				})
+				req.Messages = append(req.Messages,
+					llm.Message{Role: "user", Content: "上一次输出因 token 限制被截断。请大幅精简内容（缩短 purpose、减少 public_interface 中的非导出函数、精简 modification_rules），以 JSON 格式返回 {\"content\": \"完整、合法的 YAML 文本\"}。"},
+				)
+				continue
+			}
 			return "", err
 		}
 
@@ -412,12 +429,6 @@ func formatManifestSignals(report *ChangeReport) string {
 	var lines []string
 	for _, reason := range report.ManifestReasons {
 		lines = append(lines, "- "+reason)
-	}
-	if len(report.GitChangedFiles) > 0 {
-		lines = append(lines, "变更文件:")
-		for _, file := range report.GitChangedFiles {
-			lines = append(lines, "- "+file)
-		}
 	}
 	if len(lines) == 0 {
 		return "没有额外信号"

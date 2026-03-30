@@ -51,6 +51,7 @@ func (c *openaiClient) Generate(req *GenerateRequest) (*GenerateResponse, error)
 			openai.SystemMessage(req.SystemPrompt),
 			openai.UserMessage(req.UserPrompt),
 		},
+		MaxCompletionTokens: openai.Int(c.cfg.GetMaxTokens()),
 	})
 	if err != nil {
 		wrappedErr := fmt.Errorf("调用 LLM API 失败: %w", err)
@@ -192,6 +193,18 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 
 	choice := resp.Choices[0]
 	content := strings.TrimSpace(choice.Message.Content)
+
+	// 检测输出截断：finish_reason="length" 表示 token 限制导致输出不完整
+	if choice.FinishReason == "length" {
+		wrappedErr := fmt.Errorf("%w（finish_reason=length, content_length=%d）", ErrOutputTruncated, len(content))
+		c.logChatError("chat_structured", req, wrappedErr, startedAt,
+			"schema_name", schemaName,
+			"finish_reason", choice.FinishReason,
+			"content_length", len(content),
+		)
+		return nil, wrappedErr
+	}
+
 	if content == "" {
 		rawMessage := compactSnippet(choice.Message.RawJSON(), 240)
 		if choice.Message.Refusal != "" {
@@ -278,11 +291,14 @@ func (c *openaiClient) buildChatCompletionParams(
 		}
 	}
 
-	return openai.ChatCompletionNewParams{
-		Model:          shared.ChatModel(c.cfg.Model),
-		Messages:       msgs,
-		ResponseFormat: responseFormat,
-	}, nil
+	params := openai.ChatCompletionNewParams{
+		Model:               shared.ChatModel(c.cfg.Model),
+		Messages:            msgs,
+		ResponseFormat:      responseFormat,
+		MaxCompletionTokens: openai.Int(c.cfg.GetMaxTokens()),
+	}
+
+	return params, nil
 }
 
 // ListModels 获取可用的模型列表。

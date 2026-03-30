@@ -107,3 +107,5 @@ modification_rules:
     reason: "engine.go 已实现失败后继续打包的容错行为。"
   - rule: "保存输出文件继续委托给 promptdoc，不在 packer 内自行实现文件命名和落盘。"
     reason: "promptdoc 是专用输出适配层。"
+  - rule: "分批识别候选文件时，每批不超过 maxIdentifyCandidateBatchSize（100）条路径，合并结果总数不超过 maxIdentifiedFiles（20）。"
+    reason: "limits.go 定义批次与结果上限，identifier.go 的分片和合并逻辑依赖这些常量。"

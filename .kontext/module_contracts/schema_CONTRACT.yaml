@@ -51,7 +51,7 @@ public_interface:
     description: "描述修改模块时必须遵守的一条规则及其原因"
   - name: "Validate"
     signature: "func (c ModuleContract) Validate() error"
-    description: "校验单个模块契约是否满足基础结构要求"
+    description: "校验单个模块契约是否满足基础结构要求，如 owns 非空等"
   - name: "Conventions"
     signature: "type Conventions struct { Coding []ConventionItem `yaml:\"coding\"`; ErrorHandling []ConventionItem `yaml:\"error_handling\"`; Forbidden []ConventionItem `yaml:\"forbidden\"`; AIRules []ConventionItem `yaml:\"ai_rules\"` }"
     description: "描述项目编码规范、错误处理规范、禁用项与 AI 协作规则"

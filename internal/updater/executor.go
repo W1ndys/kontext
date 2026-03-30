@@ -1,7 +1,6 @@
 package updater
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -195,6 +194,11 @@ func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAc
 
 // generateContent 为单个更新动作生成新的 YAML 内容，含 LLM 调用和语义校验。
 func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
+	// 契约类型使用分段生成策略，避免单次输出过长被截断
+	if strings.HasPrefix(action.Target, "contract:") {
+		return e.generateContractInParts(report, action, index, total, targetPath)
+	}
+
 	currentPath, err := e.targetPath(action)
 	if err != nil {
 		return "", err
@@ -214,8 +218,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	}
 
 	var lastValidationErr error
-	var truncationRetries int
-	for semanticAttempt := 0; semanticAttempt < 3; semanticAttempt++ {
+	for semanticAttempt := 0; semanticAttempt < 2; semanticAttempt++ {
 		e.emitProgress(ProgressEvent{
 			Stage:      ProgressLLMStart,
 			Action:     action,
@@ -228,29 +231,6 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		resp, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
 		stopHeartbeat()
 		if err != nil {
-			// 截断错误：追加消息要求 LLM 精简输出后重试，最多重试 2 次
-			if errors.Is(err, llm.ErrOutputTruncated) && truncationRetries < 2 {
-				truncationRetries++
-				lastValidationErr = err
-				var retryMsg string
-				if truncationRetries == 1 {
-					retryMsg = "上一次输出因 token 限制被截断。请大幅精简内容（缩短 purpose、减少 public_interface 中的非导出函数、精简 modification_rules），以 JSON 格式返回 {\"content\": \"完整、合法的 YAML 文本\"}。"
-				} else {
-					retryMsg = "输出仍然被截断。请极限压缩：public_interface 只保留导出函数和类型（删除所有未导出函数），purpose 限制在两句话以内，modification_rules 最多保留 3 条，owns 和 not_responsible_for 各最多 5 条。以 JSON 格式返回 {\"content\": \"完整、合法的 YAML 文本\"}。"
-				}
-				e.emitProgress(ProgressEvent{
-					Stage:      ProgressYAMLRetry,
-					Action:     action,
-					Index:      index,
-					Total:      total,
-					TargetPath: targetPath,
-					Message:    fmt.Sprintf("输出被截断，要求精简后重试（第 %d 次）", truncationRetries),
-				})
-				req.Messages = append(req.Messages,
-					llm.Message{Role: "user", Content: retryMsg},
-				)
-				continue
-			}
 			return "", err
 		}
 
@@ -278,6 +258,151 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	}
 
 	return "", fmt.Errorf("LLM 返回的内容仍不合法: %w", lastValidationErr)
+}
+
+// generateContractInParts 分两段生成模块契约 YAML，避免单次输出过长被截断。
+// Part 1: module + owns + not_responsible_for + depends_on
+// Part 2: public_interface + modification_rules
+func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
+	currentPath, err := e.targetPath(action)
+	if err != nil {
+		return "", err
+	}
+	currentYAML := readTextIfExists(currentPath)
+	moduleName := action.Module
+	changes := formatContractChanges(report.ContractChanges, moduleName)
+	codeSummary := fallbackText(report.ModuleSummaries[moduleName], "当前没有可用的代码摘要")
+
+	// 对于已删除模块，直接使用原有的完整模板（输出为空字符串，无需分段）
+	if action.ChangeType == "deleted_module" {
+		return e.generateContractSinglePass(report, action, index, total, targetPath, currentYAML)
+	}
+
+	// Part 1: module + owns + not_responsible_for + depends_on
+	part1Prompt, err := generator.RenderTemplate(templates.UpdateContractPart1, map[string]any{
+		"ModuleName":  moduleName,
+		"CurrentYAML": fallbackYAML(currentYAML),
+		"Changes":     changes,
+		"CodeSummary": codeSummary,
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染 Part1 模板失败: %w", err)
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    "生成契约第 1/2 部分",
+	})
+
+	part1Req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: templates.UpdateSystem},
+			{Role: "user", Content: part1Prompt},
+		},
+	}
+	stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
+	_, part1Content, err := e.generateYAMLContent(part1Req, action, index, total, targetPath)
+	stopHeartbeat()
+	if err != nil {
+		return "", fmt.Errorf("生成契约 Part1 失败: %w", err)
+	}
+
+	// 对于已删除模块返回空内容的情况
+	if strings.TrimSpace(part1Content) == "" && action.ChangeType == "deleted_module" {
+		return "", nil
+	}
+
+	// Part 2: public_interface + modification_rules
+	part2Prompt, err := generator.RenderTemplate(templates.UpdateContractPart2, map[string]any{
+		"ModuleName":  moduleName,
+		"Part1YAML":   part1Content,
+		"CurrentYAML": fallbackYAML(currentYAML),
+		"CodeSummary": codeSummary,
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染 Part2 模板失败: %w", err)
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    "生成契约第 2/2 部分",
+	})
+
+	part2Req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: templates.UpdateSystem},
+			{Role: "user", Content: part2Prompt},
+		},
+	}
+	stopHeartbeat = e.startLLMHeartbeat(action, index, total, targetPath)
+	_, part2Content, err := e.generateYAMLContent(part2Req, action, index, total, targetPath)
+	stopHeartbeat()
+	if err != nil {
+		return "", fmt.Errorf("生成契约 Part2 失败: %w", err)
+	}
+
+	// 拼接两段 YAML 并校验
+	merged := strings.TrimRight(part1Content, "\n") + "\n\n" + strings.TrimLeft(part2Content, "\n")
+
+	if validateErr := validateGeneratedContent(action, merged); validateErr != nil {
+		return "", fmt.Errorf("分段拼接后的契约校验失败: %w", validateErr)
+	}
+
+	return merged, nil
+}
+
+// generateContractSinglePass 使用原有的完整模板生成契约（用于已删除模块等简单场景）。
+func (e *Executor) generateContractSinglePass(report *ChangeReport, action UpdateAction, index, total int, targetPath, currentYAML string) (string, error) {
+	moduleName := action.Module
+	prompt, err := generator.RenderTemplate(templates.UpdateContract, map[string]any{
+		"ModuleName":  moduleName,
+		"CurrentYAML": fallbackYAML(currentYAML),
+		"Changes":     formatContractChanges(report.ContractChanges, moduleName),
+		"CodeSummary": fallbackText(report.ModuleSummaries[moduleName], "当前没有可用的代码摘要"),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: templates.UpdateSystem},
+			{Role: "user", Content: prompt},
+		},
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+	})
+
+	stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
+	_, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
+	stopHeartbeat()
+	if err != nil {
+		return "", err
+	}
+
+	if content == "" && action.ChangeType == "deleted_module" {
+		return "", nil
+	}
+
+	if validateErr := validateGeneratedContent(action, content); validateErr != nil {
+		return "", validateErr
+	}
+
+	return content, nil
 }
 
 // generateYAMLContent 调用 LLM 生成 YAML 内容，通过 JSON 结构化输出返回。

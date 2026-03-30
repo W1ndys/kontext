@@ -3,6 +3,7 @@ package cmd
 import (
 	"log/slog"
 	"os"
+	"runtime/debug"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/logging"
@@ -10,7 +11,16 @@ import (
 )
 
 // Version 在构建时通过 ldflags 注入，默认值为 dev。
+// 若未通过 ldflags 注入，则尝试从 Go 模块的构建信息中读取版本号（支持 go install 场景）。
 var Version = "dev"
+
+func init() {
+	if Version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			Version = info.Main.Version
+		}
+	}
+}
 
 const (
 	defaultKontextDir = ".kontext"

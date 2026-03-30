@@ -190,9 +190,6 @@ $env:KONTEXT_LLM_TIMEOUT = "120"
 | `kontext init --scan --resume` | 从检查点继续（不询问） |
 | `kontext validate` | 校验 `.kontext/` 下的 YAML 文件 |
 | `kontext update` | 检测变更并更新物料 |
-| `kontext update --dry-run` | 只打印变更报告 |
-| `kontext update --file manifest` | 只更新指定物料 |
-| `kontext update --since <commit>` | 只分析指定 commit 之后的变更 |
 | `kontext config` | 交互式配置向导 |
 | `kontext config set <key> <value>` | 设置配置项 |
 | `kontext config get <key>` | 获取配置项 |
@@ -257,27 +254,6 @@ kontext validate
 
 ```bash
 kontext update
-```
-
-只看变更报告，不落盘：
-
-```bash
-kontext update --dry-run
-```
-
-只更新指定物料：
-
-```bash
-kontext update --file manifest
-kontext update --file architecture
-kontext update --file contracts
-kontext update --file all
-```
-
-只分析某个 commit 之后的变更：
-
-```bash
-kontext update --since <commit>
 ```
 
 ## 最小可用示例

@@ -223,11 +223,12 @@ func (c *openaiClient) ChatStructured(req *ChatRequest, schemaName string, out a
 	}
 	content = stripJSONCodeBlock(content)
 	content = extractJSONFromText(content)
-	if err := json.Unmarshal([]byte(content), out); err != nil {
+	// 使用 Decoder 而非 Unmarshal：容忍 JSON 对象之后的多余文本（如 LLM 附带的思考过程）
+	if err := json.NewDecoder(strings.NewReader(content)).Decode(out); err != nil {
 		// 兼容不支持 structured output 的中转站：LLM 可能返回数组而非对象，
 		// 尝试用 schema 中第一个数组类型字段名包装后重新解析
 		if wrapped, ok := tryWrapArray(content, out); ok {
-			if retryErr := json.Unmarshal([]byte(wrapped), out); retryErr == nil {
+			if retryErr := json.NewDecoder(strings.NewReader(wrapped)).Decode(out); retryErr == nil {
 				c.logChatResponse("chat_structured", req, wrapped, startedAt, "schema_name", schemaName, "array_wrapped", true)
 				return &ChatResponse{Content: wrapped}, nil
 			}

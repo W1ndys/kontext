@@ -2,158 +2,29 @@
   "module": {
     "name": "ui",
     "path": "internal/ui",
-    "purpose": "提供终端用户界面输出能力，包括带颜色/样式的格式化输出（错误、警告、成功、信息等），\n以及基于 spinner 的多任务进度追踪器，支持 TTY 检测和可替换的输出目标。\n"
+    "purpose": "提供命令行交互界面能力，包括终端进度跟踪（Tracker）和颜色渲染"
   },
   "owns": [
-    "终端样式化输出（Error, Warn, Success, Info, Stage, Dim, Plain）",
-    "TTY 检测与输出 writer 管理",
-    "多任务 spinner 进度追踪器（Tracker / Task）",
-    "终端渲染与刷新逻辑"
+    "终端进度跟踪器（Tracker）的实现",
+    "颜色渲染工具函数",
+    "spinner 动画帧定义"
   ],
   "not_responsible_for": [
-    "业务逻辑或命令行参数解析",
-    "日志持久化或文件日志",
-    "交互式用户输入（prompt / confirm）"
+    "日志记录功能（由 logging 包负责）",
+    "配置管理（由 config 包负责）",
+    "业务逻辑实现"
   ],
-  "depends_on": [
-    {
-      "module": "lipgloss (external)",
-      "reason": "用于终端文本样式渲染"
-    },
-    {
-      "module": "go-isatty (external)",
-      "reason": "用于检测 stdout/stderr 是否为 TTY"
-    }
-  ],
+  "depends_on": [],
   "public_interface": [
     {
-      "name": "Error",
-      "signature": "func Error(format string, args ...any)",
-      "description": "以错误样式输出格式化消息"
-    },
-    {
-      "name": "Warn",
-      "signature": "func Warn(format string, args ...any)",
-      "description": "以警告样式输出格式化消息"
-    },
-    {
-      "name": "Success",
-      "signature": "func Success(format string, args ...any)",
-      "description": "以成功样式输出格式化消息"
-    },
-    {
-      "name": "Info",
-      "signature": "func Info(format string, args ...any)",
-      "description": "以信息样式输出格式化消息"
-    },
-    {
-      "name": "Stage",
-      "signature": "func Stage(format string, args ...any)",
-      "description": "以阶段标题样式输出格式化消息"
-    },
-    {
-      "name": "Dim",
-      "signature": "func Dim(format string, args ...any)",
-      "description": "以暗淡样式输出格式化消息"
-    },
-    {
-      "name": "Plain",
-      "signature": "func Plain(format string, args ...any)",
-      "description": "以无样式输出格式化消息"
-    },
-    {
-      "name": "Println",
-      "signature": "func Println(args ...any)",
-      "description": "向当前 writer 输出一行"
-    },
-    {
-      "name": "Printf",
-      "signature": "func Printf(format string, args ...any)",
-      "description": "向当前 writer 格式化输出"
-    },
-    {
-      "name": "IsTTY",
-      "signature": "func IsTTY() bool",
-      "description": "返回当前输出是否为 TTY"
-    },
-    {
-      "name": "SetWriter",
-      "signature": "func SetWriter(w io.Writer)",
-      "description": "替换全局输出 writer"
-    },
-    {
-      "name": "Writer",
-      "signature": "func Writer() io.Writer",
-      "description": "返回当前全局输出 writer"
-    },
-    {
       "name": "Tracker",
-      "signature": "type Tracker struct { ... }",
-      "description": "多任务 spinner 进度追踪器，管理任务的添加、渲染和生命周期"
-    },
-    {
-      "name": "NewTracker",
-      "signature": "func NewTracker() *Tracker",
-      "description": "创建新的进度追踪器实例"
-    },
-    {
-      "name": "Tracker.Start",
-      "signature": "func (tr *Tracker) Start()",
-      "description": "启动追踪器的渲染循环"
-    },
-    {
-      "name": "Tracker.Stop",
-      "signature": "func (tr *Tracker) Stop()",
-      "description": "停止追踪器的渲染循环"
-    },
-    {
-      "name": "Tracker.AddTask",
-      "signature": "func (tr *Tracker) AddTask(label string) *Task",
-      "description": "添加一个新任务并返回 Task 句柄"
-    },
-    {
-      "name": "Tracker.Interject",
-      "signature": "func (tr *Tracker) Interject(fn func())",
-      "description": "暂停渲染以执行插入性输出"
+      "signature": "type Tracker struct",
+      "description": "终端进度跟踪器，管理多个任务的进度显示"
     },
     {
       "name": "Task",
-      "signature": "type Task struct { ... }",
-      "description": "单个追踪任务的句柄，提供 Done / Fail / Update 操作"
-    },
-    {
-      "name": "Task.Done",
-      "signature": "func (t *Task) Done()",
-      "description": "标记任务完成"
-    },
-    {
-      "name": "Task.DoneWithLabel",
-      "signature": "func (t *Task) DoneWithLabel(label string)",
-      "description": "以新标签标记任务完成"
-    },
-    {
-      "name": "Task.Fail",
-      "signature": "func (t *Task) Fail(err error)",
-      "description": "标记任务失败"
-    },
-    {
-      "name": "Task.Update",
-      "signature": "func (t *Task) Update(label string)",
-      "description": "更新任务的显示标签"
-    }
-  ],
-  "modification_rules": [
-    {
-      "rule": "新增输出函数必须遵循现有 styled() 模式并经过 TTY 检测",
-      "reason": "确保在非 TTY 环境下不输出 ANSI 转义序列"
-    },
-    {
-      "rule": "Tracker 的渲染逻辑必须在持有锁的情况下操作",
-      "reason": "Tracker 在独立 goroutine 中运行渲染循环，需要线程安全"
-    },
-    {
-      "rule": "不要在此模块中引入业务逻辑或命令行解析依赖",
-      "reason": "保持 UI 层的纯粹性，仅负责终端输出"
+      "signature": "type Task struct",
+      "description": "单个任务的状态和操作，包含Done、Fail、Update等方法"
     }
   ]
 }

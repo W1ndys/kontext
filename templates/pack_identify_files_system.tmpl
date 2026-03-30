@@ -8,8 +8,8 @@
 识别规则：
 - 明确提到：任务描述中直接包含文件名或路径关键词
 - 语义指向：任务描述中的概念、功能、模块指向特定的实现文件
-- 例如："pack命令" 应映射到 `cmd/pack.go`、`internal/packer/engine.go` 等
-- 例如："文件识别逻辑" 应映射到 `internal/packer/matcher.go`
+- 例如："pack命令" 应映射到 `cmd/pack.go`、`src/packer/engine.ts` 等
+- 例如："文件识别逻辑" 应映射到 `src/packer/matcher.go`
 
 要求：
 - 只能从候选文件列表中选择，不能臆造不存在的路径
@@ -21,10 +21,10 @@
 输出格式：
 ```json
 {
-  "paths": ["relative/path/to/file1.go", "relative/path/to/file2.go"],
+  "paths": ["relative/path/to/file1", "relative/path/to/file2"],
   "reasons": {
-    "relative/path/to/file1.go": "任务中明确提到了 pack 命令，这是命令入口文件",
-    "relative/path/to/file2.go": "任务涉及文件识别逻辑，这是匹配相关逻辑的实现文件"
+    "relative/path/to/file1": "任务中明确提到了 pack 命令，这是命令入口文件",
+    "relative/path/to/file2": "任务涉及文件识别逻辑，这是匹配相关逻辑的实现文件"
   }
 }
 ```

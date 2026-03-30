@@ -18,8 +18,7 @@ import (
 )
 
 const (
-	contractUpdateConcurrency = 4
-	llmProgressInterval       = 15 * time.Second
+	llmProgressInterval = 15 * time.Second
 )
 
 type actionResult struct {
@@ -126,31 +125,30 @@ func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]stri
 // executeContractBatch 并行执行一批模块契约的更新动作。
 func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAction, start, total int) ([]string, error) {
 	results := make(chan actionResult, len(actions))
-	sem := make(chan struct{}, contractUpdateConcurrency)
 	var wg sync.WaitGroup
 
 	for i, action := range actions {
 		globalIndex := start + i + 1
+
+		targetPath, err := e.targetPath(action)
+		if err != nil {
+			results <- actionResult{index: globalIndex, err: err}
+			continue
+		}
+
+		// 按顺序发出启动日志，保证日志序号有序
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressActionStart,
+			Action:     action,
+			Index:      globalIndex,
+			Total:      total,
+			TargetPath: targetPath,
+		})
+
 		wg.Add(1)
-		go func(action UpdateAction, index int) {
+		go func(action UpdateAction, index int, targetPath string) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			targetPath, err := e.targetPath(action)
-			if err != nil {
-				results <- actionResult{index: index, err: err}
-				return
-			}
 			actionStart := time.Now()
-
-			e.emitProgress(ProgressEvent{
-				Stage:      ProgressActionStart,
-				Action:     action,
-				Index:      index,
-				Total:      total,
-				TargetPath: targetPath,
-			})
 
 			content, err := e.generateContent(report, action, index, total, targetPath)
 			if err != nil {
@@ -172,7 +170,7 @@ func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAc
 				Message:    formatElapsedDuration(time.Since(actionStart)),
 			})
 			results <- actionResult{index: index, targetPath: targetPath}
-		}(action, globalIndex)
+		}(action, globalIndex, targetPath)
 	}
 
 	wg.Wait()

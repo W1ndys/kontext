@@ -228,7 +228,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		})
 
 		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-		resp, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
+		resp, content, err := e.generateYAMLContent(req)
 		stopHeartbeat()
 		if err != nil {
 			return "", err
@@ -260,9 +260,11 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	return "", fmt.Errorf("LLM 返回的内容仍不合法: %w", lastValidationErr)
 }
 
-// generateContractInParts 分两段生成模块契约 YAML，避免单次输出过长被截断。
+// generateContractInParts 分三段生成模块契约 YAML，避免单次输出过长被截断。
 // Part 1: module + owns + not_responsible_for + depends_on
-// Part 2: public_interface + modification_rules
+// Part 2a: public_interface
+// Part 2b: modification_rules
+// 每段均支持语义修正重试：若 LLM 返回的 JSON 解析失败，将错误追加到对话让 LLM 修正。
 func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
 	currentPath, err := e.targetPath(action)
 	if err != nil {
@@ -295,18 +297,12 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		Index:      index,
 		Total:      total,
 		TargetPath: targetPath,
-		Message:    "生成契约第 1/2 部分",
+		Message:    "生成契约第 1/3 部分",
 	})
 
-	part1Req := &llm.ChatRequest{
-		Messages: []llm.Message{
-			{Role: "system", Content: templates.UpdateSystem},
-			{Role: "user", Content: part1Prompt},
-		},
-	}
-	stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-	_, part1Content, err := e.generateYAMLContent(part1Req, action, index, total, targetPath)
-	stopHeartbeat()
+	part1Content, err := e.generateContractPartWithCorrection(
+		templates.UpdateSystem, part1Prompt, action, index, total, targetPath,
+	)
 	if err != nil {
 		return "", fmt.Errorf("生成契约 Part1 失败: %w", err)
 	}
@@ -316,15 +312,15 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		return "", nil
 	}
 
-	// Part 2: public_interface + modification_rules
-	part2Prompt, err := generator.RenderTemplate(templates.UpdateContractPart2, map[string]any{
+	// Part 2a: public_interface
+	part2aPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2a, map[string]any{
 		"ModuleName":  moduleName,
 		"Part1YAML":   part1Content,
 		"CurrentYAML": fallbackYAML(currentYAML),
 		"CodeSummary": codeSummary,
 	})
 	if err != nil {
-		return "", fmt.Errorf("渲染 Part2 模板失败: %w", err)
+		return "", fmt.Errorf("渲染 Part2a 模板失败: %w", err)
 	}
 
 	e.emitProgress(ProgressEvent{
@@ -333,30 +329,104 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		Index:      index,
 		Total:      total,
 		TargetPath: targetPath,
-		Message:    "生成契约第 2/2 部分",
+		Message:    "生成契约第 2/3 部分",
 	})
 
-	part2Req := &llm.ChatRequest{
-		Messages: []llm.Message{
-			{Role: "system", Content: templates.UpdateSystem},
-			{Role: "user", Content: part2Prompt},
-		},
-	}
-	stopHeartbeat = e.startLLMHeartbeat(action, index, total, targetPath)
-	_, part2Content, err := e.generateYAMLContent(part2Req, action, index, total, targetPath)
-	stopHeartbeat()
+	part2aContent, err := e.generateContractPartWithCorrection(
+		templates.UpdateSystem, part2aPrompt, action, index, total, targetPath,
+	)
 	if err != nil {
-		return "", fmt.Errorf("生成契约 Part2 失败: %w", err)
+		return "", fmt.Errorf("生成契约 Part2a 失败: %w", err)
 	}
 
-	// 拼接两段 YAML 并校验
-	merged := strings.TrimRight(part1Content, "\n") + "\n\n" + strings.TrimLeft(part2Content, "\n")
+	// Part 2b: modification_rules
+	precedingYAML := strings.TrimRight(part1Content, "\n") + "\n\n" + strings.TrimLeft(part2aContent, "\n")
+	part2bPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2b, map[string]any{
+		"ModuleName":    moduleName,
+		"PrecedingYAML": precedingYAML,
+		"CurrentYAML":   fallbackYAML(currentYAML),
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染 Part2b 模板失败: %w", err)
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    "生成契约第 3/3 部分",
+	})
+
+	part2bContent, err := e.generateContractPartWithCorrection(
+		templates.UpdateSystem, part2bPrompt, action, index, total, targetPath,
+	)
+	if err != nil {
+		return "", fmt.Errorf("生成契约 Part2b 失败: %w", err)
+	}
+
+	// 拼接三段 YAML 并校验
+	merged := strings.TrimRight(part1Content, "\n") + "\n\n" +
+		strings.TrimLeft(strings.TrimRight(part2aContent, "\n"), "\n") + "\n\n" +
+		strings.TrimLeft(part2bContent, "\n")
 
 	if validateErr := validateGeneratedContent(action, merged); validateErr != nil {
 		return "", fmt.Errorf("分段拼接后的契约校验失败: %w", validateErr)
 	}
 
 	return merged, nil
+}
+
+// generateContractPartWithCorrection 调用 LLM 生成契约的某一段 YAML，
+// 若 JSON 解析失败则追加错误到对话让 LLM 修正，最多修正 2 次。
+func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt string, action UpdateAction, index, total int, targetPath string) (string, error) {
+	req := &llm.ChatRequest{
+		Messages: []llm.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
+		var result UpdatedYAML
+		resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &result, 1, nil)
+		stopHeartbeat()
+
+		if err == nil {
+			return result.Content, nil
+		}
+
+		lastErr = err
+
+		// 构造修正消息：将错误信息追加到对话，让 LLM 修正 JSON 格式
+		// 即使拿不到原始响应，也可以通过追加错误提示让 LLM 重新生成
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressYAMLRetry,
+			Action:     action,
+			Index:      index,
+			Total:      total,
+			TargetPath: targetPath,
+			Message:    fmt.Sprintf("第 %d 次修正: %v", attempt+1, err),
+		})
+
+		// 若有原始响应则追加为 assistant 消息，否则仅追加用户修正提示
+		if resp != nil && resp.Content != "" {
+			req.Messages = append(req.Messages,
+				llm.Message{Role: "assistant", Content: resp.Content},
+			)
+		}
+		req.Messages = append(req.Messages,
+			llm.Message{Role: "user", Content: fmt.Sprintf(
+				"上一次返回的 JSON 解析失败：%v。请重新以合法 JSON 格式返回 {\"content\": \"YAML 文本\"}，注意 content 值中的双引号和特殊字符必须正确转义。",
+				err,
+			)},
+		)
+	}
+
+	return "", fmt.Errorf("调用 LLM 生成内容失败: %w", lastErr)
 }
 
 // generateContractSinglePass 使用原有的完整模板生成契约（用于已删除模块等简单场景）。
@@ -388,7 +458,7 @@ func (e *Executor) generateContractSinglePass(report *ChangeReport, action Updat
 	})
 
 	stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-	_, content, err := e.generateYAMLContent(req, action, index, total, targetPath)
+	_, content, err := e.generateYAMLContent(req)
 	stopHeartbeat()
 	if err != nil {
 		return "", err
@@ -406,7 +476,7 @@ func (e *Executor) generateContractSinglePass(report *ChangeReport, action Updat
 }
 
 // generateYAMLContent 调用 LLM 生成 YAML 内容，通过 JSON 结构化输出返回。
-func (e *Executor) generateYAMLContent(req *llm.ChatRequest, action UpdateAction, index, total int, targetPath string) (*llm.ChatResponse, string, error) {
+func (e *Executor) generateYAMLContent(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
 	var result UpdatedYAML
 	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &result, 3, nil)
 	if err != nil {

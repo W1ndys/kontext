@@ -9,8 +9,8 @@ owns:
   - "slog 全局 logger 的初始化与默认实例管理"
   - "日志级别解析与配置（通过环境变量或 Options）"
   - "日志输出格式选择（text/json）"
-  - "日志文件路径计算、目录创建与文件打开"
-  - "fanout handler 实现，支持同时向多个输出写日志"
+  - "日志文件路径计算、目录创建与文件打开（openLogFile）"
+  - "fanout handler 实现（fanoutHandler），支持同时向多个输出写日志"
   - "按命令名创建子 logger（CommandLogger）"
   - "日志 handler 的创建与格式化（newHandler / newFanoutHandler）"
 
@@ -70,3 +70,5 @@ modification_rules:
     reason: "其他模块和用户脚本可能依赖这些常量值"
   - rule: "不要在此模块中引入业务层依赖"
     reason: "logging 是基础设施模块，应保持零业务耦合以避免循环依赖"
+  - rule: "fanoutHandler 必须完整实现 slog.Handler 接口（Enabled/Handle/WithAttrs/WithGroup）"
+    reason: "确保作为 slog.Handler 使用时行为正确，所有方法需正确传播到子 handler"

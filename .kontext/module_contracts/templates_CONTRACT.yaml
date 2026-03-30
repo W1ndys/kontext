@@ -1,0 +1,49 @@
+module:
+  name: "templates"
+  path: "templates"
+  purpose: |
+    管理和提供 LLM 提示词模板资源。通过 Go embed 机制将 .tmpl 文件嵌入为包级变量，
+    供其他模块直接引用，实现提示词模板的集中管理。
+
+owns:
+  - "LLM 系统提示词模板 (llm_system_prompt.tmpl)"
+  - "LLM 用户提示词模板 (llm_user_prompt.tmpl)"
+  - "Pack 精筛阶段系统提示词模板 (pack_refine_system.tmpl)"
+  - "Pack 精筛阶段用户提示词模板 (pack_refine_user.tmpl)"
+  - "AI 初始化对话阶段系统提示词模板 (init_interview_system.tmpl)"
+  - "AI 初始化对话阶段用户提示词模板 (init_interview_user.tmpl)"
+
+not_responsible_for:
+  - "模板的渲染与变量替换逻辑（由调用方负责）"
+  - "LLM API 调用与交互"
+  - "提示词的业务逻辑组装"
+
+depends_on: []
+
+public_interface:
+  - name: "SystemPrompt"
+    signature: "var SystemPrompt string"
+    description: "LLM 的系统提示词模板，嵌入自 llm_system_prompt.tmpl"
+  - name: "UserPrompt"
+    signature: "var UserPrompt string"
+    description: "LLM 的用户提示词模板，嵌入自 llm_user_prompt.tmpl"
+  - name: "PackRefineSystem"
+    signature: "var PackRefineSystem string"
+    description: "Pack 精筛阶段的系统提示词，嵌入自 pack_refine_system.tmpl"
+  - name: "PackRefineUser"
+    signature: "var PackRefineUser string"
+    description: "Pack 精筛阶段的用户提示词，嵌入自 pack_refine_user.tmpl"
+  - name: "InitInterviewSystem"
+    signature: "var InitInterviewSystem string"
+    description: "AI 初始化对话阶段的系统提示词，嵌入自 init_interview_system.tmpl"
+  - name: "InitInterviewUser"
+    signature: "var InitInterviewUser string"
+    description: "AI 初始化对话阶段的用户提示词，嵌入自 init_interview_user.tmpl"
+
+modification_rules:
+  - rule: "新增或修改模板时，必须同时在 templates.go 中添加对应的 embed 指令和导出变量"
+    reason: "保持 .tmpl 文件与导出变量的一一对应关系"
+  - rule: "模板文件命名采用小写下划线格式并以 .tmpl 结尾"
+    reason: "保持命名一致性，便于识别和管理"
+  - rule: "不要在此包中添加模板渲染逻辑"
+    reason: "该模块仅负责模板资源的持有，渲染职责归调用方"

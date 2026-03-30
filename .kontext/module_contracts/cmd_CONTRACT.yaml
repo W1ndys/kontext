@@ -44,6 +44,8 @@ depends_on:
     reason: "update 命令依赖该模块完成变更检测、更新计划生成、执行与进度事件输出"
   - module: "templates"
     reason: "init 扫描初始化入口会直接引用模板资源参与阶段性生成与默认初始化"
+  - module: "ui"
+    reason: "命令层在交互式初始化、配置与扫描流程中使用 ui 模块提供的终端样式与提示输出"
 
 public_interface:
   - name: "Execute"
@@ -76,6 +78,24 @@ public_interface:
   - name: "runScanInit"
     signature: "func runScanInit() error"
     description: "包内辅助函数（未导出），执行基于代码扫描的全自动初始化流程。"
+  - name: "runScanInitFromCheckpoint"
+    signature: "func runScanInitFromCheckpoint(cp *cache.Checkpoint) error"
+    description: "包内辅助函数（未导出），从指定缓存检查点恢复并继续执行扫描初始化流程，实现断点续跑。"
+  - name: "localAnalyzeFiles"
+    signature: "func localAnalyzeFiles(allFiles []string) *generator.AnalyzedFiles"
+    description: "包内辅助函数（未导出），使用本地规则按文件名与扩展名对文件列表进行分类识别，作为 LLM 文件识别的回退方案。"
+  - name: "maskKey"
+    signature: "func maskKey(key string) string"
+    description: "包内辅助函数（未导出），将 API Key 等敏感字符串进行掩码处理后返回，用于配置展示时的脱敏输出。"
+  - name: "runInteractiveConfig"
+    signature: "func runInteractiveConfig() error"
+    description: "包内辅助函数（未导出），执行交互式配置流程，引导用户通过终端完成全局 LLM 配置的设置。"
+  - name: "runConfigSet"
+    signature: "func runConfigSet(key, value string) error"
+    description: "包内辅助函数（未导出），执行 config set 子命令逻辑，将指定键值对写入全局配置文件。"
+  - name: "runConfigList"
+    signature: "func runConfigList() error"
+    description: "包内辅助函数（未导出），执行 config list 子命令逻辑，列出当前全局配置的所有键值对（敏感值脱敏展示）。"
 
 modification_rules:
   - rule: "新增命令必须通过 rootCmd.AddCommand 注册到根命令，而不是在 main 或其他包中分散挂载。"

@@ -29,11 +29,12 @@ layers:
       - "internal/promptdoc"
 
   - name: "底层支撑设施层"
-    description: "提供与业务无关但被多处复用的基础能力，包括文件系统访问、目录扫描、内容读写、文件摘要提取、扫描检查点缓存与哈希计算、结构化日志输出等，是上层流程的运行时支撑。"
+    description: "提供与业务无关但被多处复用的基础能力，包括文件系统访问、目录扫描、内容读写、文件摘要提取、扫描检查点缓存与哈希计算、结构化日志输出、终端 UI 交互组件等，是上层流程的运行时支撑。"
     packages:
       - "internal/fileutil"
       - "internal/cache"
       - "internal/logging"
+      - "internal/ui"
 
 rules:
   - rule: "cmd 层负责参数解析、交互确认、进度展示与错误转译，不应实现 YAML 解析、LLM 协议细节或文件筛选算法。"
@@ -86,6 +87,9 @@ rules:
 
   - rule: "日志输出统一通过 internal/logging 提供，业务层不应自行实现日志格式化或级别控制。"
     reason: "internal/logging 作为独立基础设施包，为各层提供结构化日志能力，避免日志实现散落在多个包中。"
+
+  - rule: "终端 UI 交互组件统一通过 internal/ui 提供，业务层不应自行实现进度展示、确认提示等终端交互逻辑。"
+    reason: "internal/ui 作为独立基础设施包，为 cmd 层及上层流程提供可复用的终端交互能力，避免 UI 实现散落在多个包中。"
 
   - rule: "update 功能采用先检测再规划再执行的三段式结构，其中 detector 只负责发现偏差，planner 只负责生成动作，executor 只负责落地更新。"
     reason: "internal/updater 被拆分为 detector.go、planner.go、executor.go、types.go，职责边界在文件与调用关系上都很明确。"

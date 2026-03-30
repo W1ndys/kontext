@@ -2,7 +2,6 @@ package updater
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -15,7 +14,7 @@ import (
 const detectScanDepth = 8
 
 // DetectChanges 检测当前代码与 .kontext 物料之间的偏差。
-func DetectChanges(kontextDir, projectDir, since string) (*ChangeReport, error) {
+func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 	bundle, err := schema.LoadBundle(kontextDir)
 	if err != nil {
 		return nil, err
@@ -101,16 +100,6 @@ func DetectChanges(kontextDir, projectDir, since string) (*ChangeReport, error) 
 		}
 		return report.ContractChanges[i].Type < report.ContractChanges[j].Type
 	})
-
-	if since != "" {
-		changedFiles, diffErr := gitChangedFiles(projectDir, since)
-		if diffErr != nil {
-			return nil, diffErr
-		}
-		report.GitChangedFiles = changedFiles
-		report.AffectedModules = affectedModulesFromFiles(changedFiles)
-		report.ManifestReasons = append(report.ManifestReasons, manifestReasonsFromFiles(changedFiles)...)
-	}
 
 	report.ManifestReasons = append(report.ManifestReasons, manifestReasonsFromSignals(bundle, allFiles)...)
 	report.ManifestReasons = uniqueStrings(report.ManifestReasons)
@@ -269,61 +258,6 @@ func contractMentionsSymbol(contract schema.ModuleContract, symbol string) bool 
 		}
 	}
 	return false
-}
-
-// gitChangedFiles 通过 git diff 获取指定 commit 以来的变更文件列表。
-func gitChangedFiles(projectDir, since string) ([]string, error) {
-	cmd := exec.Command("git", "diff", "--name-only", fmt.Sprintf("%s..HEAD", since))
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("获取 git diff 失败: %w", err)
-	}
-
-	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			files = append(files, filepath.ToSlash(line))
-		}
-	}
-	sort.Strings(files)
-	return files, nil
-}
-
-// affectedModulesFromFiles 从变更文件列表推导受影响的模块。
-func affectedModulesFromFiles(files []string) []string {
-	var modules []string
-	seen := make(map[string]bool)
-	for _, relPath := range files {
-		moduleName := deriveModuleName(relPath)
-		if moduleName == "" || seen[moduleName] {
-			continue
-		}
-		seen[moduleName] = true
-		modules = append(modules, moduleName)
-	}
-	sort.Strings(modules)
-	return modules
-}
-
-// manifestReasonsFromFiles 根据变更文件列表生成 Manifest 更新原因。
-func manifestReasonsFromFiles(files []string) []string {
-	signals := map[string]string{
-		"go.mod":       "go.mod 发生变化，技术栈或依赖可能需要更新",
-		"go.sum":       "go.sum 发生变化，依赖集合可能需要更新",
-		"package.json": "package.json 发生变化，技术栈或脚本可能需要更新",
-		"Taskfile.yml": "Taskfile.yml 发生变化，命令清单可能需要更新",
-		"Dockerfile":   "Dockerfile 发生变化，部署/运行方式可能需要更新",
-	}
-
-	var reasons []string
-	for _, relPath := range files {
-		if reason, ok := signals[relPath]; ok {
-			reasons = append(reasons, reason)
-		}
-	}
-	return reasons
 }
 
 // manifestReasonsFromSignals 根据项目信号（语言检测不匹配等）生成 Manifest 更新原因。

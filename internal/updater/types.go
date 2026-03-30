@@ -17,8 +17,6 @@ type ContractChange struct {
 type ChangeReport struct {
 	DirectoryChanges    []DirectoryChange
 	ContractChanges     []ContractChange
-	GitChangedFiles     []string
-	AffectedModules     []string
 	ManifestLikelyStale bool
 	ManifestReasons     []string
 	PackagePaths        []string

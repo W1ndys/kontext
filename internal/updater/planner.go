@@ -6,10 +6,10 @@ import (
 )
 
 // PlanUpdates 根据 ChangeReport 生成更新动作列表。
-func PlanUpdates(report *ChangeReport, filter string) []UpdateAction {
+func PlanUpdates(report *ChangeReport) []UpdateAction {
 	var actions []UpdateAction
 
-	if allowTarget(filter, "architecture") && (len(report.DirectoryChanges) > 0 || filter == "architecture") {
+	if len(report.DirectoryChanges) > 0 {
 		actions = append(actions, UpdateAction{
 			Target:   "architecture",
 			Reason:   fmt.Sprintf("检测到 %d 处目录/包变更", len(report.DirectoryChanges)),
@@ -17,20 +17,18 @@ func PlanUpdates(report *ChangeReport, filter string) []UpdateAction {
 		})
 	}
 
-	if allowTarget(filter, "contracts") {
-		for _, change := range report.ContractChanges {
-			actions = append(actions, UpdateAction{
-				Target:     "contract:" + change.Module,
-				Reason:     change.Details,
-				Priority:   2,
-				Module:     change.Module,
-				ChangeType: change.Type,
-			})
-		}
+	for _, change := range report.ContractChanges {
+		actions = append(actions, UpdateAction{
+			Target:     "contract:" + change.Module,
+			Reason:     change.Details,
+			Priority:   2,
+			Module:     change.Module,
+			ChangeType: change.Type,
+		})
 	}
 
-	if allowTarget(filter, "manifest") && (report.ManifestLikelyStale || filter == "manifest") {
-		reason := "用户显式请求更新 PROJECT_MANIFEST"
+	if report.ManifestLikelyStale {
+		reason := "检测到 Manifest 可能过期"
 		if len(report.ManifestReasons) > 0 {
 			reason = report.ManifestReasons[0]
 		}
@@ -48,9 +46,4 @@ func PlanUpdates(report *ChangeReport, filter string) []UpdateAction {
 		return actions[i].Priority < actions[j].Priority
 	})
 	return actions
-}
-
-// allowTarget 判断给定的 filter 是否允许指定目标。
-func allowTarget(filter, target string) bool {
-	return filter == "" || filter == "all" || filter == target
 }

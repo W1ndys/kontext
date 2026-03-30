@@ -13,30 +13,15 @@ import (
 	"github.com/w1ndys/kontext/internal/updater"
 )
 
-var (
-	updateDryRun bool
-	updateFile   string
-	updateSince  string
-)
-
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "检测并更新 .kontext/ 物料 / Detect and update .kontext materials",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := namedLogger(commandPathUpdate)
-		logger.Info("update started",
-			"dry_run", updateDryRun,
-			"file_filter", normalizedUpdateFilter(updateFile),
-			"since", updateSince,
-		)
+		logger.Info("update started")
 
-		if err := validateUpdateFilter(updateFile); err != nil {
-			logger.Warn("invalid update filter", "error", err)
-			return err
-		}
-
-		report, err := updater.DetectChanges(defaultKontextDir, defaultProjectDir, updateSince)
+		report, err := updater.DetectChanges(defaultKontextDir, defaultProjectDir)
 		if err != nil {
 			logger.Error("detect changes failed", "error", err)
 			return fmt.Errorf("检测变更失败: %w", err)
@@ -45,16 +30,10 @@ var updateCmd = &cobra.Command{
 			"directory_changes", len(report.DirectoryChanges),
 			"contract_changes", len(report.ContractChanges),
 			"manifest_reasons", len(report.ManifestReasons),
-			"affected_modules", len(report.AffectedModules),
 		)
 
-		actions := updater.PlanUpdates(report, normalizedUpdateFilter(updateFile))
+		actions := updater.PlanUpdates(report)
 		logger.Info("update plan created", "planned_actions", len(actions))
-		if updateDryRun {
-			logger.Info("update dry run completed", "planned_actions", len(actions))
-			printUpdateReport(report, actions)
-			return nil
-		}
 
 		if len(actions) == 0 {
 			logger.Info("update skipped because no actions were planned")
@@ -121,84 +100,6 @@ var updateCmd = &cobra.Command{
 		}
 		return nil
 	},
-}
-
-func init() {
-	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "只检测并打印变更报告 / Detect only without modifying files")
-	updateCmd.Flags().StringVar(&updateFile, "file", "", "仅更新指定物料：manifest|architecture|contracts|all")
-	updateCmd.Flags().StringVar(&updateSince, "since", "", "只分析指定 commit 之后的变更 / Analyze changes since commit")
-}
-
-// 校验 --file 参数值是否合法
-func validateUpdateFilter(filter string) error {
-	switch normalizedUpdateFilter(filter) {
-	case "", "all", "manifest", "architecture", "contracts":
-		return nil
-	default:
-		return fmt.Errorf("--file 仅支持 manifest、architecture、contracts、all")
-	}
-}
-
-// 将 filter 参数统一为小写并去除空白
-func normalizedUpdateFilter(filter string) string {
-	return strings.ToLower(strings.TrimSpace(filter))
-}
-
-// 打印 dry-run 模式下的完整变更检测报告
-func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAction) {
-	ui.Stage("=== Kontext 物料变更检测报告 ===")
-	fmt.Println()
-
-	ui.Stage("[目录结构变更]")
-	if len(report.DirectoryChanges) == 0 {
-		fmt.Println("  无")
-	} else {
-		for _, change := range report.DirectoryChanges {
-			switch change.Type {
-			case "added":
-				ui.Success("  + %s", change.Path)
-			case "removed":
-				ui.Error("  - %s", change.Path)
-			default:
-				ui.Warn("  ~ %s", change.Path)
-			}
-		}
-	}
-
-	fmt.Println()
-	ui.Stage("[模块契约变更]")
-	if len(report.ContractChanges) == 0 {
-		fmt.Println("  无")
-	} else {
-		for _, change := range report.ContractChanges {
-			switch change.Type {
-			case "new_module":
-				ui.Success("  + %s  (%s)", change.Module, change.Details)
-			case "deleted_module":
-				ui.Error("  - %s  (%s)", change.Module, change.Details)
-			default:
-				ui.Warn("  ~ %s  (%s)", change.Module, change.Details)
-			}
-		}
-	}
-
-	if len(report.ManifestReasons) > 0 {
-		fmt.Println()
-		ui.Stage("[Manifest 信号]")
-		for _, reason := range report.ManifestReasons {
-			fmt.Printf("  - %s\n", reason)
-		}
-	}
-
-	fmt.Println()
-	ui.Stage("[建议更新]")
-	if len(actions) == 0 {
-		fmt.Println("  无")
-		return
-	}
-	for i, action := range actions {
-		fmt.Printf("  %d. %s  - %s\n", i+1, action.Target, action.Reason)
-	}
 }
 
 // 打印即将执行的更新动作列表

@@ -127,6 +127,8 @@ Kontext 当前通过 OpenAI 兼容接口工作。配置优先级为：
 
 - `llm.base_url = https://api.openai.com/v1`
 - `llm.model = gpt-5.4`
+- `llm.timeout = 300`（秒）
+- `llm.max_tokens = 1000000`
 
 ### 方式一：交互式配置
 
@@ -150,6 +152,7 @@ kontext config set llm.base_url https://api.openai.com/v1
 kontext config set llm.api_key your-api-key
 kontext config set llm.model gpt-5.4
 kontext config set llm.timeout 120
+kontext config set llm.max_tokens 16384
 ```
 
 查看配置：
@@ -166,6 +169,7 @@ export KONTEXT_LLM_BASE_URL=https://api.openai.com/v1
 export KONTEXT_LLM_API_KEY=your-api-key
 export KONTEXT_LLM_MODEL=gpt-5.4
 export KONTEXT_LLM_TIMEOUT=120
+export KONTEXT_LLM_MAX_TOKENS=16384
 ```
 
 Windows PowerShell：
@@ -175,6 +179,7 @@ $env:KONTEXT_LLM_BASE_URL = "https://api.openai.com/v1"
 $env:KONTEXT_LLM_API_KEY = "your-api-key"
 $env:KONTEXT_LLM_MODEL = "gpt-5.4"
 $env:KONTEXT_LLM_TIMEOUT = "120"
+$env:KONTEXT_LLM_MAX_TOKENS = "16384"
 ```
 
 ## 如何使用

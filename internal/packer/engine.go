@@ -20,6 +20,7 @@ type Engine struct {
 	kontextDir    string
 	projectDir    string
 	OnProgress    func(stage, total int, msg string)
+	OnWarn        func(msg string) // 警告回调，替代直接 stderr 输出
 	DisableRefine bool
 	OutputPath    string // 用户指定的输出文件路径，为空时自动生成
 }
@@ -68,10 +69,10 @@ func (e *Engine) Pack(task string) (string, error) {
 	}
 
 	mentionedFiles, err = IdentifyRelevantFiles(e.llmClient, task, candidateFiles, e.projectDir, archSummary, moduleSummary, func(attempt int, retryErr error, backoff time.Duration) {
-		fmt.Fprintf(os.Stderr, "\n⚠ Relevant file identification failed (%s), retrying in %s [attempt %d] / 文件识别失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
+		e.warn(fmt.Sprintf("⚠ 文件识别失败(%s)，%s 后重试第 %d 次...", retryErr, backoff, attempt))
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ Failed to identify relevant files automatically; packing will continue without attached source files / 文件识别失败，将继续打包但不附加源码：%v\n", err)
+		e.warn(fmt.Sprintf("⚠ 文件识别失败，将继续打包但不附加源码：%v", err))
 		mentionedFiles = nil
 	}
 
@@ -81,7 +82,7 @@ func (e *Engine) Pack(task string) (string, error) {
 		return "", fmt.Errorf("阶段 4 (收集候选上下文): %w", err)
 	}
 	if err := PreloadIdentifiedFiles(e.projectDir, ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ Failed to attach some or all identified source files; packing will continue with available context / 读取识别文件失败，将继续打包并使用当前可用上下文：%v\n", err)
+		e.warn(fmt.Sprintf("⚠ 读取识别文件失败，将继续打包并使用当前可用上下文：%v", err))
 	}
 
 	var refine *RefineResult
@@ -96,10 +97,10 @@ func (e *Engine) Pack(task string) (string, error) {
 		}
 
 		refine, err = RefineContext(e.llmClient, task, candidates, ctx.Contracts, ctx.IdentifiedFiles, func(attempt int, retryErr error, backoff time.Duration) {
-			fmt.Fprintf(os.Stderr, "\n⚠ Context refinement failed (%s), retrying in %s [attempt %d] / Pack 精筛失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
+			e.warn(fmt.Sprintf("⚠ Pack 精筛失败(%s)，%s 后重试第 %d 次...", retryErr, backoff, attempt))
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "\n⚠ Context refinement failed; continuing with identified candidates / Pack 精筛失败，将继续使用已识别候选上下文：%v\n", err)
+			e.warn(fmt.Sprintf("⚠ Pack 精筛失败，将继续使用已识别候选上下文：%v", err))
 		}
 	} else {
 		e.progress(5, "跳过 LLM 精筛，继续使用已识别候选上下文...")
@@ -122,7 +123,7 @@ func (e *Engine) Pack(task string) (string, error) {
 	}
 
 	resp, err := llm.ChatWithRetry(e.llmClient, buildChatRequest(systemPrompt, userPrompt), 3, func(attempt int, retryErr error, backoff time.Duration) {
-		fmt.Fprintf(os.Stderr, "\n⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt)
+		e.warn(fmt.Sprintf("⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...", retryErr, backoff, attempt))
 	})
 	if err != nil {
 		return "", fmt.Errorf("阶段 8 (LLM 生成): %w", err)
@@ -130,10 +131,10 @@ func (e *Engine) Pack(task string) (string, error) {
 
 	e.progress(9, "生成输出文件名...")
 	filenameTitle, err := GenerateFilenameSuggestion(e.llmClient, task, func(attempt int, retryErr error, backoff time.Duration) {
-		fmt.Fprintf(os.Stderr, "\n⚠ Filename generation failed (%s), retrying in %s [attempt %d] / 文件名生成失败(%s)，%s 后重试第 %d 次...\n", retryErr, backoff, attempt, retryErr, backoff, attempt)
+		e.warn(fmt.Sprintf("⚠ 文件名生成失败(%s)，%s 后重试第 %d 次...", retryErr, backoff, attempt))
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\n⚠ Failed to generate semantic filename; fallback to default naming / 文件名生成失败，将回退为默认命名：%v\n", err)
+		e.warn(fmt.Sprintf("⚠ 文件名生成失败，将回退为默认命名：%v", err))
 	}
 
 	e.progress(10, "保存文件...")
@@ -168,6 +169,13 @@ func (e *Engine) Pack(task string) (string, error) {
 func (e *Engine) progress(stage int, msg string) {
 	if e.OnProgress != nil {
 		e.OnProgress(stage, packStages, msg)
+	}
+}
+
+// 触发警告回调，若未设置则忽略
+func (e *Engine) warn(msg string) {
+	if e.OnWarn != nil {
+		e.OnWarn(msg)
 	}
 }
 

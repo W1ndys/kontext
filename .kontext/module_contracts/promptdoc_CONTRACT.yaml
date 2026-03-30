@@ -41,6 +41,18 @@ public_interface:
   - name: "truncateFilenameBase"
     signature: "func truncateFilenameBase(s string, maxRunes int) string"
     description: "将文件名基础部分截断到指定最大 rune 数，防止文件名过长。（包内非导出函数，供 GenerateFilename 使用）"
+  - name: "TestGenerateFilenameAtUsesTitleFirst"
+    signature: "func TestGenerateFilenameAtUsesTitleFirst(t *testing.T)"
+    description: "测试 generateFilenameAt 优先使用 title 参数生成文件名。（测试函数）"
+  - name: "TestGenerateFilenameAtFallsBackToTask"
+    signature: "func TestGenerateFilenameAtFallsBackToTask(t *testing.T)"
+    description: "测试 generateFilenameAt 在 title 为空时回退到 task 参数。（测试函数）"
+  - name: "TestGenerateFilenameAtFallsBackToPromptWhenSanitizedEmpty"
+    signature: "func TestGenerateFilenameAtFallsBackToPromptWhenSanitizedEmpty(t *testing.T)"
+    description: "测试 generateFilenameAt 在 sanitize 后为空时回退到默认文件名。（测试函数）"
+  - name: "TestGenerateFilenameAtTruncatesLongBase"
+    signature: "func TestGenerateFilenameAtTruncatesLongBase(t *testing.T)"
+    description: "测试 generateFilenameAt 对过长文件名基础部分的截断行为。（测试函数）"
 
 modification_rules:
   - rule: "生成文件名时必须保持结果可跨平台安全使用，并继续输出 .md 扩展名。"

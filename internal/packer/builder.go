@@ -21,8 +21,8 @@ func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext
 
 	// 构建技术栈摘要
 	ts := bundle.Manifest.TechStack
-	data.TechStack = fmt.Sprintf("Language: %s, CLI: %s, YAML: %s",
-		ts.Language, ts.CLIFramework, ts.YAMLParser)
+	data.TechStack = fmt.Sprintf("Language: %s, CLI: %s, Data Format: %s",
+		ts.Language, ts.CLIFramework, ts.DataFormat)
 
 	// 业务上下文
 	data.BusinessContext = bundle.Manifest.Project.BusinessContext

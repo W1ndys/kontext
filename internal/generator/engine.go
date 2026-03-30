@@ -20,7 +20,6 @@ import (
 	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/templates"
-	"go.yaml.in/yaml/v4"
 )
 
 const maxRounds = 20
@@ -33,7 +32,7 @@ func RunInteractiveInit(client llm.Client, description string) error {
 		return err
 	}
 
-	// 阶段 2：生成 YAML 配置文件
+	// 阶段 2：生成 JSON 配置文件
 	fmt.Fprintln(os.Stdout, "\n需求澄清完成，开始分阶段生成配置文件...")
 	return generateAndWrite(client, summary, conversation)
 }
@@ -145,7 +144,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 	return summary, conversationLog.String(), nil
 }
 
-// generateAndWrite 分阶段调用 LLM 生成 YAML 并写入文件。
+// generateAndWrite 分阶段调用 LLM 生成 JSON 并写入文件。
 // 每个制品生成后立即保存到磁盘，防止网络中断导致前序结果丢失。
 // 阶段 1: 生成 PROJECT_MANIFEST
 // 阶段 2: 生成 ARCHITECTURE_MAP（引用 manifest）
@@ -164,7 +163,7 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 	tracker.Start()
 
 	// ── 阶段 1: 生成 PROJECT_MANIFEST ──
-	task := tracker.AddTask("生成 PROJECT_MANIFEST.yaml")
+	task := tracker.AddTask("生成 PROJECT_MANIFEST.json")
 	manifestUserMsg, err := RenderTemplate(templates.InitGenerateManifestUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
@@ -174,21 +173,21 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		tracker.Stop()
 		return fmt.Errorf("渲染 manifest 用户模板失败: %w", err)
 	}
-	manifestContent, err := GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
+	manifestContent, err := GenerateSingleJSON(client, templates.InitScanManifestSystem, manifestUserMsg)
 	if err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return fmt.Errorf("生成 PROJECT_MANIFEST 失败: %w", err)
 	}
-	if err := writeYAMLFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"), manifestContent); err != nil {
+	if err := writeJSONFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.json"), manifestContent); err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return err
 	}
-	task.DoneWithLabel("PROJECT_MANIFEST.yaml 已保存")
+	task.DoneWithLabel("PROJECT_MANIFEST.json 已保存")
 
 	// ── 阶段 2: 生成 ARCHITECTURE_MAP ──
-	task = tracker.AddTask("生成 ARCHITECTURE_MAP.yaml")
+	task = tracker.AddTask("生成 ARCHITECTURE_MAP.json")
 	archUserMsg, err := RenderTemplate(templates.InitGenerateArchitectureUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
@@ -199,21 +198,21 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		tracker.Stop()
 		return fmt.Errorf("渲染 architecture 用户模板失败: %w", err)
 	}
-	archContent, err := GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
+	archContent, err := GenerateSingleJSON(client, templates.InitScanArchitectureSystem, archUserMsg)
 	if err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return fmt.Errorf("生成 ARCHITECTURE_MAP 失败: %w", err)
 	}
-	if err := writeYAMLFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"), archContent); err != nil {
+	if err := writeJSONFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.json"), archContent); err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return err
 	}
-	task.DoneWithLabel("ARCHITECTURE_MAP.yaml 已保存")
+	task.DoneWithLabel("ARCHITECTURE_MAP.json 已保存")
 
 	// ── 阶段 3: 生成 CONVENTIONS ──
-	task = tracker.AddTask("生成 CONVENTIONS.yaml")
+	task = tracker.AddTask("生成 CONVENTIONS.json")
 	convUserMsg, err := RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
 		"Summary":      summary,
 		"Manifest":     manifestContent,
@@ -224,18 +223,18 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		tracker.Stop()
 		return fmt.Errorf("渲染 conventions 用户模板失败: %w", err)
 	}
-	convContent, err := GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
+	convContent, err := GenerateSingleJSON(client, templates.InitScanConventionsSystem, convUserMsg)
 	if err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return fmt.Errorf("生成 CONVENTIONS 失败: %w", err)
 	}
-	if err := writeYAMLFile(filepath.Join(kontextDir, "CONVENTIONS.yaml"), convContent); err != nil {
+	if err := writeJSONFile(filepath.Join(kontextDir, "CONVENTIONS.json"), convContent); err != nil {
 		task.Fail(err)
 		tracker.Stop()
 		return err
 	}
-	task.DoneWithLabel("CONVENTIONS.yaml 已保存")
+	task.DoneWithLabel("CONVENTIONS.json 已保存")
 
 	// ── 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT ──
 	modules := extractModulesFromArchitecture(archContent)
@@ -264,13 +263,13 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 			continue
 		}
 
-		filename := fmt.Sprintf("%s_CONTRACT.yaml", mod)
+		filename := fmt.Sprintf("%s_CONTRACT.json", mod)
 		contractPath := filepath.Join(kontextDir, "module_contracts", filename)
-		if err := writeYAMLFile(contractPath, contract.Content); err != nil {
+		if err := writeJSONFile(contractPath, contract.Content); err != nil {
 			task.Fail(err)
 			continue
 		}
-		task.DoneWithLabel(fmt.Sprintf("%s_CONTRACT.yaml 已保存", mod))
+		task.DoneWithLabel(fmt.Sprintf("%s_CONTRACT.json 已保存", mod))
 	}
 
 	tracker.Stop()
@@ -278,38 +277,37 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 	return nil
 }
 
-// writeYAMLFile 校验 YAML 合法性，通过 unmarshal → marshal 标准化格式后写入文件。
-func writeYAMLFile(path, content string) error {
-	normalized, err := NormalizeYAML(content)
+// writeJSONFile 验证 JSON 合法性并格式化写入文件。
+func writeJSONFile(path, content string) error {
+	formatted, err := FormatJSON(content)
 	if err != nil {
 		return fmt.Errorf("生成的 %s 不合法: %w", filepath.Base(path), err)
 	}
-	if err := fileutil.WriteFile(path, []byte(normalized)); err != nil {
+	if err := fileutil.WriteFile(path, []byte(formatted)); err != nil {
 		return fmt.Errorf("写入 %s 失败: %w", path, err)
 	}
 	return nil
 }
 
-// NormalizeYAML 通过 unmarshal → marshal 标准化 YAML 格式。
-// 解决 LLM 生成的 YAML 存在的缩进不一致、多余空格、换行错乱等问题。
-func NormalizeYAML(content string) (string, error) {
+// FormatJSON 通过 unmarshal → marshal 标准化 JSON 格式。
+func FormatJSON(content string) (string, error) {
 	var data interface{}
-	if err := yaml.Unmarshal([]byte(content), &data); err != nil {
+	if err := json.Unmarshal([]byte(content), &data); err != nil {
 		return "", err
 	}
-	out, err := yaml.Marshal(data)
+	out, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	return string(out), nil
+	return string(out) + "\n", nil
 }
 
-// extractModulesFromArchitecture 从 ARCHITECTURE_MAP YAML 中提取模块名列表。
+// extractModulesFromArchitecture 从 ARCHITECTURE_MAP JSON 中提取模块名列表。
 // 使用完整相对路径（/ 替换为 _）作为模块标识符，避免不同父目录下同名包冲突。
 // 例如 "internal/config" → "internal_config", "cmd" → "cmd"。
-func extractModulesFromArchitecture(archYAML string) []string {
+func extractModulesFromArchitecture(archJSON string) []string {
 	var arch schema.ArchitectureMap
-	if err := yaml.Unmarshal([]byte(archYAML), &arch); err != nil {
+	if err := json.Unmarshal([]byte(archJSON), &arch); err != nil {
 		return nil
 	}
 
@@ -332,30 +330,23 @@ func extractModulesFromArchitecture(archYAML string) []string {
 	return modules
 }
 
-// WriteGeneratedYAML 校验 GeneratedYAML，标准化格式并写入 .kontext/ 目录。
-func WriteGeneratedYAML(generated *GeneratedYAML) error {
-	// 标准化 YAML 格式
-	normalizedManifest, err := NormalizeYAML(generated.ProjectManifest)
-	if err != nil {
-		return fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", err)
+// WriteGeneratedContent 校验并写入生成的制品到 .kontext/ 目录。
+func WriteGeneratedContent(generated *GeneratedContent) error {
+	// 验证 JSON 格式
+	if _, err := FormatJSON(generated.ProjectManifest); err != nil {
+		return fmt.Errorf("生成的 PROJECT_MANIFEST.json 不合法: %w", err)
 	}
-	normalizedArch, err := NormalizeYAML(generated.ArchitectureMap)
-	if err != nil {
-		return fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", err)
+	if _, err := FormatJSON(generated.ArchitectureMap); err != nil {
+		return fmt.Errorf("生成的 ARCHITECTURE_MAP.json 不合法: %w", err)
 	}
-	normalizedConv, err := NormalizeYAML(generated.Conventions)
-	if err != nil {
-		return fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", err)
+	if _, err := FormatJSON(generated.Conventions); err != nil {
+		return fmt.Errorf("生成的 CONVENTIONS.json 不合法: %w", err)
 	}
 
-	// 标准化模块契约
-	normalizedContracts := make(map[string]string, len(generated.ModuleContracts))
 	for name, content := range generated.ModuleContracts {
-		normalized, err := NormalizeYAML(content)
-		if err != nil {
-			return fmt.Errorf("生成的 %s_CONTRACT.yaml 不合法: %w", name, err)
+		if _, err := FormatJSON(content); err != nil {
+			return fmt.Errorf("生成的 %s_CONTRACT.json 不合法: %w", name, err)
 		}
-		normalizedContracts[name] = normalized
 	}
 
 	// 写入文件
@@ -373,26 +364,26 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 
 	// 写入核心配置文件
 	files := map[string]string{
-		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): normalizedManifest,
-		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): normalizedArch,
-		filepath.Join(kontextDir, "CONVENTIONS.yaml"):      normalizedConv,
+		filepath.Join(kontextDir, "PROJECT_MANIFEST.json"): generated.ProjectManifest,
+		filepath.Join(kontextDir, "ARCHITECTURE_MAP.json"): generated.ArchitectureMap,
+		filepath.Join(kontextDir, "CONVENTIONS.json"):      generated.Conventions,
 	}
 
 	for path, content := range files {
-		if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+		if err := writeJSONFile(path, content); err != nil {
 			return fmt.Errorf("写入 %s 失败: %w", path, err)
 		}
 		fmt.Printf("  已创建: %s\n", path)
 	}
 
 	// 写入模块契约文件
-	if len(normalizedContracts) > 0 {
+	if len(generated.ModuleContracts) > 0 {
 		fmt.Println()
-		fmt.Printf("  模块契约 (%d 个):\n", len(normalizedContracts))
-		for name, content := range normalizedContracts {
-			filename := fmt.Sprintf("%s_CONTRACT.yaml", name)
+		fmt.Printf("  模块契约 (%d 个):\n", len(generated.ModuleContracts))
+		for name, content := range generated.ModuleContracts {
+			filename := fmt.Sprintf("%s_CONTRACT.json", name)
 			path := filepath.Join(kontextDir, "module_contracts", filename)
-			if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+			if err := writeJSONFile(path, content); err != nil {
 				return fmt.Errorf("写入 %s 失败: %w", path, err)
 			}
 			fmt.Printf("    已创建: %s\n", path)
@@ -403,10 +394,10 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 	return nil
 }
 
-// ValidateYAML 校验字符串是否为合法的 YAML。
-func ValidateYAML(content string) error {
+// ValidateJSON 校验字符串是否为合法的 JSON。
+func ValidateJSON(content string) error {
 	var out interface{}
-	return yaml.Unmarshal([]byte(content), &out)
+	return json.Unmarshal([]byte(content), &out)
 }
 
 // interviewStep 执行一轮 LLM 对话，优先使用 JSON Schema 结构化输出解析 InterviewResponse，失败时回退到文本解析。
@@ -435,8 +426,8 @@ func interviewStep(
 	return resp, parsed, nil
 }
 
-// GenerateStructuredYAML 调用 LLM 生成结构化 YAML，优先使用 JSON Schema 结构化输出，失败时回退到文本解析。
-func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
+// GenerateStructuredContent 调用 LLM 生成结构化内容，优先使用 JSON Schema 结构化输出，失败时回退到文本解析。
+func GenerateStructuredContent(client llm.Client, systemPrompt, userMsg string) (*GeneratedContent, error) {
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -444,8 +435,8 @@ func GenerateStructuredYAML(client llm.Client, systemPrompt, userMsg string) (*G
 		},
 	}
 
-	var structured GeneratedYAML
-	if _, err := client.ChatStructured(req, "generated_yaml", &structured); err == nil {
+	var structured GeneratedContent
+	if _, err := client.ChatStructured(req, "generated_content", &structured); err == nil {
 		return &structured, nil
 	} else {
 		generated, fallbackErr := generateJSONWithRetry(client, systemPrompt, userMsg)
@@ -564,7 +555,7 @@ func ParseModuleDependencyGraph(content string) (*ModuleDependencyGraph, error) 
 }
 
 // generateJSONWithRetry 使用文本模式调用 LLM 生成 JSON，作为 JSON Schema 结构化输出的回退方案。
-func generateJSONWithRetry(client llm.Client, systemPrompt, userMsg string) (*GeneratedYAML, error) {
+func generateJSONWithRetry(client llm.Client, systemPrompt, userMsg string) (*GeneratedContent, error) {
 	resp, err := client.Chat(&llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -614,8 +605,8 @@ func RenderTemplate(tmpl string, data interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-// GenerateSingleYAML 通用单文件生成函数，用于分步生成配置文件。内置重试机制。
-func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string, error) {
+// GenerateSingleJSON 通用单文件生成函数，用于分步生成配置文件。内置重试机制。
+func GenerateSingleJSON(client llm.Client, systemPrompt, userMsg string) (string, error) {
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -633,9 +624,9 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 		}
 
 		// 优先尝试 JSON Schema 结构化输出
-		var structured SingleFileYAML
-		if _, err := client.ChatStructured(req, "single_file_yaml", &structured); err == nil {
-			if content, valErr := firstValidYAMLCandidate(structured.Content); valErr == nil {
+		var structured SingleFileContent
+		if _, err := client.ChatStructured(req, "single_file_content", &structured); err == nil {
+			if content, valErr := firstValidJSONCandidate(structured.Content); valErr == nil {
 				return content, nil
 			} else if strings.TrimSpace(structured.Content) != "" {
 				lastErr = fmt.Errorf("JSON 结构化输出中的内容不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
@@ -652,19 +643,19 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 		// 尝试解析 JSON 响应
 		parsed, err := ParseSingleFileJSON(resp.Content)
 		if err == nil {
-			if content, valErr := firstValidYAMLCandidate(parsed.Content); valErr == nil {
+			if content, valErr := firstValidJSONCandidate(parsed.Content); valErr == nil {
 				return content, nil
 			} else if strings.TrimSpace(parsed.Content) != "" {
-				lastErr = fmt.Errorf("响应中的 YAML 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+				lastErr = fmt.Errorf("响应中的 JSON 不合法 (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
 				continue
 			}
 		}
 
-		// 解析失败，尝试直接提取 YAML 内容
-		if content, valErr := firstValidYAMLCandidate(resp.Content, extractYAMLFromResponse(resp.Content)); valErr == nil {
+		// 解析失败，尝试直接提取 JSON 内容
+		if content, valErr := firstValidJSONCandidate(resp.Content, extractJSONFromRawResponse(resp.Content)); valErr == nil {
 			return content, nil
 		} else if strings.TrimSpace(resp.Content) != "" {
-			lastErr = fmt.Errorf("LLM 返回了内容，但未能提取合法 YAML (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
+			lastErr = fmt.Errorf("LLM 返回了内容，但未能提取合法 JSON (尝试 %d/%d): %w", attempt+1, maxRetries, valErr)
 			continue
 		}
 
@@ -674,8 +665,8 @@ func GenerateSingleYAML(client llm.Client, systemPrompt, userMsg string) (string
 	return "", lastErr
 }
 
-// firstValidYAMLCandidate 从多个候选字符串中返回第一个合法的 YAML 内容。
-func firstValidYAMLCandidate(candidates ...string) (string, error) {
+// firstValidJSONCandidate 从多个候选字符串中返回第一个合法的 JSON 内容。
+func firstValidJSONCandidate(candidates ...string) (string, error) {
 	var lastErr error
 
 	for _, candidate := range candidates {
@@ -684,7 +675,7 @@ func firstValidYAMLCandidate(candidates ...string) (string, error) {
 			continue
 		}
 
-		if err := ValidateYAML(candidate); err == nil {
+		if err := ValidateJSON(candidate); err == nil {
 			return candidate, nil
 		} else {
 			lastErr = err
@@ -698,7 +689,7 @@ func firstValidYAMLCandidate(candidates ...string) (string, error) {
 }
 
 // GenerateModuleContract 生成单个模块的契约文件，支持自动重试。
-func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, moduleName string) (*ModuleContractYAML, error) {
+func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, moduleName string) (*ModuleContractContent, error) {
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -717,8 +708,8 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 		}
 
 		// 优先尝试 JSON Schema 结构化输出
-		var structured ModuleContractYAML
-		if _, err := client.ChatStructured(req, "module_contract_yaml", &structured); err == nil {
+		var structured ModuleContractContent
+		if _, err := client.ChatStructured(req, "module_contract_content", &structured); err == nil {
 			// 如果 LLM 返回的模块名为空，使用传入的模块名
 			if structured.ModuleName == "" {
 				structured.ModuleName = moduleName
@@ -742,12 +733,12 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 			return parsed, nil
 		}
 
-		// 解析失败，尝试直接提取 YAML 内容
-		yamlContent := extractYAMLFromResponse(resp.Content)
-		if yamlContent != "" {
-			return &ModuleContractYAML{
+		// 尝试直接提取 JSON 内容
+		jsonContent := extractJSONFromRawResponse(resp.Content)
+		if jsonContent != "" {
+			return &ModuleContractContent{
 				ModuleName: moduleName,
-				Content:    yamlContent,
+				Content:    jsonContent,
 			}, nil
 		}
 
@@ -757,15 +748,14 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 	return nil, lastErr
 }
 
-// extractYAMLFromResponse 尝试从 LLM 响应中提取 YAML 内容。
-// 处理各种可能的格式：纯 YAML、markdown 代码块包裹的 YAML 等。
-func extractYAMLFromResponse(content string) string {
+// extractJSONFromRawResponse 尝试从 LLM 响应中提取 JSON 内容。
+// 处理各种可能的格式：纯 JSON、markdown 代码块包裹的 JSON 等。
+func extractJSONFromRawResponse(content string) string {
 	content = strings.TrimSpace(content)
 
 	// 尝试提取 markdown 代码块中的内容
-	// 匹配 ```yaml ... ``` 或 ``` ... ```
 	patterns := []string{
-		"(?s)```yaml\\s*\\n(.+?)\\n```",
+		"(?s)```json\\s*\\n(.+?)\\n```",
 		"(?s)```\\s*\\n(.+?)\\n```",
 	}
 
@@ -776,10 +766,8 @@ func extractYAMLFromResponse(content string) string {
 		}
 	}
 
-	// 检查是否以 YAML 常见开头开始（module:, name:, 等）
-	if strings.HasPrefix(content, "module:") ||
-		strings.HasPrefix(content, "# ") ||
-		strings.HasPrefix(content, "---") {
+	// 检查是否以 JSON 常见开头开始
+	if strings.HasPrefix(content, "{") || strings.HasPrefix(content, "[") {
 		return content
 	}
 
@@ -840,7 +828,7 @@ func GenerateModuleContractStream(
 	systemPrompt, userMsg string,
 	moduleName string,
 	onStream func(ModuleContractStreamEvent),
-) (*ModuleContractYAML, error) {
+) (*ModuleContractContent, error) {
 	req := &llm.ChatRequest{
 		Messages: []llm.Message{
 			{Role: "system", Content: systemPrompt},
@@ -865,8 +853,8 @@ func GenerateModuleContractStream(
 		}
 
 		// 优先尝试 JSON Schema 结构化输出
-		var structured ModuleContractYAML
-		if _, err := client.ChatStructured(req, "module_contract_yaml", &structured); err == nil {
+		var structured ModuleContractContent
+		if _, err := client.ChatStructured(req, "module_contract_content", &structured); err == nil {
 			if structured.ModuleName == "" {
 				structured.ModuleName = moduleName
 			}
@@ -915,8 +903,8 @@ func GenerateModuleContractStream(
 			return parsed, nil
 		}
 
-		// 尝试直接提取 YAML 内容
-		finalContent := extractYAMLFromResponse(resp.Content)
+		// 尝试直接提取 JSON 内容
+		finalContent := extractJSONFromRawResponse(resp.Content)
 		if finalContent == "" {
 			trimmed := strings.TrimSpace(resp.Content)
 			if trimmed != "" {
@@ -945,7 +933,7 @@ func GenerateModuleContractStream(
 			})
 		}
 
-		return &ModuleContractYAML{
+		return &ModuleContractContent{
 			ModuleName: moduleName,
 			Content:    finalContent,
 		}, nil

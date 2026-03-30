@@ -36,10 +36,10 @@ func ParseInterviewResponse(raw string) (*InterviewResponse, error) {
 }
 
 // ParseGeneratedJSON 解析生成阶段 LLM 的 JSON 响应。
-func ParseGeneratedJSON(raw string) (*GeneratedYAML, error) {
+func ParseGeneratedJSON(raw string) (*GeneratedContent, error) {
 	cleaned := stripCodeBlock(raw)
 
-	var result GeneratedYAML
+	var result GeneratedContent
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, err
 	}
@@ -72,10 +72,10 @@ func ParseSelectedFiles(raw string) (*SelectedFiles, error) {
 }
 
 // ParseSingleFileJSON 解析分步生成单个文件的 JSON 响应。
-func ParseSingleFileJSON(raw string) (*SingleFileYAML, error) {
+func ParseSingleFileJSON(raw string) (*SingleFileContent, error) {
 	cleaned := stripCodeBlock(raw)
 
-	var result SingleFileYAML
+	var result SingleFileContent
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, err
 	}
@@ -84,10 +84,10 @@ func ParseSingleFileJSON(raw string) (*SingleFileYAML, error) {
 }
 
 // ParseModuleContractJSON 解析单个模块契约生成的 JSON 响应。
-func ParseModuleContractJSON(raw string) (*ModuleContractYAML, error) {
+func ParseModuleContractJSON(raw string) (*ModuleContractContent, error) {
 	cleaned := stripCodeBlock(raw)
 
-	var result ModuleContractYAML
+	var result ModuleContractContent
 	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
 		return nil, err
 	}

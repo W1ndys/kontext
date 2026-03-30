@@ -461,11 +461,30 @@ func stripJSONCodeBlock(s string) string {
 	return s
 }
 
+// stripThinkingTokens 移除 LLM 响应中的 thinking tokens（如 <think>...</think>）。
+// 某些模型（如 DeepSeek、Qwen 等通过中转站调用的模型）会在响应开头输出思考过程，
+// 用 <think>...</think> 标签包裹，需要在 JSON 解析前移除。
+func stripThinkingTokens(s string) string {
+	// 移除所有 <think>...</think> 块（包括嵌套和多个块）
+	re := regexp.MustCompile(`(?si)<think>.*?</think>`)
+	cleaned := re.ReplaceAllString(s, "")
+	// 也处理未闭合的 <think>... 标签（LLM 可能被截断）
+	if idx := strings.Index(strings.ToLower(cleaned), "<think>"); idx >= 0 {
+		cleaned = cleaned[:idx]
+	}
+	return strings.TrimSpace(cleaned)
+}
+
 // extractJSONFromText 从混合文本中提取 JSON 对象或数组。
 // 兼容某些模型（如通过中转站调用的 Claude）在返回结构化输出时，
 // 先输出思考过程文本再输出 JSON 的情况。
 func extractJSONFromText(s string) string {
-	trimmed := strings.TrimSpace(s)
+	// 先移除 thinking tokens
+	trimmed := stripThinkingTokens(s)
+	trimmed = strings.TrimSpace(trimmed)
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(s)
+	}
 	// 如果已经以 { 或 [ 开头，无需提取
 	if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
 		return trimmed

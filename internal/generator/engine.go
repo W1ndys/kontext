@@ -749,8 +749,10 @@ func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, mod
 }
 
 // extractJSONFromRawResponse 尝试从 LLM 响应中提取 JSON 内容。
-// 处理各种可能的格式：纯 JSON、markdown 代码块包裹的 JSON 等。
+// 处理各种可能的格式：纯 JSON、markdown 代码块包裹的 JSON、包含 thinking tokens 的内容等。
 func extractJSONFromRawResponse(content string) string {
+	// 先移除 thinking tokens
+	content = stripThinkingTokens(content)
 	content = strings.TrimSpace(content)
 
 	// 尝试提取 markdown 代码块中的内容
@@ -906,8 +908,10 @@ func GenerateModuleContractStream(
 		// 尝试直接提取 JSON 内容
 		finalContent := extractJSONFromRawResponse(resp.Content)
 		if finalContent == "" {
-			trimmed := strings.TrimSpace(resp.Content)
-			if trimmed != "" {
+			// 如果提取失败，尝试清洗 thinking tokens 后再检查
+			trimmed := stripThinkingTokens(resp.Content)
+			trimmed = strings.TrimSpace(trimmed)
+			if trimmed != "" && (strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[")) {
 				finalContent = trimmed
 			}
 		}

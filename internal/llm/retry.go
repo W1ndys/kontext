@@ -170,5 +170,10 @@ func isRetryableError(err error) bool {
 		}
 	}
 
+	// JSON 解析错误（代理端响应损坏，重试大概率成功）
+	if strings.Contains(errStr, "解析结构化输出失败") {
+		return true
+	}
+
 	return false
 }

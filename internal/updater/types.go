@@ -40,7 +40,7 @@ const (
 	ProgressLLMStart           ProgressStage = "llm_start"
 	ProgressLLMTick            ProgressStage = "llm_tick"
 	ProgressStructuredFallback ProgressStage = "structured_fallback"
-	ProgressYAMLRetry          ProgressStage = "yaml_retry"
+	ProgressJSONRetry          ProgressStage = "json_retry"
 	ProgressActionDone         ProgressStage = "action_done"
 )
 

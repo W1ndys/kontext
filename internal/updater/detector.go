@@ -77,7 +77,7 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 			continue
 		}
 
-		contractPath := filepath.Join(kontextDir, "module_contracts", moduleName+"_CONTRACT.yaml")
+		contractPath := filepath.Join(kontextDir, "module_contracts", moduleName+"_CONTRACT.json")
 		contractFresh := isContractFresherThanSource(contractPath, projectDir, modules[moduleName])
 
 		if details := detectStaleContract(contract, moduleSummaries[moduleName], contractFresh); details != "" {

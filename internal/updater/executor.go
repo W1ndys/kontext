@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,6 @@ import (
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/templates"
-	"go.yaml.in/yaml/v4"
 )
 
 const (
@@ -27,9 +27,9 @@ type actionResult struct {
 	err        error
 }
 
-// UpdatedYAML 是 LLM 更新制品时返回的 JSON 结构。
-type UpdatedYAML struct {
-	Content string `json:"content"` // 更新后的 YAML 文本
+// UpdatedContent 是 LLM 更新制品时返回的 JSON 结构。
+type UpdatedContent struct {
+	Content string `json:"content"` // 更新后的 JSON 文本
 }
 
 // Executor 执行 update 计划。
@@ -192,7 +192,7 @@ func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAc
 	return updated, firstErr
 }
 
-// generateContent 为单个更新动作生成新的 YAML 内容，含 LLM 调用和语义校验。
+// generateContent 为单个更新动作生成新的 JSON 内容，含 LLM 调用和语义校验。
 func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
 	// 契约类型使用分段生成策略，避免单次输出过长被截断
 	if strings.HasPrefix(action.Target, "contract:") {
@@ -203,9 +203,9 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	if err != nil {
 		return "", err
 	}
-	currentYAML := readTextIfExists(currentPath)
+	currentJSON := readTextIfExists(currentPath)
 
-	userPrompt, allowEmpty, err := e.renderUserPrompt(report, action, currentYAML)
+	userPrompt, allowEmpty, err := e.renderUserPrompt(report, action, currentJSON)
 	if err != nil {
 		return "", err
 	}
@@ -228,7 +228,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		})
 
 		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-		resp, content, err := e.generateYAMLContent(req)
+		resp, content, err := e.generateJSONContent(req)
 		stopHeartbeat()
 		if err != nil {
 			return "", err
@@ -243,7 +243,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		} else {
 			lastValidationErr = validateErr
 			e.emitProgress(ProgressEvent{
-				Stage:      ProgressYAMLRetry,
+				Stage:      ProgressJSONRetry,
 				Action:     action,
 				Index:      index,
 				Total:      total,
@@ -252,7 +252,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 			})
 			req.Messages = append(req.Messages,
 				llm.Message{Role: "assistant", Content: resp.Content},
-				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的内容无法解析：%v。请保持最小修改，以 JSON 格式返回 {\"content\": \"完整、合法的 YAML 文本\"}。", validateErr)},
+				llm.Message{Role: "user", Content: fmt.Sprintf("上一次返回的内容无法解析：%v。请保持最小修改，以 JSON 格式返回 {\"content\": \"完整、合法的 JSON 文本\"}。", validateErr)},
 			)
 		}
 	}
@@ -260,7 +260,7 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	return "", fmt.Errorf("LLM 返回的内容仍不合法: %w", lastValidationErr)
 }
 
-// generateContractInParts 分三段生成模块契约 YAML，避免单次输出过长被截断。
+// generateContractInParts 分三段生成模块契约 JSON，避免单次输出过长被截断。
 // Part 1: module + owns + not_responsible_for + depends_on
 // Part 2a: public_interface
 // Part 2b: modification_rules
@@ -270,20 +270,20 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 	if err != nil {
 		return "", err
 	}
-	currentYAML := readTextIfExists(currentPath)
+	currentJSON := readTextIfExists(currentPath)
 	moduleName := action.Module
 	changes := formatContractChanges(report.ContractChanges, moduleName)
 	codeSummary := fallbackText(report.ModuleSummaries[moduleName], "当前没有可用的代码摘要")
 
 	// 对于已删除模块，直接使用原有的完整模板（输出为空字符串，无需分段）
 	if action.ChangeType == "deleted_module" {
-		return e.generateContractSinglePass(report, action, index, total, targetPath, currentYAML)
+		return e.generateContractSinglePass(report, action, index, total, targetPath, currentJSON)
 	}
 
 	// Part 1: module + owns + not_responsible_for + depends_on
 	part1Prompt, err := generator.RenderTemplate(templates.UpdateContractPart1, map[string]any{
 		"ModuleName":  moduleName,
-		"CurrentYAML": fallbackYAML(currentYAML),
+		"CurrentJSON": fallbackJSON(currentJSON),
 		"Changes":     changes,
 		"CodeSummary": codeSummary,
 	})
@@ -315,8 +315,8 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 	// Part 2a: public_interface
 	part2aPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2a, map[string]any{
 		"ModuleName":  moduleName,
-		"Part1YAML":   part1Content,
-		"CurrentYAML": fallbackYAML(currentYAML),
+		"Part1JSON":   part1Content,
+		"CurrentJSON": fallbackJSON(currentJSON),
 		"CodeSummary": codeSummary,
 	})
 	if err != nil {
@@ -340,11 +340,11 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 	}
 
 	// Part 2b: modification_rules
-	precedingYAML := strings.TrimRight(part1Content, "\n") + "\n\n" + strings.TrimLeft(part2aContent, "\n")
+	precedingJSON := strings.TrimRight(part1Content, "\n") + "\n\n" + strings.TrimLeft(part2aContent, "\n")
 	part2bPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2b, map[string]any{
 		"ModuleName":    moduleName,
-		"PrecedingYAML": precedingYAML,
-		"CurrentYAML":   fallbackYAML(currentYAML),
+		"PrecedingJSON": precedingJSON,
+		"CurrentJSON":   fallbackJSON(currentJSON),
 	})
 	if err != nil {
 		return "", fmt.Errorf("渲染 Part2b 模板失败: %w", err)
@@ -366,7 +366,7 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		return "", fmt.Errorf("生成契约 Part2b 失败: %w", err)
 	}
 
-	// 拼接三段 YAML 并校验
+	// 拼接三段 JSON 并校验
 	merged := strings.TrimRight(part1Content, "\n") + "\n\n" +
 		strings.TrimLeft(strings.TrimRight(part2aContent, "\n"), "\n") + "\n\n" +
 		strings.TrimLeft(part2bContent, "\n")
@@ -378,7 +378,7 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 	return merged, nil
 }
 
-// generateContractPartWithCorrection 调用 LLM 生成契约的某一段 YAML，
+// generateContractPartWithCorrection 调用 LLM 生成契约的某一段 JSON，
 // 若 JSON 解析失败则追加错误到对话让 LLM 修正，最多修正 2 次。
 func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt string, action UpdateAction, index, total int, targetPath string) (string, error) {
 	req := &llm.ChatRequest{
@@ -391,8 +391,8 @@ func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt s
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-		var result UpdatedYAML
-		resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &result, 1, nil)
+		var result UpdatedContent
+		resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_content", &result, 1, nil)
 		stopHeartbeat()
 
 		if err == nil {
@@ -404,7 +404,7 @@ func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt s
 		// 构造修正消息：将错误信息追加到对话，让 LLM 修正 JSON 格式
 		// 即使拿不到原始响应，也可以通过追加错误提示让 LLM 重新生成
 		e.emitProgress(ProgressEvent{
-			Stage:      ProgressYAMLRetry,
+			Stage:      ProgressJSONRetry,
 			Action:     action,
 			Index:      index,
 			Total:      total,
@@ -420,7 +420,7 @@ func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt s
 		}
 		req.Messages = append(req.Messages,
 			llm.Message{Role: "user", Content: fmt.Sprintf(
-				"上一次返回的 JSON 解析失败：%v。请重新以合法 JSON 格式返回 {\"content\": \"YAML 文本\"}，注意 content 值中的双引号和特殊字符必须正确转义。",
+				"上一次返回的 JSON 解析失败：%v。请重新以合法 JSON 格式返回 {\"content\": \"JSON 文本\"}，注意 content 值中的双引号和特殊字符必须正确转义。",
 				err,
 			)},
 		)
@@ -430,11 +430,11 @@ func (e *Executor) generateContractPartWithCorrection(systemPrompt, userPrompt s
 }
 
 // generateContractSinglePass 使用原有的完整模板生成契约（用于已删除模块等简单场景）。
-func (e *Executor) generateContractSinglePass(report *ChangeReport, action UpdateAction, index, total int, targetPath, currentYAML string) (string, error) {
+func (e *Executor) generateContractSinglePass(report *ChangeReport, action UpdateAction, index, total int, targetPath, currentJSON string) (string, error) {
 	moduleName := action.Module
 	prompt, err := generator.RenderTemplate(templates.UpdateContract, map[string]any{
 		"ModuleName":  moduleName,
-		"CurrentYAML": fallbackYAML(currentYAML),
+		"CurrentJSON": fallbackJSON(currentJSON),
 		"Changes":     formatContractChanges(report.ContractChanges, moduleName),
 		"CodeSummary": fallbackText(report.ModuleSummaries[moduleName], "当前没有可用的代码摘要"),
 	})
@@ -458,7 +458,7 @@ func (e *Executor) generateContractSinglePass(report *ChangeReport, action Updat
 	})
 
 	stopHeartbeat := e.startLLMHeartbeat(action, index, total, targetPath)
-	_, content, err := e.generateYAMLContent(req)
+	_, content, err := e.generateJSONContent(req)
 	stopHeartbeat()
 	if err != nil {
 		return "", err
@@ -475,10 +475,10 @@ func (e *Executor) generateContractSinglePass(report *ChangeReport, action Updat
 	return content, nil
 }
 
-// generateYAMLContent 调用 LLM 生成 YAML 内容，通过 JSON 结构化输出返回。
-func (e *Executor) generateYAMLContent(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
-	var result UpdatedYAML
-	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_yaml", &result, 3, nil)
+// generateJSONContent 调用 LLM 生成 JSON 内容，通过 JSON 结构化输出返回。
+func (e *Executor) generateJSONContent(req *llm.ChatRequest) (*llm.ChatResponse, string, error) {
+	var result UpdatedContent
+	resp, err := llm.ChatStructuredWithRetry(e.client, req, "updated_content", &result, 3, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("调用 LLM 生成内容失败: %w", err)
 	}
@@ -487,18 +487,18 @@ func (e *Executor) generateYAMLContent(req *llm.ChatRequest) (*llm.ChatResponse,
 }
 
 // emitProgress 触发进度回调通知。
-func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, currentYAML string) (string, bool, error) {
+func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, currentJSON string) (string, bool, error) {
 	switch action.Target {
 	case "architecture":
 		prompt, err := generator.RenderTemplate(templates.UpdateArchitecture, map[string]any{
-			"CurrentYAML": fallbackYAML(currentYAML),
+			"CurrentJSON": fallbackJSON(currentJSON),
 			"Changes":     formatDirectoryChanges(report.DirectoryChanges),
 			"Packages":    strings.Join(report.PackagePaths, "\n"),
 		})
 		return prompt, false, err
 	case "manifest":
 		prompt, err := generator.RenderTemplate(templates.UpdateManifest, map[string]any{
-			"CurrentYAML": fallbackYAML(currentYAML),
+			"CurrentJSON": fallbackJSON(currentJSON),
 			"Reasons":     strings.Join(report.ManifestReasons, "\n"),
 			"Signals":     formatManifestSignals(report),
 		})
@@ -508,7 +508,7 @@ func (e *Executor) renderUserPrompt(report *ChangeReport, action UpdateAction, c
 			moduleName := action.Module
 			prompt, err := generator.RenderTemplate(templates.UpdateContract, map[string]any{
 				"ModuleName":  moduleName,
-				"CurrentYAML": fallbackYAML(currentYAML),
+				"CurrentJSON": fallbackJSON(currentJSON),
 				"Changes":     formatContractChanges(report.ContractChanges, moduleName),
 				"CodeSummary": fallbackText(report.ModuleSummaries[moduleName], "当前没有可用的代码摘要"),
 			})
@@ -531,11 +531,11 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 		return nil
 	}
 
-	normalized, err := generator.NormalizeYAML(content)
+	formatted, err := generator.FormatJSON(content)
 	if err != nil {
-		return fmt.Errorf("生成的 YAML 格式不合法: %w", err)
+		return fmt.Errorf("生成的 JSON 格式不合法: %w", err)
 	}
-	return fileutil.WriteFile(targetPath, []byte(normalized))
+	return fileutil.WriteFile(targetPath, []byte(formatted))
 }
 
 // backupIfExists 如果目标文件存在则备份到 backup/ 目录。
@@ -592,12 +592,12 @@ func (e *Executor) pruneBackups() error {
 func (e *Executor) targetPath(action UpdateAction) (string, error) {
 	switch action.Target {
 	case "architecture":
-		return filepath.Join(e.kontextDir, "ARCHITECTURE_MAP.yaml"), nil
+		return filepath.Join(e.kontextDir, "ARCHITECTURE_MAP.json"), nil
 	case "manifest":
-		return filepath.Join(e.kontextDir, "PROJECT_MANIFEST.yaml"), nil
+		return filepath.Join(e.kontextDir, "PROJECT_MANIFEST.json"), nil
 	default:
 		if strings.HasPrefix(action.Target, "contract:") {
-			return filepath.Join(e.kontextDir, "module_contracts", fmt.Sprintf("%s_CONTRACT.yaml", action.Module)), nil
+			return filepath.Join(e.kontextDir, "module_contracts", fmt.Sprintf("%s_CONTRACT.json", action.Module)), nil
 		}
 	}
 	return "", fmt.Errorf("未知目标: %s", action.Target)
@@ -643,8 +643,8 @@ func formatManifestSignals(report *ChangeReport) string {
 	return strings.Join(lines, "\n")
 }
 
-// fallbackYAML 若内容为空则返回占位注释。
-func fallbackYAML(content string) string {
+// fallbackJSON 若内容为空则返回占位注释。
+func fallbackJSON(content string) string {
 	if strings.TrimSpace(content) == "" {
 		return "# 当前文件为空"
 	}
@@ -678,16 +678,16 @@ func (e *Executor) emitProgress(event ProgressEvent) {
 	}
 }
 
-// validateGeneratedContent 校验生成的 YAML 内容是否合法且符合对应结构。
+// validateGeneratedContent 校验生成的 JSON 内容是否合法且符合对应结构。
 func validateGeneratedContent(action UpdateAction, content string) error {
-	if err := generator.ValidateYAML(content); err != nil {
+	if err := generator.ValidateJSON(content); err != nil {
 		return err
 	}
 
 	switch {
 	case action.Target == "manifest":
 		var manifest schema.ProjectManifest
-		if err := yaml.Unmarshal([]byte(content), &manifest); err != nil {
+		if err := json.Unmarshal([]byte(content), &manifest); err != nil {
 			return fmt.Errorf("manifest 结构不合法: %w", err)
 		}
 		if strings.TrimSpace(manifest.Project.Name) == "" {
@@ -695,12 +695,12 @@ func validateGeneratedContent(action UpdateAction, content string) error {
 		}
 	case action.Target == "architecture":
 		var arch schema.ArchitectureMap
-		if err := yaml.Unmarshal([]byte(content), &arch); err != nil {
+		if err := json.Unmarshal([]byte(content), &arch); err != nil {
 			return fmt.Errorf("architecture 结构不合法: %w", err)
 		}
 	case strings.HasPrefix(action.Target, "contract:"):
 		var contract schema.ModuleContract
-		if err := yaml.Unmarshal([]byte(content), &contract); err != nil {
+		if err := json.Unmarshal([]byte(content), &contract); err != nil {
 			return fmt.Errorf("contract 结构不合法: %w", err)
 		}
 		if err := contract.Validate(); err != nil {

@@ -600,6 +600,12 @@ func FilterFilesByModule(files map[string]string, moduleName string) map[string]
 	return result
 }
 
+// namespaceDirectories 是命名空间目录：子目录名即模块名（适用于多种语言的项目结构）。
+var namespaceDirectories = map[string]bool{
+	"internal": true, "pkg": true, "src": true, "lib": true,
+	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
+}
+
 // BelongsToModule 判断文件路径是否属于指定模块。
 func BelongsToModule(filePath, moduleName string) bool {
 	normalized := filepath.ToSlash(filePath)
@@ -609,13 +615,13 @@ func BelongsToModule(filePath, moduleName string) bool {
 		return false
 	}
 
-	// cmd/xxx.go → 属于 cmd 模块
+	// 顶层目录匹配（如 cmd/xxx → 属于 cmd 模块）
 	if parts[0] == moduleName {
 		return true
 	}
 
-	// internal/config/xxx.go → 属于 config 模块
-	if len(parts) >= 2 && (parts[0] == "internal" || parts[0] == "pkg") {
+	// 命名空间目录匹配（如 internal/config/xxx → 属于 config 模块，src/auth/xxx → 属于 auth 模块）
+	if len(parts) >= 2 && namespaceDirectories[parts[0]] {
 		return parts[1] == moduleName
 	}
 

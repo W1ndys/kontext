@@ -1029,6 +1029,17 @@ func normalizeModuleName(pkg string) string {
 	return ""
 }
 
+// 命名空间目录：子目录名即模块名（适用于多种语言的项目结构）
+var namespaceDirectories = map[string]bool{
+	"internal": true, "pkg": true, "src": true, "lib": true,
+	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
+}
+
+// 直接模块目录：目录本身即模块名
+var directModuleDirectories = map[string]bool{
+	"cmd": true, "bin": true, "scripts": true, "templates": true,
+}
+
 // fallbackExtractModules 使用目录规则扫描提取模块列表（作为回退方案）。
 func fallbackExtractModules(allFiles []string) []string {
 	moduleSet := make(map[string]bool)
@@ -1039,17 +1050,11 @@ func fallbackExtractModules(allFiles []string) []string {
 			continue
 		}
 
-		if parts[0] == "internal" && len(parts) >= 2 {
+		if namespaceDirectories[parts[0]] && len(parts) >= 2 {
 			moduleSet[parts[1]] = true
 		}
-		if parts[0] == "cmd" {
-			moduleSet["cmd"] = true
-		}
-		if parts[0] == "pkg" && len(parts) >= 2 {
-			moduleSet[parts[1]] = true
-		}
-		if parts[0] == "templates" {
-			moduleSet["templates"] = true
+		if directModuleDirectories[parts[0]] {
+			moduleSet[parts[0]] = true
 		}
 	}
 

@@ -354,20 +354,32 @@ func containsFile(files []string, target string) bool {
 	return false
 }
 
-// deriveModuleName 从文件相对路径推导模块名（cmd->cmd, internal/x->x 等）。
+// 命名空间目录：子目录名即模块名（适用于多种语言的项目结构）。
+var namespaceDirectories = map[string]bool{
+	"internal": true, "pkg": true, "src": true, "lib": true,
+	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
+}
+
+// 直接模块目录：目录本身即模块名。
+var directModuleDirectories = map[string]bool{
+	"cmd": true, "bin": true, "scripts": true, "templates": true,
+}
+
+// deriveModuleName 从文件相对路径推导模块名。
 func deriveModuleName(relPath string) string {
 	normalized := filepath.ToSlash(relPath)
 	parts := strings.Split(normalized, "/")
 	if len(parts) == 0 {
 		return ""
 	}
-	if parts[0] == "cmd" {
-		return "cmd"
+	if directModuleDirectories[parts[0]] {
+		return parts[0]
 	}
-	if (parts[0] == "internal" || parts[0] == "pkg") && len(parts) > 1 {
+	if namespaceDirectories[parts[0]] && len(parts) > 1 {
 		return parts[1]
 	}
-	if strings.HasSuffix(normalized, ".go") {
+	// 根目录下的源码文件归属 main 模块
+	if len(parts) == 1 && isSourceFile(normalized) {
 		return "main"
 	}
 	return ""

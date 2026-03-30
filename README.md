@@ -189,7 +189,7 @@ $env:KONTEXT_LLM_TIMEOUT = "120"
 | `kontext init --scan --fresh` | 忽略缓存，强制重新扫描 |
 | `kontext init --scan --resume` | 从检查点继续（不询问） |
 | `kontext validate` | 校验 `.kontext/` 下的 YAML 文件 |
-| `kontext update` | 检测变更并更新物料 |
+| `kontext update` | 检测代码与物料偏差，确认后调用 LLM 更新 |
 | `kontext config` | 交互式配置向导 |
 | `kontext config set <key> <value>` | 设置配置项 |
 | `kontext config get <key>` | 获取配置项 |
@@ -255,6 +255,19 @@ kontext validate
 ```bash
 kontext update
 ```
+
+该命令不接收额外参数，执行流程如下：
+
+1. **变更检测**：扫描项目源码目录，与 `.kontext/` 中已有的物料进行比对
+   - 检查是否有新增或删除的包目录（对比 `ARCHITECTURE_MAP.yaml` 中的 `packages`）
+   - 检查模块契约是否过期（对比导出符号和 owns 条目）
+   - 检测是否存在缺少契约的新模块，或代码已删除但契约仍存在的废弃模块
+   - 检查 `PROJECT_MANIFEST.yaml` 是否因技术栈变化等信号需要更新
+2. **生成更新计划**：列出所有需要更新的物料及原因
+3. **用户确认**：展示计划并等待用户确认（`y/N`）
+4. **调用 LLM 执行更新**：逐个调用 LLM 重新生成受影响的 YAML 物料并写入文件
+
+如果未检测到任何变更，命令会直接提示"未检测到需要更新的物料"并退出。
 
 ## 最小可用示例
 

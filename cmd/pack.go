@@ -16,6 +16,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/packer"
+	"github.com/w1ndys/kontext/internal/ui"
 )
 
 var (
@@ -61,7 +62,7 @@ var packCmd = &cobra.Command{
 			"base_url", llmCfg.BaseURL,
 			"model", llmCfg.Model,
 		)
-		fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
+		ui.Info("使用 LLM: %s (模型: %s)", llmCfg.BaseURL, llmCfg.Model)
 
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
@@ -69,15 +70,30 @@ var packCmd = &cobra.Command{
 			return err
 		}
 
+		tracker := ui.NewTracker()
+		tracker.Start()
+
 		engine := packer.NewEngine(client, kontextDir, projectDir)
 		engine.DisableRefine = packNoRefine
 		engine.OutputPath = packOutput
+
+		var currentTask *ui.Task
 		engine.OnProgress = func(stage, total int, msg string) {
-			fmt.Fprintf(os.Stderr, "[%d/%d] %s\n", stage, total, msg)
+			if currentTask != nil {
+				currentTask.Done()
+			}
+			currentTask = tracker.AddTask(fmt.Sprintf("[%d/%d] %s", stage, total, msg))
+		}
+		engine.OnWarn = func(msg string) {
+			tracker.Interject(func() { ui.Warn("%s", msg) })
 		}
 
-		fmt.Fprintf(os.Stderr, "正在为任务打包上下文...\n")
 		outPath, err := engine.Pack(task)
+		if currentTask != nil {
+			currentTask.Done()
+		}
+		tracker.Stop()
+
 		if err != nil {
 			logger.Error("pack failed",
 				"error", err,
@@ -90,7 +106,7 @@ var packCmd = &cobra.Command{
 			"output_path", outPath,
 			"task_source", source,
 		)
-		fmt.Printf("Prompt 文档已保存至: %s\n", outPath)
+		ui.Success("Prompt 文档已保存至: %s", outPath)
 		return nil
 	},
 }

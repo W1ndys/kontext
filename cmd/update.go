@@ -4,14 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/internal/updater"
 )
 
@@ -19,7 +17,6 @@ var (
 	updateDryRun bool
 	updateFile   string
 	updateSince  string
-	updateUI     = newUpdateProgressUI()
 )
 
 var updateCmd = &cobra.Command{
@@ -84,28 +81,43 @@ var updateCmd = &cobra.Command{
 			"model", llmCfg.Model,
 			"planned_actions", len(actions),
 		)
-		fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
+		ui.Info("使用 LLM: %s (模型: %s)", llmCfg.BaseURL, llmCfg.Model)
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
 			logger.Error("create llm client failed", "error", err)
 			return err
 		}
 
-		updateUI.Start()
+		tracker := ui.NewTracker()
+		tracker.Start()
+		updateTasks := make(map[string]*ui.Task)
+
 		logger.Info("update execution started", "planned_actions", len(actions))
 		executor := updater.NewExecutor(client, defaultKontextDir, defaultProjectDir)
-		executor.SetProgressHandler(printUpdateProgress)
+		executor.SetProgressHandler(func(event updater.ProgressEvent) {
+			logUpdateProgress(event)
+			key := fmt.Sprintf("%d:%s", event.Index, event.Action.Target)
+			switch event.Stage {
+			case updater.ProgressActionStart:
+				task := tracker.AddTask(fmt.Sprintf("[%d/%d] 更新 %s", event.Index, event.Total, event.Action.Target))
+				updateTasks[key] = task
+			case updater.ProgressActionDone:
+				if task, ok := updateTasks[key]; ok {
+					task.Done()
+				}
+			}
+		})
 		updated, err := executor.Execute(report, actions)
-		updateUI.Stop()
+		tracker.Stop()
 		if err != nil {
 			logger.Error("update execution failed", "error", err)
 			return fmt.Errorf("执行更新失败: %w", err)
 		}
 
 		logger.Info("update completed", "updated_count", len(updated))
-		fmt.Println("已更新以下物料：")
+		ui.Success("已更新以下物料：")
 		for _, path := range updated {
-			fmt.Printf("  %s\n", path)
+			ui.Plain("  %s", path)
 		}
 		return nil
 	},
@@ -134,52 +146,52 @@ func normalizedUpdateFilter(filter string) string {
 
 // 打印 dry-run 模式下的完整变更检测报告
 func printUpdateReport(report *updater.ChangeReport, actions []updater.UpdateAction) {
-	fmt.Println("=== Kontext 物料变更检测报告 ===")
+	ui.Stage("=== Kontext 物料变更检测报告 ===")
 	fmt.Println()
 
-	fmt.Println("[目录结构变更]")
+	ui.Stage("[目录结构变更]")
 	if len(report.DirectoryChanges) == 0 {
 		fmt.Println("  无")
 	} else {
 		for _, change := range report.DirectoryChanges {
-			prefix := "~"
 			switch change.Type {
 			case "added":
-				prefix = "+"
+				ui.Success("  + %s", change.Path)
 			case "removed":
-				prefix = "-"
+				ui.Error("  - %s", change.Path)
+			default:
+				ui.Warn("  ~ %s", change.Path)
 			}
-			fmt.Printf("  %s %s\n", prefix, change.Path)
 		}
 	}
 
 	fmt.Println()
-	fmt.Println("[模块契约变更]")
+	ui.Stage("[模块契约变更]")
 	if len(report.ContractChanges) == 0 {
 		fmt.Println("  无")
 	} else {
 		for _, change := range report.ContractChanges {
-			prefix := "~"
 			switch change.Type {
 			case "new_module":
-				prefix = "+"
+				ui.Success("  + %s  (%s)", change.Module, change.Details)
 			case "deleted_module":
-				prefix = "-"
+				ui.Error("  - %s  (%s)", change.Module, change.Details)
+			default:
+				ui.Warn("  ~ %s  (%s)", change.Module, change.Details)
 			}
-			fmt.Printf("  %s %s  (%s)\n", prefix, change.Module, change.Details)
 		}
 	}
 
 	if len(report.ManifestReasons) > 0 {
 		fmt.Println()
-		fmt.Println("[Manifest 信号]")
+		ui.Stage("[Manifest 信号]")
 		for _, reason := range report.ManifestReasons {
 			fmt.Printf("  - %s\n", reason)
 		}
 	}
 
 	fmt.Println()
-	fmt.Println("[建议更新]")
+	ui.Stage("[建议更新]")
 	if len(actions) == 0 {
 		fmt.Println("  无")
 		return
@@ -209,8 +221,8 @@ func confirmPlannedUpdates() bool {
 	return answer == "y" || answer == "yes"
 }
 
-// 处理更新进度事件，记录日志并更新 UI
-func printUpdateProgress(event updater.ProgressEvent) {
+// logUpdateProgress 记录更新进度到结构化日志
+func logUpdateProgress(event updater.ProgressEvent) {
 	logger := namedLogger(commandPathUpdate)
 	switch event.Stage {
 	case updater.ProgressActionStart:
@@ -227,189 +239,7 @@ func printUpdateProgress(event updater.ProgressEvent) {
 			"index", event.Index,
 			"total", event.Total,
 			"target_path", event.TargetPath,
-			"duration_seconds", parseElapsedSeconds(event.Message),
 		)
 	}
-	updateUI.Handle(event)
 }
 
-type updateProgressUI struct {
-	mu         sync.Mutex
-	states     map[string]*updateTaskState
-	order      []string
-	tickerStop chan struct{}
-	tickerDone chan struct{}
-	rendered   int
-	running    bool
-	lastTotal  int
-}
-
-type updateTaskState struct {
-	index     int
-	total     int
-	target    string
-	startedAt time.Time
-	done      bool
-	doneText  string
-}
-
-// 创建更新进度 UI 实例
-func newUpdateProgressUI() *updateProgressUI {
-	return &updateProgressUI{
-		states: make(map[string]*updateTaskState),
-	}
-}
-
-// Start 启动进度 UI 的渲染循环
-func (ui *updateProgressUI) Start() {
-	ui.mu.Lock()
-	defer ui.mu.Unlock()
-
-	ui.states = make(map[string]*updateTaskState)
-	ui.order = nil
-	ui.rendered = 0
-	ui.lastTotal = 0
-	ui.tickerStop = make(chan struct{})
-	ui.tickerDone = make(chan struct{})
-	ui.running = true
-
-	go ui.loop(ui.tickerStop, ui.tickerDone)
-}
-
-// Stop 停止进度 UI 的渲染循环并输出最终状态
-func (ui *updateProgressUI) Stop() {
-	ui.mu.Lock()
-	if !ui.running {
-		ui.mu.Unlock()
-		return
-	}
-	stop := ui.tickerStop
-	done := ui.tickerDone
-	ui.running = false
-	ui.mu.Unlock()
-
-	close(stop)
-	<-done
-
-	ui.mu.Lock()
-	ui.renderLocked()
-	fmt.Println()
-	ui.mu.Unlock()
-}
-
-// 后台定时刷新进度显示的循环
-func (ui *updateProgressUI) loop(stop <-chan struct{}, done chan<- struct{}) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	defer close(done)
-
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			ui.mu.Lock()
-			ui.renderLocked()
-			ui.mu.Unlock()
-		}
-	}
-}
-
-// Handle 处理单个进度事件，更新任务状态并触发渲染
-func (ui *updateProgressUI) Handle(event updater.ProgressEvent) {
-	ui.mu.Lock()
-	defer ui.mu.Unlock()
-
-	key := ui.taskKey(event)
-	switch event.Stage {
-	case updater.ProgressActionStart:
-		if _, ok := ui.states[key]; !ok {
-			ui.order = append(ui.order, key)
-		}
-		ui.states[key] = &updateTaskState{
-			index:     event.Index,
-			total:     event.Total,
-			target:    event.Action.Target,
-			startedAt: time.Now(),
-		}
-		ui.lastTotal = event.Total
-	case updater.ProgressActionDone:
-		state, ok := ui.states[key]
-		if !ok {
-			state = &updateTaskState{
-				index:     event.Index,
-				total:     event.Total,
-				target:    event.Action.Target,
-				startedAt: time.Now(),
-			}
-			ui.states[key] = state
-			ui.order = append(ui.order, key)
-		}
-		state.done = true
-		state.doneText = event.Message
-		ui.lastTotal = event.Total
-	}
-
-	ui.renderLocked()
-}
-
-// 根据事件生成任务的唯一标识键
-func (ui *updateProgressUI) taskKey(event updater.ProgressEvent) string {
-	return fmt.Sprintf("%d:%s", event.Index, event.Action.Target)
-}
-
-// 在持锁状态下渲染所有任务行（覆盖式刷新）
-func (ui *updateProgressUI) renderLocked() {
-	lines := ui.linesLocked()
-	if ui.rendered > 0 {
-		fmt.Printf("\x1b[%dA", ui.rendered)
-	}
-	for i, line := range lines {
-		fmt.Print("\x1b[2K\r")
-		fmt.Print(line)
-		if i < len(lines)-1 {
-			fmt.Print("\n")
-		}
-	}
-	ui.rendered = len(lines)
-}
-
-// 在持锁状态下生成所有任务的显示行
-func (ui *updateProgressUI) linesLocked() []string {
-	if len(ui.order) == 0 {
-		return nil
-	}
-
-	lines := make([]string, 0, len(ui.order))
-	now := time.Now()
-	for _, key := range ui.order {
-		state := ui.states[key]
-		if state == nil {
-			continue
-		}
-		total := state.total
-		if total == 0 {
-			total = ui.lastTotal
-		}
-		if state.done {
-			lines = append(lines, fmt.Sprintf("[%d/%d] %s  更新完成(耗时%s)", state.index, total, state.target, state.doneText))
-			continue
-		}
-		elapsed := int(now.Sub(state.startedAt).Round(time.Second) / time.Second)
-		if elapsed < 1 {
-			elapsed = 1
-		}
-		lines = append(lines, fmt.Sprintf("[%d/%d] 更新 %s 中(%ds)", state.index, total, state.target, elapsed))
-	}
-	return lines
-}
-
-// 从耗时字符串中解析出秒数
-func parseElapsedSeconds(value string) int {
-	trimmed := strings.TrimSuffix(strings.TrimSpace(value), "s")
-	seconds, err := strconv.Atoi(trimmed)
-	if err != nil || seconds < 1 {
-		return 1
-	}
-	return seconds
-}

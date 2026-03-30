@@ -11,6 +11,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/ui"
 )
 
 // runInteractiveInit 交互式初始化，询问用户项目描述。
@@ -99,7 +100,7 @@ func runAIInit(description string) error {
 	}
 
 	fmt.Printf("使用 LLM: %s (模型: %s)\n", llmCfg.BaseURL, llmCfg.Model)
-	fmt.Println("正在分析项目需求...")
+	ui.Info("正在分析项目需求...")
 
 	if err := generator.RunInteractiveInit(client, description); err != nil {
 		logger.Error("ai init failed", "error", err)
@@ -158,7 +159,8 @@ func runStaticInitWithOverwrite() error {
 		fmt.Printf("    已创建: %s\n", path)
 	}
 
-	fmt.Println("\n.kontext/ 初始化完成！")
+	fmt.Println()
+	ui.Success(".kontext/ 初始化完成！")
 	fmt.Println("后续步骤：")
 	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.yaml 填写项目信息")
 	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.yaml 填写架构信息")

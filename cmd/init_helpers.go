@@ -6,30 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/w1ndys/kontext/internal/generator"
 )
-
-// spinnerAnimation 显示旋转加载动画，phases 为轮换展示的阶段文案。
-func spinnerAnimation(done <-chan struct{}, startTime time.Time, phases []string) {
-	dots := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	i := 0
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-done:
-			clearLine()
-			return
-		case <-ticker.C:
-			elapsed := time.Since(startTime).Seconds()
-			phase := phases[int(elapsed/15)%len(phases)]
-			fmt.Printf("\r   %s %s... (%.0f秒)", dots[i%len(dots)], phase, elapsed)
-			i++
-		}
-	}
-}
 
 // localAnalyzeFiles 使用本地规则识别文件（作为 LLM 识别的回退方案）。
 func localAnalyzeFiles(allFiles []string) *generator.AnalyzedFiles {
@@ -94,11 +73,6 @@ func printProgressWithFile(current, total int, label, filename string) {
 	}
 
 	fmt.Printf("\r   [%s] %3.0f%% %s: %-35s", bar, percent*100, label, displayName)
-}
-
-// clearLine 清除当前行
-func clearLine() {
-	fmt.Print("\r\033[K")
 }
 
 // printFileList 打印文件列表（带缩进和树形结构）

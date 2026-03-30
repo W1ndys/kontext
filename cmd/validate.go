@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/schema"
+	"github.com/w1ndys/kontext/internal/ui"
 )
 
 var validateCmd = &cobra.Command{
@@ -18,7 +19,7 @@ var validateCmd = &cobra.Command{
 		errs := schema.ValidateBundle(kontextDir)
 		if len(errs) == 0 {
 			logger.Info("validate succeeded", "dir", kontextDir)
-			fmt.Println("所有 .kontext/ 配置文件校验通过。")
+			ui.Success("所有 .kontext/ 配置文件校验通过。")
 			return nil
 		}
 
@@ -26,9 +27,9 @@ var validateCmd = &cobra.Command{
 			"dir", kontextDir,
 			"error_count", len(errs),
 		)
-		fmt.Printf("发现 %d 个校验错误：\n", len(errs))
+		ui.Error("发现 %d 个校验错误：", len(errs))
 		for i, err := range errs {
-			fmt.Printf("  %d. %s\n", i+1, err)
+			ui.Error("  %d. %s", i+1, err)
 		}
 		return fmt.Errorf("校验失败，共 %d 个错误", len(errs))
 	},

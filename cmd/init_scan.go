@@ -16,6 +16,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/templates"
 	"go.yaml.in/yaml/v4"
 )
@@ -36,6 +37,7 @@ type scanPipelineContext struct {
 	baseUserMsg     string
 	startStage      int
 	depGraphJSON    string // 仅当从阶段 9 恢复时需要预加载
+	tracker         *ui.Tracker
 }
 
 // scanStageData 保存阶段 1-5 的中间数据，供 fresh 与 resume 共用。
@@ -238,17 +240,20 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 	fmt.Printf("使用 LLM: %s (模型: %s)\n\n", llmCfg.BaseURL, llmCfg.Model)
 
 	totalStart := time.Now()
+	tracker := ui.NewTracker()
+	tracker.Start()
+	defer tracker.Stop()
 
 	// ===== 阶段 1：扫描目录树 =====
 	if startStage <= 1 {
-		fmt.Println("📁 阶段 1/9：扫描项目目录...")
+		ui.Stage("📁 阶段 1/9：扫描项目目录...")
 		data.allFiles, err = fileutil.ScanDirectoryTree(defaultProjectDir, defaultScanDepth)
 		if err != nil {
 			logger.Error("scan directory failed", "stage", 1, "error", err)
 			return fmt.Errorf("扫描项目目录失败: %w", err)
 		}
 		printProgress(len(data.allFiles), len(data.allFiles), "扫描文件")
-		fmt.Printf("\n   发现 %d 个文件\n\n", len(data.allFiles))
+		ui.Success("   发现 %d 个文件", len(data.allFiles))
 		logger.Info("scan stage completed",
 			"stage", 1,
 			"stage_name", "scan_directory",
@@ -261,7 +266,7 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 
 	// ===== 阶段 2：LLM 智能识别关键文件 =====
 	if startStage <= 2 {
-		fmt.Println("🧠 阶段 2/9：AI 分析目录结构，识别关键文件...")
+		ui.Stage("🧠 阶段 2/9：AI 分析目录结构，识别关键文件...")
 
 		treeStr := strings.Join(data.allFiles, "\n")
 		analyzeUserMsg, err := generator.RenderTemplate(templates.InitScanAnalyzeUser, map[string]interface{}{
@@ -272,29 +277,26 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 			return fmt.Errorf("渲染文件识别模板失败: %w", err)
 		}
 
-		done := make(chan struct{})
+		analyzeTask := tracker.AddTask("分析目录结构，识别关键文件")
 		analyzeStart := time.Now()
-		go spinnerAnimation(done, analyzeStart, []string{"分析目录结构", "识别配置文件", "筛选核心源码"})
 
 		analyzed, analyzeErr := generator.AnalyzeProjectFiles(client, templates.InitScanAnalyzeSystem, analyzeUserMsg)
-		close(done)
 		analyzeFallback := false
 		if analyzeErr != nil {
+			analyzeTask.Fail(analyzeErr)
 			analyzeFallback = true
 			logger.Warn("project file analysis failed; using local fallback",
 				"stage", 2,
 				"error", analyzeErr,
 			)
-			fmt.Println()
-			fmt.Println("   ⚠ AI 文件识别失败，回退到本地规则识别...")
+			ui.Warn("   ⚠ AI 文件识别失败，回退到本地规则识别...")
 			data.analyzed = localAnalyzeFiles(data.allFiles)
 		} else {
-			analyzeElapsed := time.Since(analyzeStart).Seconds()
-			fmt.Printf("\r   ✓ AI 识别完成 (耗时 %.1f 秒)\n", analyzeElapsed)
+			analyzeTask.Done()
 			data.analyzed = analyzed
 		}
 
-		fmt.Printf("   识别到 %d 个配置文件 + %d 个关键源码文件\n", len(data.analyzed.ConfigFiles), len(data.analyzed.SourceFiles))
+		ui.Plain("   识别到 %d 个配置文件 + %d 个关键源码文件", len(data.analyzed.ConfigFiles), len(data.analyzed.SourceFiles))
 		printFileListWithTitle("配置文件", data.analyzed.ConfigFiles, 8)
 		printFileListWithTitle("关键源码", data.analyzed.SourceFiles, 10)
 		fmt.Println()
@@ -313,7 +315,7 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 
 	// ===== 阶段 3：读取配置/依赖文件 =====
 	if startStage <= 3 {
-		fmt.Println("📄 阶段 3/9：读取配置/依赖文件...")
+		ui.Stage("📄 阶段 3/9：读取配置/依赖文件...")
 		data.configFiles = make(map[string]string)
 		var readConfigFiles []string
 		for i, f := range data.analyzed.ConfigFiles {
@@ -325,8 +327,8 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 				readConfigFiles = append(readConfigFiles, f)
 			}
 		}
-		clearLine()
-		fmt.Printf("   ✓ 成功读取 %d 个配置文件\n", len(data.configFiles))
+		fmt.Fprint(ui.Writer(), "\r\033[K")
+		ui.Success("   ✓ 成功读取 %d 个配置文件", len(data.configFiles))
 		printFileList(readConfigFiles, 10)
 		fmt.Println()
 		logger.Info("scan stage completed",
@@ -341,7 +343,7 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 
 	// ===== 阶段 4：提取源码概要 =====
 	if startStage <= 4 {
-		fmt.Println("📝 阶段 4/9：提取源码文件概要...")
+		ui.Stage("📝 阶段 4/9：提取源码文件概要...")
 		data.fileSummaries = make(map[string]string)
 		var extractedFiles []string
 		for i, f := range data.analyzed.SourceFiles {
@@ -352,8 +354,8 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 				extractedFiles = append(extractedFiles, f)
 			}
 		}
-		clearLine()
-		fmt.Printf("   ✓ 提取 %d 个文件概要\n", len(data.fileSummaries))
+		fmt.Fprint(ui.Writer(), "\r\033[K")
+		ui.Success("   ✓ 提取 %d 个文件概要", len(data.fileSummaries))
 		printFileList(extractedFiles, 10)
 		fmt.Println()
 		logger.Info("scan stage completed",
@@ -368,7 +370,7 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 
 	// ===== 阶段 5：LLM 选择重点文件 =====
 	if startStage <= 5 {
-		fmt.Println("🎯 阶段 5/9：AI 分析概要，选择重点文件...")
+		ui.Stage("🎯 阶段 5/9：AI 分析概要，选择重点文件...")
 		selectUserMsg, err := generator.RenderTemplate(templates.InitScanSelectUser, map[string]interface{}{
 			"FileSummaries": data.fileSummaries,
 		})
@@ -377,32 +379,29 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 			return fmt.Errorf("渲染重点文件选择模板失败: %w", err)
 		}
 
-		done2 := make(chan struct{})
+		selectTask := tracker.AddTask("分析概要，筛选重点文件")
 		selectStart := time.Now()
-		go spinnerAnimation(done2, selectStart, []string{"分析函数签名", "评估文件重要性", "筛选重点文件"})
 
 		selected, selectErr := generator.SelectKeyFiles(client, templates.InitScanSelectSystem, selectUserMsg)
-		close(done2)
 		selectFallback := false
 		if selectErr != nil {
+			selectTask.Fail(selectErr)
 			selectFallback = true
 			logger.Warn("key-file selection failed; using fallback",
 				"stage", 5,
 				"error", selectErr,
 			)
-			fmt.Println()
-			fmt.Println("   ⚠ AI 选择失败，使用全部文件...")
+			ui.Warn("   ⚠ AI 选择失败，使用全部文件...")
 			maxFiles := len(data.analyzed.SourceFiles)
 			if maxFiles > 10 {
 				maxFiles = 10
 			}
 			data.selected = &generator.SelectedFiles{KeyFiles: data.analyzed.SourceFiles[:maxFiles]}
 		} else {
-			selectElapsed := time.Since(selectStart).Seconds()
-			fmt.Printf("\r   ✓ AI 选择完成 (耗时 %.1f 秒)\n", selectElapsed)
+			selectTask.Done()
 			data.selected = selected
 		}
-		fmt.Printf("   ✓ 选择 %d 个重点文件深入分析\n", len(data.selected.KeyFiles))
+		ui.Success("   ✓ 选择 %d 个重点文件深入分析", len(data.selected.KeyFiles))
 		printFileList(data.selected.KeyFiles, 10)
 		fmt.Println()
 
@@ -478,6 +477,7 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 		baseUserMsg:     baseUserMsg,
 		startStage:      stage6Start,
 		depGraphJSON:    depGraphJSON,
+		tracker:         tracker,
 	}
 
 	successfulContractFiles, err := executeScanStages6to9(pctx)
@@ -488,7 +488,8 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 
 	totalElapsed := time.Since(totalStart).Seconds()
 
-	fmt.Printf("\n✅ .kontext/ 初始化完成！总耗时 %.1f 秒\n\n", totalElapsed)
+	tracker.Stop()
+	ui.Success("\n✅ .kontext/ 初始化完成！总耗时 %.1f 秒", totalElapsed)
 
 	fmt.Println("已创建:")
 	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml"))
@@ -544,35 +545,34 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 	// ===== 阶段 6/9：生成项目清单 (PROJECT_MANIFEST) =====
 	if startStage <= 6 {
-		fmt.Println("🤖 阶段 6/9：生成项目清单...")
-		manifestStart := time.Now()
+		ui.Stage("🤖 阶段 6/9：生成项目清单...")
 
-		done3 := make(chan struct{})
-		go spinnerAnimation(done3, manifestStart, []string{"分析项目信息", "生成项目清单"})
+		manifestTask := ctx.tracker.AddTask("生成 PROJECT_MANIFEST.yaml")
+		manifestStart := time.Now()
 
 		manifestUserMsg := baseUserMsg + "\n\n请根据以上项目信息，只生成 PROJECT_MANIFEST.yaml 文件的内容。"
 		var err error
 		manifestContent, err = generator.GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
-		close(done3)
 		if err != nil {
+			manifestTask.Fail(err)
 			logger.Error("generate manifest failed", "stage", 6, "error", err)
-			fmt.Println()
 			return nil, fmt.Errorf("生成 PROJECT_MANIFEST.yaml 失败: %w", err)
 		}
 
 		if valErr := generator.ValidateYAML(manifestContent); valErr != nil {
+			manifestTask.Fail(valErr)
 			logger.Error("validate manifest yaml failed", "stage", 6, "error", valErr)
 			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", valErr)
 		}
 
 		manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")
 		if err := fileutil.WriteFile(manifestPath, []byte(manifestContent)); err != nil {
+			manifestTask.Fail(err)
 			logger.Error("write manifest failed", "stage", 6, "path", manifestPath, "error", err)
 			return nil, fmt.Errorf("写入 PROJECT_MANIFEST.yaml 失败: %w", err)
 		}
 
-		manifestElapsed := time.Since(manifestStart).Seconds()
-		fmt.Printf("\r   ✓ PROJECT_MANIFEST.yaml (%.1f 秒)\n\n", manifestElapsed)
+		manifestTask.Done()
 		logger.Info("scan stage completed",
 			"stage", 6,
 			"stage_name", "generate_manifest",
@@ -595,37 +595,41 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 	// ===== 阶段 7/9：并行生成架构与规范 =====
 	if startStage <= 7 {
-		fmt.Println("🏗️  阶段 7/9：生成架构与规范... (并行)")
+		ui.Stage("🏗️  阶段 7/9：生成架构与规范... (并行)")
 
 		archUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 ARCHITECTURE_MAP.yaml 文件的内容。不要生成其他文件。", manifestContent)
 		convUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 CONVENTIONS.yaml 文件的内容。不要生成其他文件。", manifestContent)
 
 		var convContent string
 		var archErr, convErr error
-		var archElapsed, convElapsed float64
+
+		archTask := ctx.tracker.AddTask("生成 ARCHITECTURE_MAP.yaml")
+		convTask := ctx.tracker.AddTask("生成 CONVENTIONS.yaml")
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 
 		go func() {
 			defer wg.Done()
-			start := time.Now()
 			archContent, archErr = generator.GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
-			archElapsed = time.Since(start).Seconds()
+			if archErr != nil {
+				archTask.Fail(archErr)
+			} else {
+				archTask.Done()
+			}
 		}()
 
 		go func() {
 			defer wg.Done()
-			start := time.Now()
 			convContent, convErr = generator.GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
-			convElapsed = time.Since(start).Seconds()
+			if convErr != nil {
+				convTask.Fail(convErr)
+			} else {
+				convTask.Done()
+			}
 		}()
 
-		done4 := make(chan struct{})
-		step7Start := time.Now()
-		go spinnerAnimation(done4, step7Start, []string{"生成架构图", "生成编码规范"})
 		wg.Wait()
-		close(done4)
 
 		if archErr != nil {
 			logger.Error("generate architecture map failed", "stage", 7, "error", archErr)
@@ -650,21 +654,17 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			logger.Error("write architecture map failed", "stage", 7, "path", archPath, "error", err)
 			return nil, fmt.Errorf("写入 ARCHITECTURE_MAP.yaml 失败: %w", err)
 		}
-		fmt.Printf("   ✓ ARCHITECTURE_MAP.yaml (%.1f 秒)\n", archElapsed)
 
 		convPath := filepath.Join(kontextDir, "CONVENTIONS.yaml")
 		if err := fileutil.WriteFile(convPath, []byte(convContent)); err != nil {
 			logger.Error("write conventions failed", "stage", 7, "path", convPath, "error", err)
 			return nil, fmt.Errorf("写入 CONVENTIONS.yaml 失败: %w", err)
 		}
-		fmt.Printf("   ✓ CONVENTIONS.yaml (%.1f 秒)\n\n", convElapsed)
 		logger.Info("scan stage completed",
 			"stage", 7,
 			"stage_name", "generate_architecture_and_conventions",
 			"architecture_path", archPath,
 			"conventions_path", convPath,
-			"architecture_duration_ms", int64(archElapsed*1000),
-			"conventions_duration_ms", int64(convElapsed*1000),
 		)
 
 		_ = cache.UpdateGeneratedFile(cp, "ARCHITECTURE_MAP.yaml", true)
@@ -690,35 +690,30 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				"stage_name", "generate_dependency_graph",
 				"reason", "no_modules",
 			)
-			fmt.Println("🔗 阶段 8/9：未检测到模块，跳过依赖关系图生成")
+			ui.Plain("🔗 阶段 8/9：未检测到模块，跳过依赖关系图生成")
 		} else {
-			fmt.Printf("🔗 阶段 8/9：生成模块依赖关系图... (%d 个模块)\n", len(modules))
+			ui.Stage("🔗 阶段 8/9：生成模块依赖关系图... (%d 个模块)", len(modules))
 
 			depGraphUserMsg := baseUserMsg + fmt.Sprintf(
 				"\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请为以下模块生成依赖关系图：%v",
 				archContent, modules,
 			)
 
-			done6 := make(chan struct{})
-			depGraphStart := time.Now()
-			go spinnerAnimation(done6, depGraphStart, []string{"分析模块依赖", "构建依赖关系图"})
+			depTask := ctx.tracker.AddTask("生成模块依赖关系图")
 
 			depGraph, depErr := generator.GenerateDependencyGraph(client, templates.InitScanDepgraphSystem, depGraphUserMsg)
-			close(done6)
 
 			if depErr != nil {
+				depTask.Fail(depErr)
 				logger.Warn("generate dependency graph failed",
 					"stage", 8,
 					"module_count", len(modules),
 					"error", depErr,
 				)
-				fmt.Println()
-				fmt.Printf("   ⚠ 依赖关系图生成失败: %v\n", depErr)
-				fmt.Println("   将跳过依赖关系约束，继续生成模块契约...")
+				ui.Warn("   ⚠ 依赖关系图生成失败: %v", depErr)
+				ui.Warn("   将跳过依赖关系约束，继续生成模块契约...")
 			} else {
-				depGraphElapsed := time.Since(depGraphStart).Seconds()
-				fmt.Printf("\r   ✓ 识别 %d 个模块的依赖关系 (%.1f 秒)\n", len(depGraph.Modules), depGraphElapsed)
-
+				depTask.Done()
 				depGraphBytes, _ := json.MarshalIndent(depGraph, "", "  ")
 				depGraphJSON = string(depGraphBytes)
 				logger.Info("scan stage completed",
@@ -726,10 +721,8 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 					"stage_name", "generate_dependency_graph",
 					"module_count", len(modules),
 					"dep_graph_module_count", len(depGraph.Modules),
-					"duration_ms", time.Since(depGraphStart).Milliseconds(),
 				)
 			}
-			fmt.Println()
 		}
 
 		if depGraphJSON != "" {
@@ -750,7 +743,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		)
 		fmt.Println("📦 阶段 9/9：未检测到模块，跳过模块契约生成")
 	} else {
-		fmt.Printf("📦 阶段 9/9：生成模块契约... (%d 个模块并行)\n", len(modules))
+		ui.Stage("📦 阶段 9/9：生成模块契约... (%d 个模块并行)", len(modules))
 
 		contractContext := fmt.Sprintf(
 			"\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```",
@@ -870,7 +863,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				fmt.Printf("   ✗ %s_CONTRACT.yaml 失败: %v\n", result.ModuleName, result.Error)
+				ui.Error("   ✗ %s_CONTRACT.yaml 失败: %v", result.ModuleName, result.Error)
 				return
 			}
 
@@ -878,11 +871,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				fmt.Printf("   ✗ %s_CONTRACT.yaml 失败: %v\n", result.ModuleName, err)
+				ui.Error("   ✗ %s_CONTRACT.yaml 失败: %v", result.ModuleName, err)
 				return
 			}
 
-			fmt.Printf("   ✓ %s_CONTRACT.yaml (%.1f 秒)\n", result.ModuleName, result.Duration)
+			ui.Success("   ✓ %s_CONTRACT.yaml (%.1f 秒)", result.ModuleName, result.Duration)
 		}
 
 		step9Start := time.Now()
@@ -910,7 +903,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		if len(retryModules) > 0 {
 			retryCount = len(retryModules)
-			fmt.Printf("\n   ⚠ %d 个模块失败，正在重试...\n", len(retryModules))
+			ui.Warn("   ⚠ %d 个模块失败，正在重试...", len(retryModules))
 
 			_, retryErrors := generator.GenerateModuleContracts(
 				client,
@@ -941,9 +934,9 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 					"stage", 9,
 					"failed_count", len(finalFailures),
 				)
-				fmt.Printf("   ⚠ %d 个模块最终生成失败\n", len(finalFailures))
+				ui.Warn("   ⚠ %d 个模块最终生成失败", len(finalFailures))
 				for _, mod := range finalFailures {
-					fmt.Printf("      - %s\n", mod)
+					ui.Error("      - %s", mod)
 				}
 			}
 		}
@@ -961,7 +954,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		resultMu.Unlock()
 
 		step9Elapsed := time.Since(step9Start).Seconds()
-		fmt.Printf("\n   模块契约生成完成 (%.1f 秒)\n", step9Elapsed)
+		ui.Success("   模块契约生成完成 (%.1f 秒)", step9Elapsed)
 		logger.Info("scan stage completed",
 			"stage", 9,
 			"stage_name", "generate_module_contracts",

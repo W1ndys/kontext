@@ -1,12 +1,12 @@
 package cmd
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/logging"
+	"github.com/w1ndys/kontext/internal/ui"
 )
 
 // Version 在构建时通过 ldflags 注入，默认值为 dev。
@@ -50,7 +50,6 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 		logger, err := logging.Init(logging.Options{
 			Level:  level,
 			Format: format,
-			Output: os.Stderr,
 		})
 		if err != nil {
 			return err
@@ -93,7 +92,7 @@ func Execute() {
 
 	if err := rootCmd.Execute(); err != nil {
 		slog.Error("command failed", "error", err)
-		fmt.Fprintln(os.Stderr, err)
+		ui.Error("%v", err)
 		os.Exit(1)
 	}
 }

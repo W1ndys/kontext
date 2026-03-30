@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/ui"
 )
 
 var configCmd = &cobra.Command{
@@ -143,7 +144,7 @@ func runInteractiveConfig() error {
 		client, err := llm.NewClient(llmCfg)
 		if err != nil {
 			logger.Warn("create llm client failed", "error", err)
-			fmt.Printf("  ✗ 创建客户端失败: %v\n", err)
+			ui.Error("  ✗ 创建客户端失败: %v", err)
 			// 允许手动输入模型名称
 			fmt.Printf("模型名称 [%s]: ", cfg.Model)
 			if input, _ := reader.ReadString('\n'); strings.TrimSpace(input) != "" {
@@ -153,7 +154,7 @@ func runInteractiveConfig() error {
 			models, err := client.ListModels()
 			if err != nil {
 				logger.Warn("list models failed", "error", err)
-				fmt.Printf("  ✗ 获取模型列表失败: %v\n", err)
+				ui.Error("  ✗ 获取模型列表失败: %v", err)
 				fmt.Println("  提示: 请检查 API Key 是否正确，或者 API 地址是否可访问")
 				// 获取模型列表失败时，允许手动输入模型名称
 				fmt.Printf("模型名称 [%s]: ", cfg.Model)
@@ -162,7 +163,7 @@ func runInteractiveConfig() error {
 				}
 			} else {
 				logger.Info("llm configuration verified", "model_count", len(models))
-				fmt.Printf("  ✓ API Key 验证成功！发现 %d 个可用模型\n\n", len(models))
+				ui.Success("  ✓ API Key 验证成功！发现 %d 个可用模型", len(models))
 
 				// 排序模型列表
 				sort.Strings(models)

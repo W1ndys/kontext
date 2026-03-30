@@ -57,6 +57,7 @@ type Tracker struct {
 	nextID        int
 	frameIndex    int
 	renderedLines int
+	lastRendered  []string // 每行上次渲染的内容，用于差量更新
 }
 
 // NewTracker 创建进度追踪器
@@ -77,6 +78,8 @@ func (tr *Tracker) Start() {
 	tr.tickerDone = make(chan struct{})
 	tr.running = true
 
+	setActiveTracker(tr)
+
 	go tr.loop()
 }
 
@@ -95,12 +98,15 @@ func (tr *Tracker) Stop() {
 	close(stop)
 	<-done
 
+	clearActiveTracker(tr)
+
 	tr.mu.Lock()
 	tr.renderLocked()
 	if tr.renderedLines > 0 {
 		fmt.Fprintln(writer)
 	}
 	tr.renderedLines = 0
+	tr.lastRendered = nil
 	tr.mu.Unlock()
 }
 
@@ -241,6 +247,7 @@ func (tr *Tracker) clearRenderedLocked() {
 }
 
 // renderLocked 渲染所有可见任务（持锁状态调用）
+// 采用差量更新策略：仅重绘内容发生变化的行，避免闪烁。
 func (tr *Tracker) renderLocked() {
 	if !tty {
 		return
@@ -250,9 +257,6 @@ func (tr *Tracker) renderLocked() {
 	if len(visible) == 0 {
 		return
 	}
-
-	// 清除之前渲染的行
-	tr.clearRenderedLocked()
 
 	now := time.Now()
 	lines := make([]string, 0, len(visible))
@@ -286,10 +290,39 @@ func (tr *Tracker) renderLocked() {
 		lines = append(lines, line)
 	}
 
-	output := strings.Join(lines, "\n")
-	fmt.Fprint(writer, output)
+	// 如果行数发生变化，走全量清除+重绘路径
+	if tr.renderedLines != len(lines) || tr.lastRendered == nil {
+		tr.clearRenderedLocked()
+		output := strings.Join(lines, "\n")
+		fmt.Fprint(writer, output)
+		tr.renderedLines = len(lines)
+		tr.lastRendered = lines
+		return
+	}
 
-	tr.renderedLines = len(lines)
+	// 行数不变，逐行差量更新：光标移到第一行，逐行比对
+	if tr.renderedLines > 1 {
+		fmt.Fprintf(writer, "\x1b[%dA", tr.renderedLines-1)
+	}
+	fmt.Fprint(writer, "\r")
+
+	for i, line := range lines {
+		if i < len(tr.lastRendered) && tr.lastRendered[i] == line {
+			// 该行未变化，跳过
+			if i < len(lines)-1 {
+				fmt.Fprint(writer, "\x1b[1B")
+			}
+			continue
+		}
+		// 该行有变化，清除后重写
+		fmt.Fprint(writer, "\x1b[2K")
+		fmt.Fprint(writer, line)
+		if i < len(lines)-1 {
+			fmt.Fprint(writer, "\x1b[1B\r")
+		}
+	}
+
+	tr.lastRendered = lines
 }
 
 // visibleTasks 返回需要渲染的任务列表。

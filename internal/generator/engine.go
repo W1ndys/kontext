@@ -17,6 +17,7 @@ import (
 
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/templates"
 	"go.yaml.in/yaml/v4"
 )
@@ -122,23 +123,126 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 	return summary, conversationLog.String(), nil
 }
 
-// generateAndWrite 调用 LLM 生成 YAML 并写入文件。
+// generateAndWrite 分阶段调用 LLM 生成 YAML 并写入文件。
+// 阶段 1: 生成 PROJECT_MANIFEST
+// 阶段 2: 生成 ARCHITECTURE_MAP（引用 manifest）
+// 阶段 3: 生成 CONVENTIONS（引用 manifest + architecture）
+// 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT
 func generateAndWrite(client llm.Client, summary, conversation string) error {
-	systemPrompt := templates.InitGenerateSystem
-	userMsg, err := RenderTemplate(templates.InitGenerateUser, map[string]string{
+	// ── 阶段 1: 生成 PROJECT_MANIFEST ──
+	fmt.Println("  [1/4] 生成 PROJECT_MANIFEST.yaml ...")
+	manifestUserMsg, err := RenderTemplate(templates.InitGenerateManifestUser, map[string]string{
 		"Summary":      summary,
 		"Conversation": conversation,
 	})
 	if err != nil {
-		return fmt.Errorf("渲染生成模板失败: %w", err)
+		return fmt.Errorf("渲染 manifest 用户模板失败: %w", err)
+	}
+	manifestContent, err := GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
+	if err != nil {
+		return fmt.Errorf("生成 PROJECT_MANIFEST 失败: %w", err)
+	}
+	fmt.Println("  [1/4] PROJECT_MANIFEST.yaml 生成完成")
+
+	// ── 阶段 2: 生成 ARCHITECTURE_MAP ──
+	fmt.Println("  [2/4] 生成 ARCHITECTURE_MAP.yaml ...")
+	archUserMsg, err := RenderTemplate(templates.InitGenerateArchitectureUser, map[string]string{
+		"Summary":      summary,
+		"Conversation": conversation,
+		"Manifest":     manifestContent,
+	})
+	if err != nil {
+		return fmt.Errorf("渲染 architecture 用户模板失败: %w", err)
+	}
+	archContent, err := GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
+	if err != nil {
+		return fmt.Errorf("生成 ARCHITECTURE_MAP 失败: %w", err)
+	}
+	fmt.Println("  [2/4] ARCHITECTURE_MAP.yaml 生成完成")
+
+	// ── 阶段 3: 生成 CONVENTIONS ──
+	fmt.Println("  [3/4] 生成 CONVENTIONS.yaml ...")
+	convUserMsg, err := RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
+		"Summary":      summary,
+		"Manifest":     manifestContent,
+		"Architecture": archContent,
+	})
+	if err != nil {
+		return fmt.Errorf("渲染 conventions 用户模板失败: %w", err)
+	}
+	convContent, err := GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
+	if err != nil {
+		return fmt.Errorf("生成 CONVENTIONS 失败: %w", err)
+	}
+	fmt.Println("  [3/4] CONVENTIONS.yaml 生成完成")
+
+	// ── 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT ──
+	modules := extractModulesFromArchitecture(archContent)
+	if len(modules) == 0 {
+		fmt.Println("  [4/4] 未从架构中识别到模块，跳过契约生成")
+	} else {
+		fmt.Printf("  [4/4] 生成模块契约 (%d 个模块) ...\n", len(modules))
 	}
 
-	generated, err := GenerateStructuredYAML(client, systemPrompt, userMsg)
-	if err != nil {
-		return err
+	contractResults := make(map[string]string)
+	for i, mod := range modules {
+		fmt.Printf("    [%d/%d] 生成模块 %s 的契约 ...\n", i+1, len(modules), mod)
+		contractUserMsg, err := RenderTemplate(templates.InitGenerateContractUser, map[string]string{
+			"Summary":      summary,
+			"Manifest":     manifestContent,
+			"Architecture": archContent,
+			"ModuleName":   mod,
+		})
+		if err != nil {
+			return fmt.Errorf("渲染模块 %s 契约用户模板失败: %w", mod, err)
+		}
+
+		contract, err := GenerateModuleContractStream(client, templates.InitScanContractSystem, contractUserMsg, mod, nil)
+		if err != nil {
+			fmt.Printf("    [%d/%d] 模块 %s 契约生成失败: %v，跳过\n", i+1, len(modules), mod, err)
+			continue
+		}
+		contractResults[mod] = contract.Content
+		fmt.Printf("    [%d/%d] 模块 %s 契约生成完成\n", i+1, len(modules), mod)
+	}
+
+	// 组装 GeneratedYAML 并写入
+	generated := &GeneratedYAML{
+		ProjectManifest: manifestContent,
+		ArchitectureMap: archContent,
+		Conventions:     convContent,
+		ModuleContracts: contractResults,
 	}
 
 	return WriteGeneratedYAML(generated)
+}
+
+// extractModulesFromArchitecture 从 ARCHITECTURE_MAP YAML 中提取模块名列表。
+// 使用完整相对路径（/ 替换为 _）作为模块标识符，避免不同父目录下同名包冲突。
+// 例如 "internal/config" → "internal_config", "cmd" → "cmd"。
+func extractModulesFromArchitecture(archYAML string) []string {
+	var arch schema.ArchitectureMap
+	if err := yaml.Unmarshal([]byte(archYAML), &arch); err != nil {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var modules []string
+	for _, layer := range arch.Layers {
+		for _, pkg := range layer.Packages {
+			pkg = strings.TrimRight(pkg, "/")
+			if pkg == "" {
+				continue
+			}
+			// 使用完整路径，将 / 替换为 _ 作为模块标识符
+			name := strings.ReplaceAll(pkg, "/", "_")
+			if !seen[name] {
+				seen[name] = true
+				modules = append(modules, name)
+			}
+		}
+	}
+	return modules
 }
 
 // WriteGeneratedYAML 校验 GeneratedYAML 并写入 .kontext/ 目录。

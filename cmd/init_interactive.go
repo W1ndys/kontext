@@ -20,7 +20,7 @@ func runInteractiveInit() error {
 	logger.Info("interactive init started")
 
 	// 检查是否已存在
-	if fileutil.DirExists(defaultKontextDir) && fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml")) {
+	if fileutil.DirExists(defaultKontextDir) && fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json")) {
 		logger.Info("existing kontext directory detected", "dir", defaultKontextDir)
 		fmt.Println(".kontext/ 已存在。")
 		fmt.Println()
@@ -131,9 +131,9 @@ func runStaticInitWithOverwrite() error {
 
 	// 写入核心配置文件
 	templateFiles := map[string]string{
-		filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml"): defaultManifest,
-		filepath.Join(defaultKontextDir, "ARCHITECTURE_MAP.yaml"): defaultArchitecture,
-		filepath.Join(defaultKontextDir, "CONVENTIONS.yaml"):      defaultConventions,
+		filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json"): defaultManifest,
+		filepath.Join(defaultKontextDir, "ARCHITECTURE_MAP.json"): defaultArchitecture,
+		filepath.Join(defaultKontextDir, "CONVENTIONS.json"):      defaultConventions,
 	}
 
 	for path, content := range templateFiles {
@@ -146,7 +146,7 @@ func runStaticInitWithOverwrite() error {
 
 	// 写入默认模块契约文件
 	contractFiles := map[string]string{
-		filepath.Join(defaultKontextDir, "module_contracts", "example_CONTRACT.yaml"): defaultContract,
+		filepath.Join(defaultKontextDir, "module_contracts", "example_CONTRACT.json"): defaultContract,
 	}
 
 	fmt.Println()
@@ -162,10 +162,10 @@ func runStaticInitWithOverwrite() error {
 	fmt.Println()
 	ui.Success(".kontext/ 初始化完成！")
 	fmt.Println("后续步骤：")
-	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.yaml 填写项目信息")
-	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.yaml 填写架构信息")
-	fmt.Println("  3. 编辑 .kontext/CONVENTIONS.yaml 填写编码规范")
-	fmt.Println("  4. 为每个核心模块创建 .kontext/module_contracts/<模块名>_CONTRACT.yaml")
+	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.json 填写项目信息")
+	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.json 填写架构信息")
+	fmt.Println("  3. 编辑 .kontext/CONVENTIONS.json 填写编码规范")
+	fmt.Println("  4. 为每个核心模块创建 .kontext/module_contracts/<模块名>_CONTRACT.json")
 	fmt.Println("  5. 运行 'kontext validate' 校验配置是否正确")
 	fmt.Println()
 	fmt.Println("提示: 使用 'kontext init --scan' 可自动扫描项目源码生成完整配置")

@@ -1,7 +1,7 @@
 目标模块：{{.ModuleName}}
 
-当前契约 YAML：
-{{.CurrentYAML}}
+当前契约 JSON：
+{{.CurrentJSON}}
 
 检测到的变更：
 {{.Changes}}
@@ -13,33 +13,41 @@
 如果这是新模块，请生成一个完整契约。
 如果模块已删除且不应再保留，请返回 {"content": ""}。
 
-以 JSON 格式返回，结构为 {"content": "更新后的 CONTRACT YAML 文本"}。content 字段的值必须严格符合以下 schema：
+以 JSON 格式返回，结构为 {"content": "更新后的 CONTRACT JSON 文本"}。content 字段的值必须严格符合以下 schema：
 
-```yaml
-module:
-  name: "{{.ModuleName}}"
-  path: "模块路径，例如 src/updater 或 cmd"
-  purpose: |
-    模块核心职责描述
-
-owns:
-  - "该模块负责的功能点"
-
-not_responsible_for:
-  - "该模块明确不负责的内容"
-
-depends_on:
-  - module: "依赖模块名"
-    reason: "依赖原因"
-
-public_interface:
-  - name: "对外暴露的函数或类型名"
-    signature: "完整签名或类型定义"
-    description: "功能描述"
-
-modification_rules:
-  - rule: "修改该模块时必须遵守的规则"
-    reason: "原因"
+```json
+{
+  "module": {
+    "name": "{{.ModuleName}}",
+    "path": "模块路径，例如 src/updater 或 cmd",
+    "purpose": "模块核心职责描述"
+  },
+  "owns": [
+    "该模块负责的功能点"
+  ],
+  "not_responsible_for": [
+    "该模块明确不负责的内容"
+  ],
+  "depends_on": [
+    {
+      "module": "依赖模块名",
+      "reason": "依赖原因"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "对外暴露的函数或类型名",
+      "signature": "完整签名或类型定义",
+      "description": "功能描述"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "修改该模块时必须遵守的规则",
+      "reason": "原因"
+    }
+  ]
+}
 ```
 
 注意：

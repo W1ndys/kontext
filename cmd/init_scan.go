@@ -18,7 +18,6 @@ import (
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/templates"
-	"go.yaml.in/yaml/v4"
 )
 
 const defaultScanDepth = 5
@@ -103,7 +102,7 @@ func runScanInit() error {
 	}
 
 	// 检查是否已存在
-	if fileutil.DirExists(defaultKontextDir) && fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml")) {
+	if fileutil.DirExists(defaultKontextDir) && fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json")) {
 		logger.Info("existing kontext directory detected", "dir", defaultKontextDir)
 		fmt.Print(".kontext/ 已存在，是否覆盖？[y/N] ")
 		scanner := bufio.NewScanner(os.Stdin)
@@ -492,9 +491,9 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 	ui.Success("\n✅ .kontext/ 初始化完成！总耗时 %.1f 秒", totalElapsed)
 
 	fmt.Println("已创建:")
-	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.yaml"))
-	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "ARCHITECTURE_MAP.yaml"))
-	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "CONVENTIONS.yaml"))
+	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json"))
+	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "ARCHITECTURE_MAP.json"))
+	fmt.Printf("  %s\n", filepath.Join(defaultKontextDir, "CONVENTIONS.json"))
 
 	for _, path := range successfulContractFiles {
 		fmt.Printf("  %s\n", path)
@@ -547,29 +546,29 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	if startStage <= 6 {
 		ui.Stage("🤖 阶段 6/9：生成项目清单...")
 
-		manifestTask := ctx.tracker.AddTask("生成 PROJECT_MANIFEST.yaml")
+		manifestTask := ctx.tracker.AddTask("生成 PROJECT_MANIFEST.json")
 		manifestStart := time.Now()
 
-		manifestUserMsg := baseUserMsg + "\n\n请根据以上项目信息，只生成 PROJECT_MANIFEST.yaml 文件的内容。"
+		manifestUserMsg := baseUserMsg + "\n\n请根据以上项目信息，只生成 PROJECT_MANIFEST.json 文件的内容。"
 		var err error
-		manifestContent, err = generator.GenerateSingleYAML(client, templates.InitScanManifestSystem, manifestUserMsg)
+		manifestContent, err = generator.GenerateSingleJSON(client, templates.InitScanManifestSystem, manifestUserMsg)
 		if err != nil {
 			manifestTask.Fail(err)
 			logger.Error("generate manifest failed", "stage", 6, "error", err)
-			return nil, fmt.Errorf("生成 PROJECT_MANIFEST.yaml 失败: %w", err)
+			return nil, fmt.Errorf("生成 PROJECT_MANIFEST.json 失败: %w", err)
 		}
 
-		if valErr := generator.ValidateYAML(manifestContent); valErr != nil {
+		if valErr := generator.ValidateJSON(manifestContent); valErr != nil {
 			manifestTask.Fail(valErr)
-			logger.Error("validate manifest yaml failed", "stage", 6, "error", valErr)
-			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", valErr)
+			logger.Error("validate manifest json failed", "stage", 6, "error", valErr)
+			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.json 不合法: %w", valErr)
 		}
 
-		manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml")
+		manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.json")
 		if err := fileutil.WriteFile(manifestPath, []byte(manifestContent)); err != nil {
 			manifestTask.Fail(err)
 			logger.Error("write manifest failed", "stage", 6, "path", manifestPath, "error", err)
-			return nil, fmt.Errorf("写入 PROJECT_MANIFEST.yaml 失败: %w", err)
+			return nil, fmt.Errorf("写入 PROJECT_MANIFEST.json 失败: %w", err)
 		}
 
 		manifestTask.Done()
@@ -580,15 +579,15 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			"duration_ms", time.Since(manifestStart).Milliseconds(),
 		)
 
-		_ = cache.UpdateGeneratedFile(cp, "PROJECT_MANIFEST.yaml", true)
+		_ = cache.UpdateGeneratedFile(cp, "PROJECT_MANIFEST.json", true)
 		_ = cache.UpdateCheckpointStage(cp, 6)
 	}
 
 	// 如果从阶段 7+ 恢复，需要读取已生成的 manifest
 	if manifestContent == "" {
-		data, err := os.ReadFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"))
+		data, err := os.ReadFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.json"))
 		if err != nil {
-			return nil, fmt.Errorf("读取已生成的 PROJECT_MANIFEST.yaml 失败: %w", err)
+			return nil, fmt.Errorf("读取已生成的 PROJECT_MANIFEST.json 失败: %w", err)
 		}
 		manifestContent = string(data)
 	}
@@ -597,21 +596,21 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	if startStage <= 7 {
 		ui.Stage("🏗️  阶段 7/9：生成架构与规范... (并行)")
 
-		archUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 ARCHITECTURE_MAP.yaml 文件的内容。不要生成其他文件。", manifestContent)
-		convUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请根据以上信息，只生成 CONVENTIONS.yaml 文件的内容。不要生成其他文件。", manifestContent)
+		archUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.json（作为参考上下文）\n\n```json\n%s\n```\n\n请根据以上信息，只生成 ARCHITECTURE_MAP.json 文件的内容。不要生成其他文件。", manifestContent)
+		convUserMsg := baseUserMsg + fmt.Sprintf("\n\n## 已生成的 PROJECT_MANIFEST.json（作为参考上下文）\n\n```json\n%s\n```\n\n请根据以上信息，只生成 CONVENTIONS.json 文件的内容。不要生成其他文件。", manifestContent)
 
 		var convContent string
 		var archErr, convErr error
 
-		archTask := ctx.tracker.AddTask("生成 ARCHITECTURE_MAP.yaml")
-		convTask := ctx.tracker.AddTask("生成 CONVENTIONS.yaml")
+		archTask := ctx.tracker.AddTask("生成 ARCHITECTURE_MAP.json")
+		convTask := ctx.tracker.AddTask("生成 CONVENTIONS.json")
 
 		var wg sync.WaitGroup
 		wg.Add(2)
 
 		go func() {
 			defer wg.Done()
-			archContent, archErr = generator.GenerateSingleYAML(client, templates.InitScanArchitectureSystem, archUserMsg)
+			archContent, archErr = generator.GenerateSingleJSON(client, templates.InitScanArchitectureSystem, archUserMsg)
 			if archErr != nil {
 				archTask.Fail(archErr)
 			} else {
@@ -621,7 +620,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		go func() {
 			defer wg.Done()
-			convContent, convErr = generator.GenerateSingleYAML(client, templates.InitScanConventionsSystem, convUserMsg)
+			convContent, convErr = generator.GenerateSingleJSON(client, templates.InitScanConventionsSystem, convUserMsg)
 			if convErr != nil {
 				convTask.Fail(convErr)
 			} else {
@@ -633,32 +632,32 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		if archErr != nil {
 			logger.Error("generate architecture map failed", "stage", 7, "error", archErr)
-			return nil, fmt.Errorf("生成 ARCHITECTURE_MAP.yaml 失败: %w", archErr)
+			return nil, fmt.Errorf("生成 ARCHITECTURE_MAP.json 失败: %w", archErr)
 		}
 		if convErr != nil {
 			logger.Error("generate conventions failed", "stage", 7, "error", convErr)
-			return nil, fmt.Errorf("生成 CONVENTIONS.yaml 失败: %w", convErr)
+			return nil, fmt.Errorf("生成 CONVENTIONS.json 失败: %w", convErr)
 		}
 
-		if valErr := generator.ValidateYAML(archContent); valErr != nil {
-			logger.Error("validate architecture map yaml failed", "stage", 7, "error", valErr)
-			return nil, fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", valErr)
+		if valErr := generator.ValidateJSON(archContent); valErr != nil {
+			logger.Error("validate architecture map json failed", "stage", 7, "error", valErr)
+			return nil, fmt.Errorf("生成的 ARCHITECTURE_MAP.json 不合法: %w", valErr)
 		}
-		if valErr := generator.ValidateYAML(convContent); valErr != nil {
-			logger.Error("validate conventions yaml failed", "stage", 7, "error", valErr)
-			return nil, fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", valErr)
+		if valErr := generator.ValidateJSON(convContent); valErr != nil {
+			logger.Error("validate conventions json failed", "stage", 7, "error", valErr)
+			return nil, fmt.Errorf("生成的 CONVENTIONS.json 不合法: %w", valErr)
 		}
 
-		archPath := filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml")
+		archPath := filepath.Join(kontextDir, "ARCHITECTURE_MAP.json")
 		if err := fileutil.WriteFile(archPath, []byte(archContent)); err != nil {
 			logger.Error("write architecture map failed", "stage", 7, "path", archPath, "error", err)
-			return nil, fmt.Errorf("写入 ARCHITECTURE_MAP.yaml 失败: %w", err)
+			return nil, fmt.Errorf("写入 ARCHITECTURE_MAP.json 失败: %w", err)
 		}
 
-		convPath := filepath.Join(kontextDir, "CONVENTIONS.yaml")
+		convPath := filepath.Join(kontextDir, "CONVENTIONS.json")
 		if err := fileutil.WriteFile(convPath, []byte(convContent)); err != nil {
 			logger.Error("write conventions failed", "stage", 7, "path", convPath, "error", err)
-			return nil, fmt.Errorf("写入 CONVENTIONS.yaml 失败: %w", err)
+			return nil, fmt.Errorf("写入 CONVENTIONS.json 失败: %w", err)
 		}
 		logger.Info("scan stage completed",
 			"stage", 7,
@@ -667,16 +666,16 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			"conventions_path", convPath,
 		)
 
-		_ = cache.UpdateGeneratedFile(cp, "ARCHITECTURE_MAP.yaml", true)
-		_ = cache.UpdateGeneratedFile(cp, "CONVENTIONS.yaml", true)
+		_ = cache.UpdateGeneratedFile(cp, "ARCHITECTURE_MAP.json", true)
+		_ = cache.UpdateGeneratedFile(cp, "CONVENTIONS.json", true)
 		_ = cache.UpdateCheckpointStage(cp, 7)
 	}
 
 	// 如果从阶段 8+ 恢复，需要读取已生成的 archContent
 	if archContent == "" {
-		data, err := os.ReadFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"))
+		data, err := os.ReadFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.json"))
 		if err != nil {
-			return nil, fmt.Errorf("读取已生成的 ARCHITECTURE_MAP.yaml 失败: %w", err)
+			return nil, fmt.Errorf("读取已生成的 ARCHITECTURE_MAP.json 失败: %w", err)
 		}
 		archContent = string(data)
 	}
@@ -695,7 +694,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			ui.Stage("🔗 阶段 8/9：生成模块依赖关系图... (%d 个模块)", len(modules))
 
 			depGraphUserMsg := baseUserMsg + fmt.Sprintf(
-				"\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n请为以下模块生成依赖关系图：%v",
+				"\n\n## 已生成的 ARCHITECTURE_MAP.json（作为参考上下文）\n\n```json\n%s\n```\n\n请为以下模块生成依赖关系图：%v",
 				archContent, modules,
 			)
 
@@ -746,7 +745,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		ui.Stage("📦 阶段 9/9：生成模块契约... (%d 个模块并行)", len(modules))
 
 		contractContext := fmt.Sprintf(
-			"\n\n## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）\n\n```yaml\n%s\n```\n\n## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）\n\n```yaml\n%s\n```",
+			"\n\n## 已生成的 PROJECT_MANIFEST.json（作为参考上下文）\n\n```json\n%s\n```\n\n## 已生成的 ARCHITECTURE_MAP.json（作为参考上下文）\n\n```json\n%s\n```",
 			manifestContent, archContent,
 		)
 
@@ -772,15 +771,15 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			}
 
 			return moduleUserMsg + contractContext +
-				fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.yaml 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
+				fmt.Sprintf("\n\n请只为模块 `%s` 生成一个 CONTRACT.json 文件。不要生成其他模块或其他类型的文件。", moduleName), nil
 		}
 
 		moduleContractDir := filepath.Join(kontextDir, "module_contracts")
 		partialPath := func(moduleName string) string {
-			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.yaml.partial", moduleName))
+			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.json.partial", moduleName))
 		}
 		finalPath := func(moduleName string) string {
-			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.yaml", moduleName))
+			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.json", moduleName))
 		}
 
 		type partialSnapshotState struct {
@@ -802,8 +801,8 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		failedModules := make(map[string]bool)
 
 		saveFinalContract := func(moduleName, content string) error {
-			if err := generator.ValidateYAML(content); err != nil {
-				return fmt.Errorf("YAML 校验失败: %w", err)
+			if err := generator.ValidateJSON(content); err != nil {
+				return fmt.Errorf("JSON 校验失败: %w", err)
 			}
 			if err := fileutil.WriteFile(finalPath(moduleName), []byte(content)); err != nil {
 				return fmt.Errorf("写入正式文件失败: %w", err)
@@ -863,7 +862,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				ui.Error("   ✗ %s_CONTRACT.yaml 失败: %v", result.ModuleName, result.Error)
+				ui.Error("   ✗ %s_CONTRACT.json 失败: %v", result.ModuleName, result.Error)
 				return
 			}
 
@@ -871,11 +870,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				ui.Error("   ✗ %s_CONTRACT.yaml 失败: %v", result.ModuleName, err)
+				ui.Error("   ✗ %s_CONTRACT.json 失败: %v", result.ModuleName, err)
 				return
 			}
 
-			ui.Success("   ✓ %s_CONTRACT.yaml (%.1f 秒)", result.ModuleName, result.Duration)
+			ui.Success("   ✓ %s_CONTRACT.json (%.1f 秒)", result.ModuleName, result.Duration)
 		}
 
 		step9Start := time.Now()
@@ -974,21 +973,21 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 // archLayer 定义 ARCHITECTURE_MAP 中的层级结构
 type archLayer struct {
-	Name     string   `yaml:"name"`
-	Packages []string `yaml:"packages"`
+	Name     string   `json:"name"`
+	Packages []string `json:"packages"`
 }
 
 // archMap 定义 ARCHITECTURE_MAP 的解析结构
 type archMap struct {
-	Layers []archLayer `yaml:"layers"`
+	Layers []archLayer `json:"layers"`
 }
 
-// extractModulesFromArch 从 ARCHITECTURE_MAP 的 YAML 内容中解析模块列表。
+// extractModulesFromArch 从 ARCHITECTURE_MAP 的 JSON 内容中解析模块列表。
 // 优先解析 ARCHITECTURE_MAP 的 layers.packages，解析失败时回退到目录规则扫描。
 func extractModulesFromArch(archContent string, allFiles []string) []string {
 	// 优先从 ARCHITECTURE_MAP 解析
 	var arch archMap
-	if err := yaml.Unmarshal([]byte(archContent), &arch); err == nil && len(arch.Layers) > 0 {
+	if err := json.Unmarshal([]byte(archContent), &arch); err == nil && len(arch.Layers) > 0 {
 		moduleSet := make(map[string]bool)
 		for _, layer := range arch.Layers {
 			for _, pkg := range layer.Packages {

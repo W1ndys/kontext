@@ -4,15 +4,15 @@
 
 {{.Summary}}
 
-## 已生成的 PROJECT_MANIFEST.yaml（作为参考上下文）
+## 已生成的 PROJECT_MANIFEST.json（作为参考上下文）
 
-```yaml
+```json
 {{.Manifest}}
 ```
 
-## 已生成的 ARCHITECTURE_MAP.yaml（作为参考上下文）
+## 已生成的 ARCHITECTURE_MAP.json（作为参考上下文）
 
-```yaml
+```json
 {{.Architecture}}
 ```
 
@@ -20,9 +20,9 @@
 
 模块名: {{.ModuleName}}
 
-请根据以上信息，为模块 "{{.ModuleName}}" 生成 CONTRACT.yaml 配置文件。
+请根据以上信息，为模块 "{{.ModuleName}}" 生成 CONTRACT.json 配置文件。
 
 注意：
-- 仅生成该模块的 CONTRACT.yaml，不要生成其他内容
+- 仅生成该模块的 CONTRACT.json，不要生成其他内容
 - 确保与 PROJECT_MANIFEST 和 ARCHITECTURE_MAP 中的信息保持一致
 - 使用中文

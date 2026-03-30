@@ -1,21 +1,26 @@
 目标模块：{{.ModuleName}}
 
 已生成的契约前面部分（module、owns、not_responsible_for、depends_on、public_interface）：
-{{.PrecedingYAML}}
+{{.PrecedingJSON}}
 
-当前契约 YAML（完整版，供参考）：
-{{.CurrentYAML}}
+当前契约 JSON（完整版，供参考）：
+{{.CurrentJSON}}
 
 请基于以上信息，只生成 `modification_rules` 这一个顶级字段。
 不要生成 module、owns、not_responsible_for、depends_on、public_interface。
 请在现有契约基础上做最小修改。如果这是新模块，请生成合理内容。
 
-以 JSON 格式返回，结构为 {"content": "部分 CONTRACT YAML 文本"}。content 字段的值必须严格符合以下 schema：
+以 JSON 格式返回，结构为 {"content": "部分 CONTRACT JSON 文本"}。content 字段的值必须严格符合以下 schema：
 
-```yaml
-modification_rules:
-  - rule: "修改该模块时必须遵守的规则"
-    reason: "原因"
+```json
+{
+  "modification_rules": [
+    {
+      "rule": "修改该模块时必须遵守的规则",
+      "reason": "原因"
+    }
+  ]
+}
 ```
 
 注意：

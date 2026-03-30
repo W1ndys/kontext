@@ -10,7 +10,7 @@ import (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "校验 .kontext/ 目录下的 YAML 配置文件 / Validate YAML config files in .kontext/ directory",
+	Short: "校验 .kontext/ 目录下的 JSON 配置文件 / Validate JSON config files in .kontext/ directory",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger := namedLogger(commandPathValidate)
 		kontextDir := defaultKontextDir

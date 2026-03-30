@@ -6,118 +6,151 @@
 
 返回格式（JSON 对象）：
 {
-  "project_manifest": "YAML 文本内容（字符串）",
-  "architecture_map": "YAML 文本内容（字符串）",
-  "conventions": "YAML 文本内容（字符串）",
+  "project_manifest": "JSON 文本内容（字符串）",
+  "architecture_map": "JSON 文本内容（字符串）",
+  "conventions": "JSON 文本内容（字符串）",
   "module_contracts": {
-    "模块名": "该模块 CONTRACT 的 YAML 文本内容"
+    "模块名": "该模块 CONTRACT 的 JSON 文本内容"
   }
 }
 
-注意：每个字段的值是一个字符串，内容为合法的 YAML 文本。module_contracts 的键是模块名（如 "cmd"、"config"、"packer"），不需要带 _CONTRACT 后缀。
+注意：每个字段的值是一个字符串，内容为合法的 JSON 文本。module_contracts 的键是模块名（如 "cmd"、"config"、"packer"），不需要带 _CONTRACT 后缀。
 
-## PROJECT_MANIFEST.yaml 的 schema
+## PROJECT_MANIFEST.json 的 schema
 
-```yaml
-project:
-  name: "项目名称"
-  one_line: "一句话描述"
-  type: "web_app"  # web_app / cli_tool / library / microservice
-
-  business_context: |
-    业务背景描述
-
-  core_flows:
-    - name: "流程名称"
-      steps: "步骤描述"
-      entry_point: "入口文件路径"
-
-tech_stack:
-  language: "语言版本"
-  cli_framework: "CLI 框架"
-  yaml_parser: "YAML 解析库"
-  schema_validator: "Schema 校验方式"
-  template_engine: "模板引擎"
-  llm_client: "LLM 客户端"
-  git_client: "Git 客户端"
-  key_decisions:
-    - decision: "决策内容"
-      reason: "原因"
-      constraint: "约束"
-
-scale:
-  estimated_files: "文件数范围"
-  modules: "模块数"
-  phase: "development / production / maintenance"
-
-status:
-  completed_modules: []
-  in_progress: []
-  not_started: []
+```json
+{
+  "project": {
+    "name": "项目名称",
+    "one_line": "一句话描述",
+    "type": "web_app",
+    "business_context": "业务背景描述",
+    "core_flows": [
+      {
+        "name": "流程名称",
+        "steps": "步骤描述",
+        "entry_point": "入口文件路径"
+      }
+    ]
+  },
+  "tech_stack": {
+    "language": "语言版本",
+    "cli_framework": "CLI 框架",
+    "data_format": "数据格式处理库",
+    "schema_validator": "Schema 校验方式",
+    "template_engine": "模板引擎",
+    "llm_client": "LLM 客户端",
+    "git_client": "Git 客户端",
+    "key_decisions": [
+      {
+        "decision": "决策内容",
+        "reason": "原因",
+        "constraint": "约束"
+      }
+    ]
+  },
+  "scale": {
+    "estimated_files": "文件数范围",
+    "modules": "模块数",
+    "phase": "development / production / maintenance"
+  },
+  "status": {
+    "completed_modules": [],
+    "in_progress": [],
+    "not_started": []
+  }
+}
 ```
 
-## ARCHITECTURE_MAP.yaml 的 schema
+## ARCHITECTURE_MAP.json 的 schema
 
-```yaml
-layers:
-  - name: "层名称"
-    description: "层描述"
-    packages:
-      - "包路径"
-
-rules:
-  - rule: "架构规则"
-    reason: "原因"
+```json
+{
+  "layers": [
+    {
+      "name": "层名称",
+      "description": "层描述",
+      "packages": [
+        "包路径"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "rule": "架构规则",
+      "reason": "原因"
+    }
+  ]
+}
 ```
 
-## CONVENTIONS.yaml 的 schema
+## CONVENTIONS.json 的 schema
 
-```yaml
-coding:
-  - rule: "编码规则"
-    example: "示例"
-
-error_handling:
-  - rule: "错误处理规则"
-    example: "示例"
-
-forbidden:
-  - rule: "禁止事项"
-    reason: "原因"
-
-ai_rules:
-  - rule: "AI 协作规则"
-    reason: "原因"
+```json
+{
+  "coding": [
+    {
+      "rule": "编码规则",
+      "example": "示例"
+    }
+  ],
+  "error_handling": [
+    {
+      "rule": "错误处理规则",
+      "example": "示例"
+    }
+  ],
+  "forbidden": [
+    {
+      "rule": "禁止事项",
+      "reason": "原因"
+    }
+  ],
+  "ai_rules": [
+    {
+      "rule": "AI 协作规则",
+      "reason": "原因"
+    }
+  ]
+}
 ```
 
 ## module_contracts 中每个模块 CONTRACT 的 schema
 
-```yaml
-module:
-  name: "模块名称"
-  path: "模块路径"  # 如 src/auth/ 或 cmd/
-  purpose: |
-    模块的核心职责描述
-
-owns:
-  - "该模块负责的功能点1"
-  - "该模块负责的功能点2"
-
-not_responsible_for:
-  - "该模块明确不负责的功能"
-
-depends_on:
-  - module: "依赖的模块名"
-    reason: "依赖原因"
-
-public_interface:
-  - name: "对外暴露的函数/类型名"
-    signature: "函数签名或类型定义"
-    description: "功能描述"
-
-modification_rules:
-  - rule: "修改该模块时必须遵守的规则"
-    reason: "原因"
+```json
+{
+  "module": {
+    "name": "模块名称",
+    "path": "模块路径",
+    "purpose": "模块的核心职责描述"
+  },
+  "owns": [
+    "该模块负责的功能点1",
+    "该模块负责的功能点2"
+  ],
+  "not_responsible_for": [
+    "该模块明确不负责的功能"
+  ],
+  "depends_on": [
+    {
+      "module": "依赖的模块名",
+      "reason": "依赖原因"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "对外暴露的函数/类型名",
+      "signature": "函数签名或类型定义",
+      "description": "功能描述"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "修改该模块时必须遵守的规则",
+      "reason": "原因"
+    }
+  ]
+}
 ```
 
 ## 分析要求
@@ -129,5 +162,5 @@ modification_rules:
 - 编码规范应基于源码中实际观察到的模式，而非泛泛而谈
 - **为每个识别到的核心模块生成对应的 CONTRACT 文件**
 - 模块契约应明确模块边界、职责划分和依赖关系
-- YAML 内容必须是合法的 YAML 格式
+- JSON 内容必须是合法的 JSON 格式
 - 使用中文

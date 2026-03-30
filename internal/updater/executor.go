@@ -531,7 +531,11 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 		return nil
 	}
 
-	return fileutil.WriteFile(targetPath, []byte(content))
+	normalized, err := generator.NormalizeYAML(content)
+	if err != nil {
+		return fmt.Errorf("生成的 YAML 格式不合法: %w", err)
+	}
+	return fileutil.WriteFile(targetPath, []byte(normalized))
 }
 
 // backupIfExists 如果目标文件存在则备份到 backup/ 目录。

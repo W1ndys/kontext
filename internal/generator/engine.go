@@ -278,15 +278,30 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 	return nil
 }
 
-// writeYAMLFile 校验 YAML 合法性并写入文件。
+// writeYAMLFile 校验 YAML 合法性，通过 unmarshal → marshal 标准化格式后写入文件。
 func writeYAMLFile(path, content string) error {
-	if err := ValidateYAML(content); err != nil {
+	normalized, err := NormalizeYAML(content)
+	if err != nil {
 		return fmt.Errorf("生成的 %s 不合法: %w", filepath.Base(path), err)
 	}
-	if err := fileutil.WriteFile(path, []byte(content)); err != nil {
+	if err := fileutil.WriteFile(path, []byte(normalized)); err != nil {
 		return fmt.Errorf("写入 %s 失败: %w", path, err)
 	}
 	return nil
+}
+
+// NormalizeYAML 通过 unmarshal → marshal 标准化 YAML 格式。
+// 解决 LLM 生成的 YAML 存在的缩进不一致、多余空格、换行错乱等问题。
+func NormalizeYAML(content string) (string, error) {
+	var data interface{}
+	if err := yaml.Unmarshal([]byte(content), &data); err != nil {
+		return "", err
+	}
+	out, err := yaml.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // extractModulesFromArchitecture 从 ARCHITECTURE_MAP YAML 中提取模块名列表。
@@ -317,24 +332,30 @@ func extractModulesFromArchitecture(archYAML string) []string {
 	return modules
 }
 
-// WriteGeneratedYAML 校验 GeneratedYAML 并写入 .kontext/ 目录。
+// WriteGeneratedYAML 校验 GeneratedYAML，标准化格式并写入 .kontext/ 目录。
 func WriteGeneratedYAML(generated *GeneratedYAML) error {
-	// 校验 YAML 合法性
-	if err := ValidateYAML(generated.ProjectManifest); err != nil {
+	// 标准化 YAML 格式
+	normalizedManifest, err := NormalizeYAML(generated.ProjectManifest)
+	if err != nil {
 		return fmt.Errorf("生成的 PROJECT_MANIFEST.yaml 不合法: %w", err)
 	}
-	if err := ValidateYAML(generated.ArchitectureMap); err != nil {
+	normalizedArch, err := NormalizeYAML(generated.ArchitectureMap)
+	if err != nil {
 		return fmt.Errorf("生成的 ARCHITECTURE_MAP.yaml 不合法: %w", err)
 	}
-	if err := ValidateYAML(generated.Conventions); err != nil {
+	normalizedConv, err := NormalizeYAML(generated.Conventions)
+	if err != nil {
 		return fmt.Errorf("生成的 CONVENTIONS.yaml 不合法: %w", err)
 	}
 
-	// 校验模块契约
+	// 标准化模块契约
+	normalizedContracts := make(map[string]string, len(generated.ModuleContracts))
 	for name, content := range generated.ModuleContracts {
-		if err := ValidateYAML(content); err != nil {
+		normalized, err := NormalizeYAML(content)
+		if err != nil {
 			return fmt.Errorf("生成的 %s_CONTRACT.yaml 不合法: %w", name, err)
 		}
+		normalizedContracts[name] = normalized
 	}
 
 	// 写入文件
@@ -352,9 +373,9 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 
 	// 写入核心配置文件
 	files := map[string]string{
-		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): generated.ProjectManifest,
-		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): generated.ArchitectureMap,
-		filepath.Join(kontextDir, "CONVENTIONS.yaml"):      generated.Conventions,
+		filepath.Join(kontextDir, "PROJECT_MANIFEST.yaml"): normalizedManifest,
+		filepath.Join(kontextDir, "ARCHITECTURE_MAP.yaml"): normalizedArch,
+		filepath.Join(kontextDir, "CONVENTIONS.yaml"):      normalizedConv,
 	}
 
 	for path, content := range files {
@@ -365,10 +386,10 @@ func WriteGeneratedYAML(generated *GeneratedYAML) error {
 	}
 
 	// 写入模块契约文件
-	if len(generated.ModuleContracts) > 0 {
+	if len(normalizedContracts) > 0 {
 		fmt.Println()
-		fmt.Printf("  模块契约 (%d 个):\n", len(generated.ModuleContracts))
-		for name, content := range generated.ModuleContracts {
+		fmt.Printf("  模块契约 (%d 个):\n", len(normalizedContracts))
+		for name, content := range normalizedContracts {
 			filename := fmt.Sprintf("%s_CONTRACT.yaml", name)
 			path := filepath.Join(kontextDir, "module_contracts", filename)
 			if err := fileutil.WriteFile(path, []byte(content)); err != nil {

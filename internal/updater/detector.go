@@ -2,6 +2,7 @@ package updater
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -76,7 +77,10 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 			continue
 		}
 
-		if details := detectStaleContract(contract, moduleSummaries[moduleName]); details != "" {
+		contractPath := filepath.Join(kontextDir, "module_contracts", moduleName+"_CONTRACT.yaml")
+		contractFresh := isContractFresherThanSource(contractPath, projectDir, modules[moduleName])
+
+		if details := detectStaleContract(contract, moduleSummaries[moduleName], contractFresh); details != "" {
 			report.ContractChanges = append(report.ContractChanges, ContractChange{
 				Module:  moduleName,
 				Type:    "stale_contract",
@@ -164,7 +168,8 @@ func collectModuleSummaries(projectDir string, modules map[string][]string) map[
 }
 
 // detectStaleContract 通过比对契约中 owns 条目和代码导出符号检测契约是否过期。
-func detectStaleContract(contract schema.ModuleContract, summary string) string {
+// contractFresh 为 true 表示契约文件比所有源码文件都新，此时跳过"未记录导出符号"检测。
+func detectStaleContract(contract schema.ModuleContract, summary string, contractFresh bool) string {
 	if strings.TrimSpace(summary) == "" {
 		return "当前代码摘要为空，无法验证契约内容"
 	}
@@ -181,22 +186,46 @@ func detectStaleContract(contract schema.ModuleContract, summary string) string 
 		}
 	}
 
-	exported := extractExportedSymbols(summary)
-	extra := 0
-	for _, symbol := range exported {
-		if !contractMentionsSymbol(contract, symbol) {
-			extra++
-		}
-	}
-
 	var reasons []string
 	if missingOwns > 0 {
 		reasons = append(reasons, fmt.Sprintf("%d 个 owns 条目在当前代码摘要中未命中", missingOwns))
 	}
-	if extra >= 3 {
-		reasons = append(reasons, fmt.Sprintf("检测到 %d 个未记录的导出符号", extra))
+
+	// 如果契约文件比所有源码文件都新，说明刚更新过，跳过"未记录导出符号"检测
+	if !contractFresh {
+		exported := extractExportedSymbols(summary)
+		extra := 0
+		for _, symbol := range exported {
+			if !contractMentionsSymbol(contract, symbol) {
+				extra++
+			}
+		}
+		if extra*10 > len(exported)*3 && extra >= 5 {
+			reasons = append(reasons, fmt.Sprintf("检测到 %d 个未记录的导出符号", extra))
+		}
 	}
 	return strings.Join(reasons, "；")
+}
+
+// isContractFresherThanSource 判断契约文件是否比模块所有源码文件都新。
+// 如果是，说明契约刚被更新过，无需再次检测"未记录导出符号"。
+func isContractFresherThanSource(contractPath, projectDir string, sourceFiles []string) bool {
+	contractInfo, err := os.Stat(contractPath)
+	if err != nil {
+		return false
+	}
+	contractMod := contractInfo.ModTime()
+
+	for _, relPath := range sourceFiles {
+		fi, err := os.Stat(filepath.Join(projectDir, relPath))
+		if err != nil {
+			continue
+		}
+		if fi.ModTime().After(contractMod) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizedOwnsProbe 将 owns 条目规范化为可用于代码匹配的小写探针。
@@ -245,18 +274,39 @@ func extractExportedSymbols(summary string) []string {
 }
 
 // contractMentionsSymbol 检查契约中是否提及指定的导出符号。
+// 搜索范围：owns、public_interface（Name/Signature/Description）、modification_rules、module.Purpose。
 func contractMentionsSymbol(contract schema.ModuleContract, symbol string) bool {
 	lowerSymbol := strings.ToLower(symbol)
+
+	// owns 条目
 	for _, item := range contract.Owns {
 		if strings.Contains(strings.ToLower(item), lowerSymbol) {
 			return true
 		}
 	}
+
+	// public_interface: Name、Signature、Description
 	for _, item := range contract.PublicInterface {
-		if strings.EqualFold(item.Name, symbol) || strings.Contains(strings.ToLower(item.Signature), lowerSymbol) {
+		if strings.EqualFold(item.Name, symbol) ||
+			strings.Contains(strings.ToLower(item.Signature), lowerSymbol) ||
+			strings.Contains(strings.ToLower(item.Description), lowerSymbol) {
 			return true
 		}
 	}
+
+	// modification_rules: Rule、Reason
+	for _, rule := range contract.ModificationRules {
+		if strings.Contains(strings.ToLower(rule.Rule), lowerSymbol) ||
+			strings.Contains(strings.ToLower(rule.Reason), lowerSymbol) {
+			return true
+		}
+	}
+
+	// module.Purpose
+	if strings.Contains(strings.ToLower(contract.Module.Purpose), lowerSymbol) {
+		return true
+	}
+
 	return false
 }
 

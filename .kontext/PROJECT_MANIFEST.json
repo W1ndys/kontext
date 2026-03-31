@@ -1,1 +1,140 @@
-{"project":{"name":"Kontext","one_line":"面向 AI 辅助研发场景的上下文编译器，将项目知识编译为结构化上下文供大模型消费","type":"cli_tool","business_context":"解决 AI 编程工具（如 Claude Code、Codex 等）无法理解项目整体结构、规范约束和模块边界的问题。传统做法需要每次对话都重复补上下文，全量喂代码成本高且效果不稳定。Kontext 通过在项目内生成和维护 .kontext/ 目录中的结构化制品（项目清单、架构图、编码规范、模块契约），使 AI 编程工具可以直接读取这些上下文来理解项目，从而提升 AI 辅助编程的准确性和效率。","core_flows":[{"name":"初始化流程","steps":"配置 LLM → 运行 kontext init/init --scan → 生成 .kontext/ JSON 制品 → 运行 kontext validate 校验 → AI 编程工具读取 .kontext/ 获取项目上下文","entry_point":"cmd/init.go"},{"name":"扫描式初始化流程","steps":"扫描项目目录树 → LLM 识别关键文件 → 读取配置和依赖文件 → 提取源码概要 → 选择重点文件 → 生成 PROJECT_MANIFEST.json → 生成 ARCHITECTURE_MAP.json 和 CONVENTIONS.json → 生成模块契约 → 缓存检查点与断点恢复","entry_point":"cmd/init_scan.go"},{"name":"交互式初始化流程","steps":"用户输入项目描述 → 多轮对话澄清需求 → 生成需求摘要 → 分阶段生成 JSON 配置文件 → 写入 .kontext/","entry_point":"cmd/init_interactive.go"},{"name":"上下文打包流程（已弃用）","steps":"加载 .kontext/ 配置 → 扫描项目文件 → LLM 识别需求相关文件 → 收集候选上下文 → LLM 精筛候选上下文 → 整理相关文件与上下文 → 构建提示词模板 → LLM 生成 Markdown Prompt → 保存到 .kontext/prompts/","entry_point":"cmd/pack.go"},{"name":"变更检测与更新流程","steps":"检测项目源码与 .kontext/ 物料偏差 → 生成更新计划 → 用户确认 → 调用 LLM 重新生成受影响的 JSON 物料 → 写入文件","entry_point":"cmd/update.go"},{"name":"配置管理流程","steps":"加载 ~/.kontext/config.yaml → 支持环境变量覆盖 → 交互式/命令行配置 LLM 参数 → 保存配置","entry_point":"cmd/config.go"},{"name":"校验流程","steps":"加载 .kontext/ JSON 文件 → Schema 结构校验 → 必填字段检查 → 返回校验结果","entry_point":"cmd/validate.go"}]},"tech_stack":{"language":"Go 1.24.2","cli_framework":"spf13/cobra","data_format":"encoding/json","schema_validator":"invopop/jsonschema","template_engine":"Go text/template (embed)","llm_client":"openai/openai-go/v3","git_client":"internal 实现（updater 模块）","key_decisions":[{"decision":"使用 JSON 格式存储 .kontext/ 制品","reason":"便于 AI 编程工具直接解析，无需额外的 YAML 解析器，且 JSON Schema 可直接用于 LLM 结构化输出","constraint":"必须保持与 Go 结构体的一对一映射，使用 encoding/json 序列化"},{"decision":"所有 LLM 交互使用 JSON Schema 结构化输出","reason":"确保 AI 返回的是可解析的 JSON 而非自然语言，提高解析成功率和稳定性","constraint":"使用 invopop/jsonschema 动态生成 Schema，通过 OpenAI 的 response_format 参数约束输出"},{"decision":"init --scan 模式支持检查点缓存与断点恢复","reason":"扫描生成流程涉及多轮 LLM 调用，网络中断或长等待会导致进度丢失，缓存机制确保可恢复性","constraint":"缓存存储在 .kontext/.cache/，基于项目目录结构 hash 判断有效性"},{"decision":"提示词模板使用 Go embed 打包进二进制","reason":"避免运行时读取外部模板文件，简化部署，且模板变量在编译时确定","constraint":"模板使用 text/template 语法，每个模板在 templates.go 中暴露为 string 变量"},{"decision":"全局 LLM 配置使用 YAML 格式（~/.kontext/config.yaml）","reason":"用户手动编辑配置文件时 YAML 更友好，且配置项较少无需 JSON 的结构化优势","constraint":"通过 go.yaml.in/yaml.v4 解析，支持环境变量覆盖"},{"decision":"TUI 交互使用 Bubble Tea 框架","reason":"config 命令需要交互式模型选择，bubbletea 提供良好的终端 UI 体验","constraint":"仅用于 config 命令的模型选择器，其他命令使用 slog 结构化日志"}]},"scale":{"estimated_files":"70-90","modules":"12","phase":"production"},"status":{"completed_modules":["cmd/init","cmd/init_interactive","cmd/init_scan","cmd/pack","cmd/validate","cmd/config","cmd/config_tui","internal/generator","internal/packer","internal/llm","internal/schema","internal/config","internal/cache","internal/fileutil","internal/ui","internal/promptdoc","internal/logging","templates"],"in_progress":["cmd/update","internal/updater"],"not_started":[]}}
+{
+  "project": {
+    "name": "kontext",
+    "one_line": "AI 原生的上下文编译器，将项目知识编译为结构化 Markdown Prompt 供大模型消费",
+    "type": "cli_tool",
+    "business_context": "Kontext 是一个 Go 命令行工具，旨在解决 AI 辅助编程中上下文信息不足的问题。它通过解析项目源码和配置文件，生成高质量的结构化 Markdown Prompt 文档，供大模型直接消费，提升 AI 辅助编程的准确性和效率。项目维护 .kontext/ 目录作为核心知识库，包含项目清单、架构图、编码规范和模块契约等 JSON 制品。",
+    "core_flows": [
+      {
+        "name": "init 初始化流程",
+        "steps": "用户执行 init 命令 → 选择初始化模式（交互式/静态模板/自动扫描）→ 生成/加载 .kontext/ JSON 制品 → 保存到磁盘",
+        "entry_point": "cmd/init.go"
+      },
+      {
+        "name": "init --scan 自动扫描流程",
+        "steps": "扫描项目文件 → LLM 分析源码结构 → 识别关键文件和依赖关系 → 分阶段生成 PROJECT_MANIFEST/ARCHITECTURE_MAP/CONVENTIONS/CONTRACT → 检查点缓存与断点恢复",
+        "entry_point": "cmd/init_scan.go"
+      },
+      {
+        "name": "init --interactive AI 交互式初始化流程",
+        "steps": "用户输入项目描述 → 多轮对话澄清需求 → 生成需求摘要 → 并行生成各 JSON 制品 → 保存到磁盘",
+        "entry_point": "internal/generator/engine.go"
+      },
+      {
+        "name": "pack 打包流程",
+        "steps": "加载 .kontext/ 配置 → 扫描项目候选文件 → LLM 识别需求相关文件 → 收集上下文 → LLM 精筛 → 构建提示词模板 → 渲染并调用 LLM 生成 Prompt 文档 → 保存",
+        "entry_point": "internal/packer/engine.go"
+      },
+      {
+        "name": "update 更新流程",
+        "steps": "检测 git 变更文件 → 分析变更影响范围 → 规划需要更新的制品 → 逐个重新生成受影响的制品",
+        "entry_point": "cmd/update.go"
+      },
+      {
+        "name": "validate 校验流程",
+        "steps": "加载 .kontext/ 目录下所有 JSON 文件 → 逐个解析校验 → 汇总错误并报告",
+        "entry_point": "cmd/validate.go"
+      },
+      {
+        "name": "config 配置管理流程",
+        "steps": "加载 ~/.kontext/config.json → 支持 get/set/list 操作 → 持久化配置变更",
+        "entry_point": "cmd/config.go"
+      }
+    ]
+  },
+  "tech_stack": {
+    "language": "Go 1.24.2",
+    "cli_framework": "github.com/spf13/cobra v1.8.1",
+    "data_format": "encoding/json（制品格式）+ invopop/jsonschema v0.13.0（Schema 生成与校验）",
+    "schema_validator": "invopop/jsonschema（基于 Go 结构体生成 JSON Schema，LLM 响应使用结构化输出）",
+    "template_engine": "text/template（Go 标准库，模板嵌入使用 go:embed）",
+    "llm_client": "github.com/openai/openai-go/v3 v3.29.0（OpenAI 兼容客户端，支持 JSON Schema 结构化输出、流式输出、自动重试）",
+    "git_client": "无外部依赖（使用 Go 标准库 os/exec 调用 git 命令）",
+    "key_decisions": [
+      {
+        "decision": "制品存储格式从 YAML 迁移到 JSON",
+        "reason": "统一使用 JSON 格式简化解析逻辑，避免维护两套解析代码；Go 标准库 encoding/json 支持良好；JSON Schema 工具链成熟（invopop/jsonschema）",
+        "constraint": "必须向后兼容，迁移脚本需处理旧版 YAML 文件"
+      },
+      {
+        "decision": "采用检查点与断点恢复机制",
+        "reason": "init --scan 流程耗时较长，网络中断或人为中断会导致前序工作丢失；检查点机制确保用户可以从上次中断处继续",
+        "constraint": "检查点文件存储在 .kontext/.cache/ 目录；project hash 用于验证项目一致性"
+      },
+      {
+        "decision": "使用 Agent Orchestrator 编排 DAG 执行",
+        "reason": "init 阶段需要并行生成多个制品，制品间存在依赖关系（如 CONTRACT 依赖 ARCHITECTURE）；Orchestrator 支持拓扑排序、层内并行、失败跳过",
+        "constraint": "Orchestrator 封装在 internal/agent 包，支持 maxConcurrency 配置"
+      },
+      {
+        "decision": "所有 LLM 交互使用 JSON Schema 结构化输出",
+        "reason": "避免解析 Markdown 代码块的歧义，提高输出稳定性；OpenAI API 原生支持 JSON Schema 约束（strict 模式）",
+        "constraint": "使用 invopop/jsonschema 从 Go 结构体生成 Schema；结构体定义在 internal/llm/types.go"
+      },
+      {
+        "decision": "提示词模板使用 Go embed 嵌入二进制",
+        "reason": "减少运行时文件依赖，简化部署；模板修改需重新编译，但确保模板与二进制版本一致",
+        "constraint": "templates/ 目录下所有 .tmpl 文件通过 go:embed 嵌入；templates.go 暴露包级 string 变量"
+      },
+      {
+        "decision": "使用 Bubble Tea 构建 TUI 交互界面",
+        "reason": "init --interactive 和 config 命令需要交互式输入；Bubble Tea 提供声明式 TUI 开发体验，支持彩色输出和进度显示",
+        "constraint": "TUI 仅用于交互式配置和初始化；批处理模式（pack、validate）不使用 TUI"
+      },
+      {
+        "decision": "使用 log/slog 作为结构化日志库",
+        "reason": "Go 1.21+ 标准库，无需外部依赖；支持文本和 JSON 两种格式；可通过环境变量配置级别和格式",
+        "constraint": "日志文件输出到 .kontext/logs/；敏感信息（API Key）在 cmd/logging_helpers.go 中脱敏"
+      }
+    ]
+  },
+  "scale": {
+    "estimated_files": "70-90",
+    "modules": "14",
+    "phase": "production"
+  },
+  "status": {
+    "completed_modules": [
+      "cmd/init（基础框架）",
+      "cmd/init_interactive（交互式初始化）",
+      "cmd/init_templates（默认模板）",
+      "cmd/pack（打包流水线）",
+      "cmd/validate（配置校验）",
+      "cmd/config（TUI 配置管理）",
+      "cmd/root（根命令与日志初始化）",
+      "internal/llm（客户端、重试、结构化输出）",
+      "internal/schema（JSON 结构定义、加载、校验）",
+      "internal/packer/builder（模板数据构建、Markdown 组装）",
+      "internal/packer/collector（源码读取与上下文收集）",
+      "internal/packer/identifier（LLM 文件识别）",
+      "internal/packer/refiner（LLM 精筛）",
+      "internal/packer/namer（文件名生成）",
+      "internal/packer/matcher（关键词匹配）",
+      "internal/generator/engine（多阶段编排）",
+      "internal/generator/parser（源码解析）",
+      "internal/generator/tasks（任务构建）",
+      "internal/agent/orchestrator（DAG 编排与拓扑排序）",
+      "internal/agent/executor（任务执行器）",
+      "internal/agent/task（任务定义）",
+      "internal/fileutil（文件操作工具）",
+      "internal/logging（日志初始化）",
+      "internal/ui（颜色、进度显示、Tracker）",
+      "internal/promptdoc（Prompt 文档生成器）",
+      "internal/schema/architecture（架构图结构）",
+      "internal/schema/contract（模块契约结构）",
+      "internal/schema/manifest（项目清单结构）",
+      "internal/schema/conventions（编码规范结构）",
+      "templates（所有提示词模板）"
+    ],
+    "in_progress": [
+      "cmd/init_scan（自动扫描流程的阶段 1-9 流水线）",
+      "internal/cache/checkpoint（检查点保存与恢复）",
+      "internal/cache/hash（项目哈希计算）",
+      "internal/packer/engine（流水线进度回调优化）",
+      "internal/packer/prompt_template（模板渲染）",
+      "internal/updater（git 变更检测与制品更新）",
+      "internal/generator/types（类型定义与响应解析）"
+    ],
+    "not_started": []
+  }
+}

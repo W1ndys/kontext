@@ -1,0 +1,110 @@
+{
+  "module": {
+    "name": "internal/agent",
+    "path": "internal/agent",
+    "purpose": "提供基于 LLM 的 Agent 任务执行和 DAG 编排能力，管理具有依赖关系的任务并行执行，支持进度追踪和重试机制"
+  },
+  "owns": [
+    "AgentTask 结构体定义及任务生命周期管理",
+    "taskExecutor 单任务执行器，包含 LLM 调用和默认执行逻辑",
+    "Orchestrator 编排器，负责 DAG 任务的调度和并发控制",
+    "基于依赖关系的拓扑排序算法实现",
+    "并发执行层级的管理和调度",
+    "ProgressEvent 进度事件触发和处理",
+    "任务执行的重试逻辑（默认 maxRetries=3）",
+    "LLM 调用封装和响应格式化"
+  ],
+  "not_responsible_for": [
+    "internal/llm 的 Client 接口实现",
+    "internal/fileutil 的文件操作实现",
+    "任务图的构建（由调用方提供预定义的任务列表）",
+    "任务结果的持久化存储",
+    "任务输入参数的解析和验证"
+  ],
+  "depends_on": [
+    {
+      "module": "internal/llm",
+      "reason": "taskExecutor 通过 llm.Client 调用 LLM 服务生成任务结果"
+    },
+    {
+      "module": "internal/fileutil",
+      "reason": "executor 可能需要使用文件工具处理任务输出"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "AgentTask",
+      "signature": "type AgentTask struct { ID string; DependsOn []string; Label string; Prompt string; ... }",
+      "description": "LLM 生成任务定义，包含唯一标识、依赖关系、标签和提示词等属性"
+    },
+    {
+      "name": "ProgressEvent",
+      "signature": "type ProgressEvent struct { ... }",
+      "description": "任务执行进度事件，包含进度百分比和状态信息"
+    },
+    {
+      "name": "RunResult",
+      "signature": "type RunResult struct { ... }",
+      "description": "DAG 执行结果，包含成功/失败状态和输出映射"
+    },
+    {
+      "name": "Orchestrator",
+      "signature": "type Orchestrator struct { ... }",
+      "description": "任务编排器，管理 DAG 任务的拓扑排序和并发执行"
+    },
+    {
+      "name": "NewOrchestrator",
+      "signature": "func NewOrchestrator(client llm.Client) *Orchestrator",
+      "description": "创建新的编排器实例，接收 LLM 客户端"
+    },
+    {
+      "name": "Orchestrator.Run",
+      "signature": "func (o *Orchestrator) Run(tasks []*AgentTask) *RunResult",
+      "description": "执行任务 DAG，按依赖关系拓扑排序并发执行"
+    },
+    {
+      "name": "Orchestrator.SetMaxConcurrency",
+      "signature": "func (o *Orchestrator) SetMaxConcurrency(n int)",
+      "description": "设置最大并发执行任务数"
+    },
+    {
+      "name": "Orchestrator.SetProgressHandler",
+      "signature": "func (o *Orchestrator) SetProgressHandler(h func(ProgressEvent))",
+      "description": "设置进度回调函数，接收进度事件通知"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "Orchestrator.Run 方法的签名和返回值类型不得改变，以确保 DAG 执行逻辑的向后兼容性",
+      "reason": "调用方依赖 Run 方法执行任务，签名变化会导致所有使用方代码失效"
+    },
+    {
+      "rule": "AgentTask 的 DependsOn 字段语义必须保持不变，依赖关系决定了拓扑排序和执行顺序",
+      "reason": "依赖关系是 DAG 编排的核心，修改语义会导致任务执行顺序错误"
+    },
+    {
+      "rule": "并发执行层级的调度逻辑不得简化或绕过，必须严格遵守拓扑排序结果",
+      "reason": "并发控制是确保任务按依赖关系正确执行的关键，绕过会导致数据竞争"
+    },
+    {
+      "rule": "ProgressEvent 的进度百分比计算逻辑必须与实际执行状态一致",
+      "reason": "进度回调是调用方感知执行状态的唯一渠道，错误的进度信息会导致用户误导"
+    },
+    {
+      "rule": "重试机制的超时和最大重试次数必须可配置，默认值不得随意修改",
+      "reason": "默认值影响系统的鲁棒性，修改可能导致任务过早失败或无限重试"
+    },
+    {
+      "rule": "不得在 Orchestrator 内部直接实现 LLM 调用逻辑，所有 LLM 交互必须通过 llm.Client 接口",
+      "reason": "保持模块关注点分离，Orchestrator 负责编排而非具体 LLM 实现"
+    },
+    {
+      "rule": "RunResult 的成功/失败判定逻辑必须明确，不得在边界情况下产生歧义",
+      "reason": "调用方根据 RunResult 做后续决策，模糊的判定会导致错误处理"
+    },
+    {
+      "rule": "任务执行过程中的错误必须传播到 RunResult 中，不得静默丢弃",
+      "reason": "错误信息对调用方的调试和问题排查至关重要"
+    }
+  ]
+}

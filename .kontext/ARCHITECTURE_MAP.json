@@ -1,1 +1,140 @@
-{"layers": [{"name": "命令层", "description": "Cobra CLI 入口层，负责解析用户命令、初始化日志、编排业务流水线。包含 init、validate、update、config 等子命令。命令层本身不包含核心业务逻辑，仅负责任务分发和流程编排。", "packages": ["cmd"]}, {"name": "核心流水线层", "description": "实现 Kontext 的三大核心功能：generator（init 初始化与扫描生成）、updater（变更检测与物料更新）、packer（上下文打包，已弃用）。该层依赖基础设施层，通过调用 LLM 和 Schema 模块完成复杂的多阶段处理流程。", "packages": ["internal/generator", "internal/updater", "internal/packer"]}, {"name": "LLM 交互层", "description": "封装所有与大模型交互的逻辑。统一使用 OpenAI 兼容接口，支持结构化输出（JSON Schema）、流式对话、重试机制。是核心流水线层调用 LLM 的唯一入口，确保所有 AI 交互行为一致。", "packages": ["internal/llm"]}, {"name": "Schema 与配置层", "description": "定义和校验 .kontext/ 目录下的 JSON 制品结构。schema 包负责 ProjectManifest、ArchitectureMap、Conventions、ModuleContract 等数据模型及其验证逻辑；config 包负责全局 LLM 配置（~/.kontext/config.yaml）的加载与保存。", "packages": ["internal/schema", "internal/config"]}, {"name": "缓存与持久化层", "description": "支持 init --scan 模式的检查点缓存与断点恢复机制。cache 包提供扫描中间结果的持久化；promptdoc 包负责生成的 Markdown Prompt 文档的保存；fileutil 包提供通用的文件系统操作。", "packages": ["internal/cache", "internal/promptdoc", "internal/fileutil"]}, {"name": "UI 与日志层", "description": "提供命令行交互界面和日志能力。ui 包实现终端进度跟踪和颜色渲染；logging 包封装 slog 实现结构化日志。日志在 cmd/root.go 的 PersistentPreRunE 中统一初始化。", "packages": ["internal/ui", "internal/logging"]}, {"name": "模板资源层", "description": "存储所有提示词模板文件（.tmpl），通过 Go embed 打包进二进制。templates.go 暴露每个模板为包级 string 变量，供核心流水线层在生成阶段渲染使用。", "packages": ["templates"]}], "rules": [{"rule": "命令层只能依赖核心流水线层和基础设施层，不能直接依赖模板资源层", "reason": "命令层通过流水线层的 Engine 抽象调用模板，模板渲染逻辑封装在核心流水线内部，保持命令代码简洁且易于测试"}, {"rule": "核心流水线层只能依赖基础设施层和模板资源层，不能反向依赖命令层", "reason": "核心业务逻辑应独立于 CLI 框架，便于未来作为库被其他程序调用。流水线层通过回调函数（如 OnProgress、OnWarn）与命令层解耦"}, {"rule": "LLM 交互层是所有 AI 调用的唯一入口，核心流水线层禁止直接使用 openai SDK", "reason": "统一封装确保重试策略、日志、脱敏等行为一致。客户端工厂（client.go）根据配置创建实例，流水线层只依赖 Client 接口"}, {"rule": "Schema 层只负责数据定义和校验，不包含业务逻辑，核心流水线层通过 LoadBundle() 一次性加载所有配置", "reason": "配置加载与使用分离，schema 包不依赖任何其他 internal 包，保持纯粹的领域模型定义角色"}, {"rule": "缓存层只能被核心流水线层使用，命令层通过流水线间接访问缓存", "reason": "缓存是扫描生成流程的实现细节，命令层不应直接操作检查点文件。缓存基于项目目录结构 hash 判断有效性，存储在 .kontext/.cache/"}, {"rule": "模板资源层只能被核心流水线层导入，templates 包不依赖任何其他 internal 包", "reason": "模板是纯静态资源，不包含运行时逻辑。编译时嵌入二进制确保部署简单，无需外部模板文件"}, {"rule": "UI 层和日志层是最底层的公共基础设施，被所有上层依赖，但不能依赖任何业务层包", "reason": "UI 组件（进度条、颜色）和日志系统是横切关注点，应保持独立。任何业务逻辑的变更都不应影响日志和 UI 组件的行为"}, {"rule": "packer 包虽然已弃用，但保留其代码以维持功能完整性，不应被从架构中移除", "reason": "用户可能仍在使用 pack 命令，架构图应如实反映当前代码结构而非理想状态。新功能开发应避免依赖 packer 包的内部实现"}, {"rule": "updater 包处于 in_progress 状态，架构规则应同等对待，与已完成的包遵循相同约束", "reason": "在制品完成前应保持与其他包一致的分层约束，避免后续重构成本。detector、planner、executor 的职责分离应符合核心流水线层的整体设计"}]}
+{
+  "layers": [
+    {
+      "name": "命令层",
+      "description": "Cobra CLI 命令入口，负责解析用户输入、初始化日志、调用核心业务模块。包含 init、pack、validate、update、config 五个子命令，以及交互式 TUI 界面。",
+      "packages": [
+        "cmd/root.go (根命令、日志初始化、PersistentPreRunE)",
+        "cmd/init.go (init 命令定义与标志解析)",
+        "cmd/init_interactive.go (交互式初始化流程：runInteractiveInit、runAIInit、runStaticInitWithOverwrite)",
+        "cmd/init_scan.go (自动扫描初始化流程：scanPipelineContext、scanStageData、检查点恢复)",
+        "cmd/init_templates.go (默认 JSON 模板内容)",
+        "cmd/init_helpers.go (init 命令辅助函数)",
+        "cmd/pack.go (pack 命令：resolvePackTask、readTaskFromPrompt)",
+        "cmd/validate.go (validate 命令：调用 schema.ValidateBundle)",
+        "cmd/update.go (update 命令：调用 updater 模块)",
+        "cmd/config.go (config 命令：交互式配置管理)",
+        "cmd/config_tui.go (config 命令的 Bubble Tea TUI 实现)",
+        "cmd/logging_helpers.go (敏感信息脱敏、命名日志器)"
+      ]
+    },
+    {
+      "name": "核心业务层",
+      "description": "实现 Kontext 的核心功能逻辑，包括生成器（init --interactive）、打包器（pack）、Agent 编排器（并行生成制品）、更新器（update）。这一层直接依赖 LLM 层和基础设施层。",
+      "packages": [
+        "internal/generator/engine.go (生成器引擎：RunInteractiveInit、runInterview、generateAndWrite)",
+        "internal/generator/parser.go (源码解析与文件分析)",
+        "internal/generator/tasks.go (Init 任务构建：BuildInitTasks)",
+        "internal/generator/types.go (InterviewResponse、GeneratedContent、AnalyzedFiles、SelectedFiles)",
+        "internal/packer/engine.go (打包引擎：10 阶段流水线编排)",
+        "internal/packer/collector.go (源码读取与上下文收集：CollectContext、PreloadIdentifiedFiles)",
+        "internal/packer/identifier.go (LLM 文件识别：IdentifyRelevantFiles)",
+        "internal/packer/refiner.go (LLM 精筛：RefineContext)",
+        "internal/packer/builder.go (Markdown 组装：BuildTemplateData)",
+        "internal/packer/matcher.go (关键词匹配：MatchFiles)",
+        "internal/packer/namer.go (文件名生成：GenerateFilenameSuggestion)",
+        "internal/packer/limits.go (流水线限制检查)",
+        "internal/packer/types.go (MentionedFiles、IdentifiedFile、CandidateContext、RefineResult)",
+        "internal/packer/prompt_template.go (模板渲染入口)",
+        "internal/agent/orchestrator.go (DAG 编排器：拓扑排序、层内并行、失败跳过)",
+        "internal/agent/executor.go (任务执行器：taskExecutor)",
+        "internal/agent/task.go (AgentTask、TaskResult、RunResult、ProgressEvent 定义)",
+        "internal/updater/detector.go (git 变更检测)",
+        "internal/updater/executor.go (更新执行)",
+        "internal/updater/planner.go (更新规划)",
+        "internal/updater/types.go (UpdateAction、ProgressEvent)"
+      ]
+    },
+    {
+      "name": "LLM 交互层",
+      "description": "封装 OpenAI 兼容 API 调用，提供结构化输出、流式输出、自动重试等能力。所有业务模块的 LLM 调用必须经过此层。",
+      "packages": [
+        "internal/llm/client.go (客户端工厂：NewClient)",
+        "internal/llm/openai.go (openaiClient 实现：Generate、Chat、ChatStream、ChatStructured)",
+        "internal/llm/retry.go (重试逻辑：ChatWithRetry、ChatStructuredWithRetry、ChatStreamWithRetry)",
+        "internal/llm/types.go (Config、GenerateRequest、ChatRequest、Message 等接口定义)",
+        "internal/llm/errors.go (错误类型定义：ErrOutputTruncated 等)"
+      ]
+    },
+    {
+      "name": "Schema 定义层",
+      "description": "定义 .kontext/ 目录下所有 JSON 制品的 Go 结构体，提供加载和校验功能。此层为纯数据定义，不依赖其他 internal 包。",
+      "packages": [
+        "internal/schema/architecture.go (ArchitectureMap、Layer、Rule 结构体)",
+        "internal/schema/contract.go (ModuleContract、ModuleInfo、ModuleDependency 定义与校验)",
+        "internal/schema/manifest.go (ProjectManifest、Project、TechStack、Scale 结构体)",
+        "internal/schema/conventions.go (Conventions 结构体)",
+        "internal/schema/loader.go (LoadBundle、ValidateBundle：批量加载与校验)",
+        "internal/schema/types.go (共享类型定义)"
+      ]
+    },
+    {
+      "name": "基础设施层",
+      "description": "提供日志、配置、文件操作、UI、缓存、Prompt 文档生成等通用能力，被核心业务层依赖，但彼此之间无循环依赖。",
+      "packages": [
+        "internal/logging/logger.go (结构化日志初始化：Init、Options、环境变量配置)",
+        "internal/config/config.go (全局 LLM 配置：Load、ToLLMConfig、ConfigFromEnv)",
+        "internal/fileutil/io.go (文件读写：ReadFile、WriteFile、EnsureDir、DirExists、FileExists)",
+        "internal/fileutil/scanner.go (目录扫描：ScanDirectoryTree)",
+        "internal/ui/color.go (彩色输出：Info、Success、Warn、Error)",
+        "internal/ui/progress.go (进度显示：Tracker、Task)",
+        "internal/cache/checkpoint.go (检查点保存与恢复：Checkpoint、SaveCheckpoint、LoadStageResult)",
+        "internal/cache/hash.go (项目哈希计算：ComputeProjectHash)",
+        "internal/promptdoc/writer.go (Markdown Prompt 文档生成：SavePrompt、GenerateFilename)"
+      ]
+    },
+    {
+      "name": "模板资源层",
+      "description": "通过 Go embed 打包的提示词模板文件，编译时嵌入二进制，运行时通过 templates.go 暴露的包级 string 变量使用。",
+      "packages": [
+        "templates/init_*.tmpl (init 流程的提示词模板：interview、scan、generate)",
+        "templates/pack_*.tmpl (pack 流程的提示词模板：identify、refine、filename)",
+        "templates/llm_*.tmpl (通用 LLM 提示词模板：system_prompt、user_prompt)",
+        "templates/update_*.tmpl (update 流程的提示词模板)",
+        "templates/templates.go (Go embed 声明，暴露所有模板为 string 变量)"
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "rule": "命令层 (cmd/) 单向依赖核心业务层 (internal/generator、internal/packer、internal/updater)",
+      "reason": "cmd/ 通过调用 generator/packer/updater 的公开函数实现 CLI 功能，不应反向依赖。核心业务模块不应 import cmd 包。"
+    },
+    {
+      "rule": "核心业务层依赖 LLM 交互层，不直接调用 openai-go 库",
+      "reason": "internal/llm 作为统一入口封装第三方 LLM 库，便于后续切换 Provider 或添加 Mock 测试。核心业务层通过 Client 接口与 LLM 交互。"
+    },
+    {
+      "rule": "核心业务层依赖基础设施层，但基础设施层内部无循环依赖",
+      "reason": "generator/packer/agent/updater 依赖 fileutil、schema、logging、ui 等基础设施包。基础设施各子包之间保持独立，避免循环依赖导致的编译问题。"
+    },
+    {
+      "rule": "Schema 定义层不依赖其他 internal 包",
+      "reason": "internal/schema 仅定义数据结构和加载逻辑，被核心业务层和命令层共同依赖。保持其独立性可避免架构层级混乱。"
+    },
+    {
+      "rule": "模板资源层通过 go:embed 嵌入二进制，被核心业务层通过 string 变量引用",
+      "reason": "templates/ 目录的 .tmpl 文件在编译时通过 go:embed 嵌入，templates.go 暴露为包级 string 变量。核心业务层直接引用这些变量，而非运行时读取文件。"
+    },
+    {
+      "rule": "Agent Orchestrator 编排核心业务层的制品生成任务，构成 DAG 拓扑",
+      "reason": "init --interactive 阶段需要并行生成多个 JSON 制品（manifest→architecture→conventions→contracts），Orchestrator 通过拓扑排序确保依赖顺序，层内任务可并行执行。"
+    },
+    {
+      "rule": "Pack 引擎采用 10 阶段流水线，各阶段顺序执行但可降级",
+      "reason": "pack 流程从加载配置到保存文档分为 10 个阶段。LLM 调用失败时（如文件识别、精筛）会降级继续，而非整体失败，保证核心功能可用。"
+    },
+    {
+      "rule": "init --scan 支持检查点缓存与断点恢复",
+      "reason": "扫描流程耗时较长，检查点机制确保网络中断后可从上次完成阶段继续。scanPipelineContext 保存中间状态，scanStageData 封装阶段 1-5 的缓存数据。"
+    },
+    {
+      "rule": "所有 LLM 响应使用 JSON Schema 结构化输出",
+      "reason": "通过 invopop/jsonschema 从 Go 结构体生成 Schema，OpenAI API 使用 strict 模式约束输出。避免解析 Markdown 代码块的歧义，提高输出稳定性。"
+    },
+    {
+      "rule": "日志层在 cmd/root.go 的 PersistentPreRunE 中统一初始化",
+      "reason": "所有子命令执行前通过 PersistentPreRunE 初始化 slog，支持环境变量配置级别和格式。敏感信息在 cmd/logging_helpers.go 中脱敏后再记录。"
+    }
+  ]
+}

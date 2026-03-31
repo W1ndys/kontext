@@ -1,30 +1,174 @@
 {
+  "depends_on": [
+    {
+      "module": "lipgloss",
+      "reason": "提供终端颜色和样式渲染能力"
+    },
+    {
+      "module": "go-isatty",
+      "reason": "检测终端是否为 TTY 以决定输出行为"
+    }
+  ],
+  "modification_rules": [
+    {
+      "reason": "确保命令行界面的视觉体验统一",
+      "rule": "修改颜色渲染函数时必须保持与其他模块（如logging）的视觉风格一致性"
+    },
+    {
+      "reason": "保证终端输出的稳定性和用户体验",
+      "rule": "Tracker的渲染循环实现必须考虑终端刷新频率，避免过度渲染导致终端闪烁"
+    },
+    {
+      "reason": "确保脚本和CI/CD环境下的兼容性和稳定性",
+      "rule": "新增UI函数时必须确保在非TTY环境下行为正确（静默或优雅降级）"
+    },
+    {
+      "reason": "保持UI模块的纯粹性，便于复用和维护",
+      "rule": "不得在UI模块中引入业务逻辑依赖"
+    },
+    {
+      "reason": "确保lipgloss和go-isatty的兼容性",
+      "rule": "修改depends_on中的依赖包时需要评估对终端兼容性的影响"
+    },
+    {
+      "reason": "保证多线程环境下的数据一致性",
+      "rule": "Tracker的Interject方法必须在持有锁的情况下执行，以避免与渲染循环产生竞态条件"
+    },
+    {
+      "reason": "确保进度跟踪的准确性",
+      "rule": "Task状态变更必须同步更新Tracker的内部状态，否则可能导致渲染不一致"
+    }
+  ],
   "module": {
     "name": "ui",
     "path": "internal/ui",
     "purpose": "提供命令行交互界面能力，包括终端进度跟踪（Tracker）和颜色渲染"
   },
-  "owns": [
-    "终端进度跟踪器（Tracker）的实现",
-    "颜色渲染工具函数",
-    "spinner 动画帧定义"
-  ],
   "not_responsible_for": [
     "日志记录功能（由 logging 包负责）",
     "配置管理（由 config 包负责）",
     "业务逻辑实现"
   ],
-  "depends_on": [],
+  "owns": [
+    "终端进度跟踪器（Tracker）的实现",
+    "单个任务状态管理（Task）",
+    "spinner 动画帧定义",
+    "颜色渲染工具函数（Error/Warn/Success/Info/Stage/Dim/Plain）",
+    "终端输出格式化（Println/Printf）",
+    "终端检测与输出目标管理（IsTTY/SetWriter/Writer）",
+    "终端样式定义（initStyles）",
+    "Tracker 挂起与恢复（suspendTracker）"
+  ],
   "public_interface": [
     {
+      "description": "终端进度跟踪器，管理多个任务的进度显示和动画渲染",
       "name": "Tracker",
-      "signature": "type Tracker struct",
-      "description": "终端进度跟踪器，管理多个任务的进度显示"
+      "signature": "type Tracker struct"
     },
     {
+      "description": "单个任务的状态句柄，提供Done、Fail、Update等操作方法",
       "name": "Task",
-      "signature": "type Task struct",
-      "description": "单个任务的状态和操作，包含Done、Fail、Update等方法"
+      "signature": "type Task struct"
+    },
+    {
+      "description": "创建并返回一个新的Tracker实例",
+      "name": "NewTracker",
+      "signature": "func NewTracker() *Tracker"
+    },
+    {
+      "description": "启动Tracker的渲染循环和spinner动画",
+      "name": "Tracker.Start",
+      "signature": "func (tr *Tracker) Start()"
+    },
+    {
+      "description": "停止Tracker的渲染循环并清理终端输出",
+      "name": "Tracker.Stop",
+      "signature": "func (tr *Tracker) Stop()"
+    },
+    {
+      "description": "添加一个新任务并返回Task句柄",
+      "name": "Tracker.AddTask",
+      "signature": "func (tr *Tracker) AddTask(label string) *Task"
+    },
+    {
+      "description": "在进度渲染期间临时注入执行指定函数",
+      "name": "Tracker.Interject",
+      "signature": "func (tr *Tracker) Interject(fn func())"
+    },
+    {
+      "description": "标记任务为已完成状态",
+      "name": "Task.Done",
+      "signature": "func (t *Task) Done()"
+    },
+    {
+      "description": "标记任务为失败状态并显示错误信息",
+      "name": "Task.Fail",
+      "signature": "func (t *Task) Fail(err error)"
+    },
+    {
+      "description": "更新任务的显示标签",
+      "name": "Task.Update",
+      "signature": "func (t *Task) Update(label string)"
+    },
+    {
+      "description": "输出红色错误消息到终端",
+      "name": "Error",
+      "signature": "func Error(format string, args ...any)"
+    },
+    {
+      "description": "输出黄色警告消息到终端",
+      "name": "Warn",
+      "signature": "func Warn(format string, args ...any)"
+    },
+    {
+      "description": "输出绿色成功消息到终端",
+      "name": "Success",
+      "signature": "func Success(format string, args ...any)"
+    },
+    {
+      "description": "输出蓝色信息消息到终端",
+      "name": "Info",
+      "signature": "func Info(format string, args ...any)"
+    },
+    {
+      "description": "输出阶段标题样式消息到终端",
+      "name": "Stage",
+      "signature": "func Stage(format string, args ...any)"
+    },
+    {
+      "description": "输出灰色暗淡样式消息到终端",
+      "name": "Dim",
+      "signature": "func Dim(format string, args ...any)"
+    },
+    {
+      "description": "输出无样式纯文本消息到终端",
+      "name": "Plain",
+      "signature": "func Plain(format string, args ...any)"
+    },
+    {
+      "description": "格式化打印参数到终端并换行",
+      "name": "Println",
+      "signature": "func Println(args ...any)"
+    },
+    {
+      "description": "格式化打印到终端（类似fmt.Printf）",
+      "name": "Printf",
+      "signature": "func Printf(format string, args ...any)"
+    },
+    {
+      "description": "检测输出目标是否为TTY终端",
+      "name": "IsTTY",
+      "signature": "func IsTTY() bool"
+    },
+    {
+      "description": "设置UI模块的输出目标Writer",
+      "name": "SetWriter",
+      "signature": "func SetWriter(w io.Writer)"
+    },
+    {
+      "description": "获取当前配置的输出目标Writer",
+      "name": "Writer",
+      "signature": "func Writer() io.Writer"
     }
   ]
 }

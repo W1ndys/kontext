@@ -1,26 +1,4 @@
 {
-  "module": {
-    "name": "updater",
-    "path": "internal/updater",
-    "purpose": "实现 update 命令逻辑，检测项目源码与 .kontext/ 物料的偏差，生成更新计划，经用户确认后调用 LLM 重新生成受影响的制品"
-  },
-  "owns": [
-    "检测项目源码目录与 .kontext/ 物料的变更差异",
-    "识别新增或删除的包目录（对比 ARCHITECTURE_MAP.json 中的 packages）",
-    "检测模块契约是否过期（对比导出符号和 owns 条目）",
-    "检测缺少契约的新模块或代码已删除但契约仍存在的废弃模块",
-    "检查 PROJECT_MANIFEST.json 是否因技术栈变化需要更新",
-    "生成结构化的更新计划，包含变更项及原因",
-    "逐个调用 LLM 重新生成受影响的 JSON 物料并写入文件",
-    "updater/types.go 中定义的变更检测和更新计划的数据模型"
-  ],
-  "not_responsible_for": [
-    "直接操作检查点文件（由 cache 模块负责）",
-    "LLM 调用的底层实现（由 llm 模块负责）",
-    "用户交互界面渲染细节（由 ui 模块负责）",
-    "配置文件加载（由 config 模块负责）",
-    "生成 Prompt 文档（由 promptdoc 模块负责）"
-  ],
   "depends_on": [
     {
       "module": "config",
@@ -33,84 +11,62 @@
     {
       "module": "ui",
       "reason": "向用户展示更新计划并获取确认反馈"
-    }
-  ],
-  "public_interface": [
-    {
-      "name": "ChangeType",
-      "signature": "type ChangeType string",
-      "description": "变更类型枚举，标识检测到的变更种类（如新增包、删除包、契约过期等）"
     },
     {
-      "name": "Change",
-      "signature": "type Change struct { Type ChangeType; Module string; Description string }",
-      "description": "单个变更项，包含变更类型、受影响模块和描述信息"
-    },
-    {
-      "name": "Plan",
-      "signature": "type Plan struct { Changes []Change; NeedsUpdate bool }",
-      "description": "更新计划，包含所有检测到的变更项和是否需要更新的标志"
-    },
-    {
-      "name": "Detector",
-      "signature": "type Detector struct { ... }",
-      "description": "变更检测器，扫描源码目录与现有物料进行比对"
-    },
-    {
-      "name": "Detector.Detect",
-      "signature": "func (d *Detector) Detect(ctx context.Context, projectRoot string) (*Plan, error)",
-      "description": "执行变更检测，返回更新计划"
-    },
-    {
-      "name": "Planner",
-      "signature": "type Planner struct { ... }",
-      "description": "更新计划编排器，负责组织更新流程"
-    },
-    {
-      "name": "Planner.CreatePlan",
-      "signature": "func (p *Planner) CreatePlan(ctx context.Context, projectRoot string) (*Plan, error)",
-      "description": "创建更新计划，内部调用 Detector.Detect"
-    },
-    {
-      "name": "Planner.ExecutePlan",
-      "signature": "func (p *Planner) ExecutePlan(ctx context.Context, plan *Plan) error",
-      "description": "执行更新计划，逐个调用 LLM 重新生成受影响的制品"
-    },
-    {
-      "name": "Executor",
-      "signature": "type Executor struct { ... }",
-      "description": "更新执行器，实际调用 LLM 并写入文件"
-    },
-    {
-      "name": "Executor.Execute",
-      "signature": "func (e *Executor) Execute(ctx context.Context, changes []Change, projectRoot string) error",
-      "description": "执行变更更新，对每个 Change 调用 LLM 生成新内容并保存"
+      "module": "schema",
+      "reason": "读取和解析 .kontext/ 目录下的物料 schema 数据"
     }
   ],
   "modification_rules": [
     {
-      "rule": "updater 模块处于 in_progress 状态，修改时需保持与已完成模块一致的质量标准",
-      "reason": "保持架构一致性，避免后续重构成本"
+      "reason": "保持架构一致性，避免后续重构成本",
+      "rule": "updater 模块处于 in_progress 状态，修改时需保持与已完成模块一致的质量标准"
     },
     {
-      "rule": "detector、planner、executor 的职责分离应严格遵守，不能相互侵入",
-      "reason": "确保模块内部分层清晰，便于单元测试和维护"
+      "reason": "确保模块内部分层清晰，便于单元测试和维护",
+      "rule": "detector、planner、executor 的职责分离应严格遵守，不能相互侵入"
     },
     {
-      "rule": "所有 LLM 调用必须通过 llm 模块进行，禁止直接使用 openai SDK",
-      "reason": "统一封装确保重试策略、日志、脱敏等行为一致"
+      "reason": "统一封装确保重试策略、日志、脱敏等行为一致",
+      "rule": "所有 LLM 调用必须通过 llm 模块进行，禁止直接使用 openai SDK"
     },
     {
-      "rule": "变更检测逻辑应基于文件系统扫描和 schema 内容解析，不能依赖外部命令",
-      "reason": "确保跨平台兼容性和无外部依赖"
+      "reason": "确保跨平台兼容性和无外部依赖",
+      "rule": "变更检测逻辑应基于文件系统扫描和 schema 内容解析，不能依赖外部命令"
     },
     {
-      "rule": "ExecutePlan 方法在执行前必须展示计划并等待用户确认，不应自动执行",
-      "reason": "防止误操作导致 .kontext 制品被意外覆盖"
+      "reason": "防止误操作导致 .kontext 制品被意外覆盖",
+      "rule": "ExecutePlan 方法在执行前必须展示计划并等待用户确认，不应自动执行"
     },
     {
-      "rule": "检测逻辑应缓存已读取的 schema 数据，避免重复解析",
-      "reason": "优化性能，减少不必要的文件 IO 和 JSON 解析开销"
+      "reason": "优化性能，减少不必要的文件 IO 和 JSON 解析开销",
+      "rule": "检测逻辑应缓存已读取的 schema 数据，避免重复解析"
     }
+  ],
+  "module": {
+    "name": "updater",
+    "path": "internal/updater",
+    "purpose": "实现 update 命令逻辑，检测项目源码与 .kontext/ 物料的偏差，生成更新计划，经用户确认后调用 LLM 重新生成受影响的制品"
+  },
+  "not_responsible_for": [
+    "直接操作检查点文件（由 cache 模块负责）",
+    "LLM 调用的底层实现（由 llm 模块负责）",
+    "用户交互界面渲染细节（由 ui 模块负责）",
+    "配置文件加载（由 config 模块负责）",
+    "生成 Prompt 文档（由 promptdoc 模块负责）",
+    "确定项目根目录路径（由 CLI 层负责）"
+  ],
+  "owns": [
+    "检测项目源码目录与 .kontext/ 物料的变更差异",
+    "识别新增或删除的包目录（对比 ARCHITECTURE_MAP.json 中的 packages）",
+    "检测模块契约是否过期（对比导出符号和 owns 条目）",
+    "检测缺少契约的新模块或代码已删除但契约仍存在的废弃模块",
+    "检查 PROJECT_MANIFEST.json 是否因技术栈变化需要更新",
+    "生成结构化的变更报告（ChangeReport）和更新计划（Plan）",
+    "逐个调用 LLM 重新生成受影响的 JSON 物料并写入文件",
+    "变更检测和更新计划的数据模型（types.go）",
+    "变更检测主函数 DetectChanges",
+    "更新计划编排函数 PlanUpdates",
+    "更新执行器 Executor 及 NewExecutor 构造器"
   ]
 }

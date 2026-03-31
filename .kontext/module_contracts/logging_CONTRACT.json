@@ -1,6 +1,111 @@
 {
-  "name": "logging",
-  "path": "internal/logging",
-  "purpose": "封装 slog 实现结构化日志，支持 text 和 json 格式，支持日志文件输出",
-  "depends_on": []
+  "depends_on": [],
+  "modification_rules": [
+    {
+      "reason": "slog 是标准库日志接口，保持兼容性确保其他模块可无缝集成",
+      "rule": "必须保持与 slog.Logger 接口的兼容性，所有公共函数返回值必须是 *slog.Logger"
+    },
+    {
+      "reason": "日志系统初始化失败可能导致关键信息丢失，必须显式处理错误",
+      "rule": "Init 函数必须返回 (*slog.Logger, error)，错误处理不能被忽略"
+    },
+    {
+      "reason": "下游日志分析工具依赖统一的字段结构，格式变更可能导致解析失败",
+      "rule": "日志格式（text/json）的切换不能改变日志字段结构"
+    },
+    {
+      "reason": "日志是辅助功能，不应成为性能瓶颈或导致命令响应延迟",
+      "rule": "日志文件写入必须使用非阻塞方式，避免日志操作影响命令执行性能"
+    },
+    {
+      "reason": "这些是用户配置日志行为的标准方式，变更会破坏现有用户配置",
+      "rule": "环境变量 KONTEXT_LOG_LEVEL 和 KONTEXT_LOG_FORMAT 的读取逻辑必须保留"
+    },
+    {
+      "reason": "logging 模块职责是提供通用日志基础设施，业务逻辑应在调用方处理",
+      "rule": "不能引入业务逻辑相关的日志字段或上下文"
+    },
+    {
+      "reason": "确保不同命令的日志可被正确区分和过滤",
+      "rule": "CommandLogger 函数必须为命令日志添加统一的命令名前缀格式"
+    },
+    {
+      "reason": "这些函数可能被多个模块调用，签名变更会导致连锁破坏",
+      "rule": "路径相关函数（CurrentLogFilePath、DefaultLogFilePath、DefaultLogDirPath）的签名不能改变"
+    },
+    {
+      "reason": "根据模块职责定义，日志的传输、分析和归档不属于该模块范畴",
+      "rule": "不能在该模块中实现日志的远程传输、聚合或存储归档功能"
+    },
+    {
+      "reason": "多 handler 同时写入时需避免竞态条件导致日志混乱",
+      "rule": "fanoutHandler 的实现必须确保多 handler 场景下的日志顺序一致性"
+    }
+  ],
+  "module": {
+    "name": "logging",
+    "path": "internal/logging",
+    "purpose": "封装 slog 实现结构化日志，支持 text 和 json 格式，支持日志文件输出"
+  },
+  "not_responsible_for": [
+    "日志的聚合、收集和分析",
+    "日志的远程传输或网络发送",
+    "日志的长期存储和归档策略",
+    "日志监控或告警逻辑",
+    "应用级别的业务逻辑",
+    "非结构化日志处理"
+  ],
+  "owns": [
+    "基于 slog 的结构化日志初始化和配置",
+    "text 和 json 格式的日志处理器实现",
+    "日志文件输出管理（打开、写入、轮转）",
+    "fanoutHandler 实现（多 handler 分发）",
+    "命令级别日志生成（CommandLogger）",
+    "日志级别解析和配置",
+    "默认日志文件路径管理",
+    "日志目录路径管理",
+    "日志相关的环境变量读取（KONTEXT_LOG_LEVEL, KONTEXT_LOG_FORMAT）"
+  ],
+  "public_interface": [
+    {
+      "description": "日志初始化配置选项",
+      "name": "Options",
+      "signature": "type Options struct { Level string; Format string; Output string; },"
+    },
+    {
+      "description": "根据配置选项初始化日志系统，返回 slog.Logger",
+      "name": "Init",
+      "signature": "func Init(opts Options) (*slog.Logger, error)"
+    },
+    {
+      "description": "获取默认日志记录器实例",
+      "name": "Default",
+      "signature": "func Default() *slog.Logger"
+    },
+    {
+      "description": "解析日志级别字符串为 slog.Level",
+      "name": "ParseLevel",
+      "signature": "func ParseLevel(level string) (slog.Level, error)"
+    },
+    {
+      "description": "创建带命令名前缀的日志记录器",
+      "name": "CommandLogger",
+      "signature": "func CommandLogger(commandName string) *slog.Logger"
+    },
+    {
+      "description": "获取当前日志文件路径",
+      "name": "CurrentLogFilePath",
+      "signature": "func CurrentLogFilePath() string"
+    },
+    {
+      "description": "生成基于时间的默认日志文件路径",
+      "name": "DefaultLogFilePath",
+      "signature": "func DefaultLogFilePath(now time.Time) (string, error)"
+    },
+    {
+      "description": "获取默认日志目录路径",
+      "name": "DefaultLogDirPath",
+      "signature": "func DefaultLogDirPath() (string, error)"
+    }
+  ]
 }

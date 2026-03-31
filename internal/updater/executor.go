@@ -371,8 +371,17 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		strings.TrimLeft(strings.TrimRight(part2aContent, "\n"), "\n") + "\n\n" +
 		strings.TrimLeft(part2bContent, "\n")
 
+	// 尝试直接校验拼接结果
 	if validateErr := validateGeneratedContent(action, merged); validateErr != nil {
-		return "", fmt.Errorf("分段拼接后的契约校验失败: %w", validateErr)
+		// 拼接结果不合法，尝试将多个 JSON 对象合并为一个
+		mergedJSON, mergeErr := mergeJSONObjects(merged)
+		if mergeErr != nil {
+			return "", fmt.Errorf("分段拼接后的契约校验失败: %w", validateErr)
+		}
+		if validateErr2 := validateGeneratedContent(action, mergedJSON); validateErr2 != nil {
+			return "", fmt.Errorf("分段拼接后的契约校验失败: %w", validateErr2)
+		}
+		return mergedJSON, nil
 	}
 
 	return merged, nil
@@ -676,6 +685,38 @@ func (e *Executor) emitProgress(event ProgressEvent) {
 	if e.onProgress != nil {
 		e.onProgress(event)
 	}
+}
+
+// mergeJSONObjects 将多个拼接在一起的 JSON 对象合并为单个 JSON 对象。
+// 当 LLM 对分段请求返回完整 JSON 对象（而非 JSON 片段）时，
+// 简单的字符串拼接会产生 "{...}\n\n{...}\n\n{...}" 形式的多顶层值，
+// 此函数通过逐个解析并合并所有顶层键来修复该问题。
+func mergeJSONObjects(content string) (string, error) {
+	decoder := json.NewDecoder(strings.NewReader(content))
+	merged := make(map[string]json.RawMessage)
+
+	objectCount := 0
+	for decoder.More() {
+		var obj map[string]json.RawMessage
+		if err := decoder.Decode(&obj); err != nil {
+			return "", fmt.Errorf("解析第 %d 个 JSON 对象失败: %w", objectCount+1, err)
+		}
+		objectCount++
+		for key, val := range obj {
+			merged[key] = val
+		}
+	}
+
+	if objectCount <= 1 {
+		// 只有一个或零个对象，无需合并
+		return content, fmt.Errorf("内容不包含多个 JSON 对象")
+	}
+
+	result, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("合并后序列化失败: %w", err)
+	}
+	return string(result), nil
 }
 
 // validateGeneratedContent 校验生成的 JSON 内容是否合法且符合对应结构。

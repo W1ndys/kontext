@@ -6,9 +6,20 @@ import (
 	"strings"
 )
 
-// stripCodeBlock 去除 LLM 返回内容中可能包裹的 markdown 代码块标记。
+// stripThinkingTokens 移除 LLM 响应中的 thinking tokens（如 <think>...</think>）。
+func stripThinkingTokens(s string) string {
+	re := regexp.MustCompile(`(?si)<think>.*?</think>`)
+	cleaned := re.ReplaceAllString(s, "")
+	if idx := strings.Index(strings.ToLower(cleaned), "<think>"); idx >= 0 {
+		cleaned = cleaned[:idx]
+	}
+	return strings.TrimSpace(cleaned)
+}
+
+// stripCodeBlock 去除 LLM 返回内容中可能包裹的 markdown 代码块标记和 thinking tokens。
 // 优先匹配 json 代码块，也支持 yaml、yml、无语言标记的 ``` 等。
 func stripCodeBlock(s string) string {
+	s = stripThinkingTokens(s)
 	s = strings.TrimSpace(s)
 	re := regexp.MustCompile("(?s)^```(?:json|ya?ml)?\\s*\n?(.*?)\\s*```$")
 	if m := re.FindStringSubmatch(s); len(m) == 2 {

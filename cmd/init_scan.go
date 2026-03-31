@@ -954,6 +954,12 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		step9Elapsed := time.Since(step9Start).Seconds()
 		ui.Success("   模块契约生成完成 (%.1f 秒)", step9Elapsed)
+
+		// 清理所有残留的 partial 文件（包括失败模块留下的临时产物）
+		for _, mod := range modules {
+			_ = os.Remove(partialPath(mod))
+		}
+
 		logger.Info("scan stage completed",
 			"stage", 9,
 			"stage_name", "generate_module_contracts",

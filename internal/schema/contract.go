@@ -81,11 +81,14 @@ func ContractModuleKey(c ModuleContract) string {
 }
 
 // NormalizeContractJSON 将契约 JSON 反序列化为 ModuleContract 再序列化回去，
-// 确保字段顺序与结构体定义一致（module → owns → not_responsible_for → depends_on → public_interface → modification_rules）。
-func NormalizeContractJSON(content string) (string, error) {
+// 确保字段顺序与结构体定义一致，并将 module.path 强制设为 modulePath（调用方传入的相对路径）。
+func NormalizeContractJSON(content, modulePath string) (string, error) {
 	var c ModuleContract
 	if err := json.Unmarshal([]byte(content), &c); err != nil {
 		return "", fmt.Errorf("解析契约 JSON 失败: %w", err)
+	}
+	if modulePath != "" {
+		c.Module.Path = modulePath
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

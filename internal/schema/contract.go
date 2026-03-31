@@ -1,6 +1,8 @@
 package schema
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -76,4 +78,21 @@ func ContractModuleKey(c ModuleContract) string {
 		return c.Module.Path
 	}
 	return c.Module.Name
+}
+
+// NormalizeContractJSON 将契约 JSON 反序列化为 ModuleContract 再序列化回去，
+// 确保字段顺序与结构体定义一致（module → owns → not_responsible_for → depends_on → public_interface → modification_rules）。
+func NormalizeContractJSON(content string) (string, error) {
+	var c ModuleContract
+	if err := json.Unmarshal([]byte(content), &c); err != nil {
+		return "", fmt.Errorf("解析契约 JSON 失败: %w", err)
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&c); err != nil {
+		return "", fmt.Errorf("序列化契约 JSON 失败: %w", err)
+	}
+	return buf.String(), nil
 }

@@ -297,9 +297,11 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 		}
 
 		ui.Plain("   识别到 %d 个配置文件 + %d 个关键源码文件", len(data.analyzed.ConfigFiles), len(data.analyzed.SourceFiles))
-		printFileListWithTitle("配置文件", data.analyzed.ConfigFiles, 8)
-		printFileListWithTitle("关键源码", data.analyzed.SourceFiles, 10)
-		fmt.Println()
+		tracker.Interject(func() {
+			printFileListWithTitle("配置文件", data.analyzed.ConfigFiles, 8)
+			printFileListWithTitle("关键源码", data.analyzed.SourceFiles, 10)
+			fmt.Println()
+		})
 		logger.Info("scan stage completed",
 			"stage", 2,
 			"stage_name", "analyze_project_files",
@@ -329,8 +331,10 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 		}
 		fmt.Fprint(ui.Writer(), "\r\033[K")
 		ui.Success("   ✓ 成功读取 %d 个配置文件", len(data.configFiles))
-		printFileList(readConfigFiles, 10)
-		fmt.Println()
+		tracker.Interject(func() {
+			printFileList(readConfigFiles, 10)
+			fmt.Println()
+		})
 		logger.Info("scan stage completed",
 			"stage", 3,
 			"stage_name", "read_config_files",
@@ -356,8 +360,10 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 		}
 		fmt.Fprint(ui.Writer(), "\r\033[K")
 		ui.Success("   ✓ 提取 %d 个文件概要", len(data.fileSummaries))
-		printFileList(extractedFiles, 10)
-		fmt.Println()
+		tracker.Interject(func() {
+			printFileList(extractedFiles, 10)
+			fmt.Println()
+		})
 		logger.Info("scan stage completed",
 			"stage", 4,
 			"stage_name", "extract_file_summaries",
@@ -402,8 +408,10 @@ func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) 
 			data.selected = selected
 		}
 		ui.Success("   ✓ 选择 %d 个重点文件深入分析", len(data.selected.KeyFiles))
-		printFileList(data.selected.KeyFiles, 10)
-		fmt.Println()
+		tracker.Interject(func() {
+			printFileList(data.selected.KeyFiles, 10)
+			fmt.Println()
+		})
 
 		// 读取重点文件内容
 		data.keyFileContents = make(map[string]string)

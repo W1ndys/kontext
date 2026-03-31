@@ -1,0 +1,28 @@
+{
+  "depends_on": [],
+  "module": {
+    "name": "schema",
+    "path": "internal/schema",
+    "purpose": "定义和校验 .kontext/ 目录下各类 JSON 制品的数据结构，包括 ProjectManifest、ArchitectureMap、Conventions、ModuleContract"
+  },
+  "not_responsible_for": [
+    "业务逻辑实现",
+    "文件系统操作",
+    "LLM 调用封装",
+    "配置加载逻辑（仅定义配置结构，不负责加载）",
+    "模板渲染",
+    "日志记录"
+  ],
+  "owns": [
+    "ProjectManifest 结构体定义与解析",
+    "ArchitectureMap 结构体定义与解析",
+    "ModuleContract 结构体定义与解析",
+    "Conventions 结构体定义与解析",
+    "各 JSON 制品的 Validate() 校验方法",
+    "LoadBundle() 配置批量加载接口",
+    "ValidateBundle() 配置验证接口",
+    "GetContractSchema() 等 Schema 导出函数",
+    "ContractFilename() 契约文件名生成",
+    "ContractModuleKey() 契约模块键提取"
+  ]
+}

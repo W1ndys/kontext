@@ -28,11 +28,6 @@ const (
 	defaultProjectDir = "."
 )
 
-var (
-	logLevel  string
-	logFormat string
-)
-
 var rootCmd = &cobra.Command{
 	Use:   "kontext",
 	Short: "AI 原生的上下文编译器 / AI-native context compiler for AI-assisted development",
@@ -44,24 +39,7 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 		DisableDefaultCmd: true,
 	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		level := logLevel
-		if !cmd.Flags().Changed("log-level") {
-			if envLevel := os.Getenv(logging.EnvLogLevel); envLevel != "" {
-				level = envLevel
-			}
-		}
-
-		format := logFormat
-		if !cmd.Flags().Changed("log-format") {
-			if envFormat := os.Getenv(logging.EnvLogFormat); envFormat != "" {
-				format = envFormat
-			}
-		}
-
-		logger, err := logging.Init(logging.Options{
-			Level:  level,
-			Format: format,
-		})
+		logger, err := logging.Init(logging.Options{})
 		if err != nil {
 			return err
 		}
@@ -80,9 +58,6 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", logging.DefaultLevel, "日志级别 debug|info|warn|error / Log level")
-	rootCmd.PersistentFlags().StringVar(&logFormat, "log-format", logging.DefaultFormat, "日志格式 text|json / Log format")
-
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(packCmd)

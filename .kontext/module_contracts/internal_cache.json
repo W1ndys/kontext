@@ -1,92 +1,93 @@
 {
-  "depends_on": [
-    {
-      "module": "fileutil",
-      "reason": "ComputeProjectHash 需要调用 fileutil.ScanDirectoryTree 进行项目目录扫描以计算项目结构 hash"
-    }
-  ],
   "module": {
     "name": "cache",
     "path": "internal/cache",
     "purpose": "提供 init --scan 的检查点缓存与断点恢复功能，支持扫描中间结果的持久化"
   },
-  "not_responsible_for": [
-    "文件内容的实际读取或写入",
-    "目录树扫描的具体实现",
-    "命令行参数的解析与验证",
-    "扫描逻辑的执行流程控制"
-  ],
   "owns": [
     "检查点（Checkpoint）的创建、序列化与反序列化",
     "分阶段扫描结果的保存与恢复",
     "项目结构 hash 计算与缓存有效性验证",
     "缓存目录结构管理"
   ],
+  "not_responsible_for": [
+    "文件内容的实际读取或写入",
+    "目录树扫描的具体实现",
+    "命令行参数的解析与验证",
+    "扫描逻辑的执行流程控制"
+  ],
+  "depends_on": [
+    {
+      "module": "fileutil",
+      "reason": "ComputeProjectHash 需要调用 fileutil.ScanDirectoryTree 进行项目目录扫描以计算项目结构 hash"
+    }
+  ],
   "public_interface": [
     {
-      "description": "检查点数据结构，包含项目 hash、当前阶段、生成文件状态等信息",
       "name": "Checkpoint",
-      "signature": "type Checkpoint struct { ... }"
+      "signature": "type Checkpoint struct { ... }",
+      "description": "检查点数据结构，包含项目 hash、当前阶段、生成文件状态等信息"
     },
     {
-      "description": "创建新的检查点实例",
       "name": "NewCheckpoint",
-      "signature": "func NewCheckpoint(projectHash string) *Checkpoint"
+      "signature": "func NewCheckpoint(projectHash string) *Checkpoint",
+      "description": "创建新的检查点实例"
     },
     {
-      "description": "将检查点元数据序列化保存到缓存目录",
       "name": "SaveCheckpoint",
-      "signature": "func SaveCheckpoint(cp *Checkpoint) error"
+      "signature": "func SaveCheckpoint(cp *Checkpoint) error",
+      "description": "将检查点元数据序列化保存到缓存目录"
     },
     {
-      "description": "从缓存目录加载检查点元数据",
       "name": "LoadCheckpoint",
-      "signature": "func LoadCheckpoint() (*Checkpoint, error)"
+      "signature": "func LoadCheckpoint() (*Checkpoint, error)",
+      "description": "从缓存目录加载检查点元数据"
     },
     {
-      "description": "验证检查点有效性，检查项目结构 hash 是否匹配",
       "name": "IsCheckpointValid",
-      "signature": "func IsCheckpointValid(projectDir string, maxDepth int) (bool, *Checkpoint, error)"
+      "signature": "func IsCheckpointValid(projectDir string, maxDepth int) (bool, *Checkpoint, error)",
+      "description": "验证检查点有效性，检查项目结构 hash 是否匹配"
     },
     {
-      "description": "更新检查点的当前阶段",
       "name": "UpdateCheckpointStage",
-      "signature": "func UpdateCheckpointStage(cp *Checkpoint, stage int) error"
+      "signature": "func UpdateCheckpointStage(cp *Checkpoint, stage int) error",
+      "description": "更新检查点的当前阶段"
     },
     {
-      "description": "标记生成文件的状态（完成/未完成）",
       "name": "UpdateGeneratedFile",
-      "signature": "func UpdateGeneratedFile(cp *Checkpoint, filename string, done bool) error"
+      "signature": "func UpdateGeneratedFile(cp *Checkpoint, filename string, done bool) error",
+      "description": "标记生成文件的状态（完成/未完成）"
     },
     {
-      "description": "保存分阶段扫描结果到缓存",
       "name": "SaveStageResult",
-      "signature": "func SaveStageResult(stage int, data interface{}) error"
+      "signature": "func SaveStageResult(stage int, data interface{}) error",
+      "description": "保存分阶段扫描结果到缓存"
     },
     {
-      "description": "从缓存加载指定阶段的扫描结果",
       "name": "LoadStageResult",
-      "signature": "func LoadStageResult(stage int, out interface{}) error"
+      "signature": "func LoadStageResult(stage int, out interface{}) error",
+      "description": "从缓存加载指定阶段的扫描结果"
     },
     {
-      "description": "保存分阶段结果的某个部分，支持断点续传",
       "name": "SaveStageResultPart",
-      "signature": "func SaveStageResultPart(stage int, part int, data interface{}) error"
+      "signature": "func SaveStageResultPart(stage int, part int, data interface{}) error",
+      "description": "保存分阶段结果的某个部分，支持断点续传"
     },
     {
-      "description": "加载分阶段结果的指定部分",
       "name": "LoadStageResultPart",
-      "signature": "func LoadStageResultPart(stage int, part int, out interface{}) error"
+      "signature": "func LoadStageResultPart(stage int, part int, out interface{}) error",
+      "description": "加载分阶段结果的指定部分"
     },
     {
-      "description": "清除所有缓存数据",
       "name": "ClearCache",
-      "signature": "func ClearCache() error"
+      "signature": "func ClearCache() error",
+      "description": "清除所有缓存数据"
     },
     {
-      "description": "计算项目目录结构 hash，用于缓存有效性验证",
       "name": "ComputeProjectHash",
-      "signature": "func ComputeProjectHash(projectDir string, maxDepth int) (string, error)"
+      "signature": "func ComputeProjectHash(projectDir string, maxDepth int) (string, error)",
+      "description": "计算项目目录结构 hash，用于缓存有效性验证"
     }
-  ]
+  ],
+  "modification_rules": null
 }

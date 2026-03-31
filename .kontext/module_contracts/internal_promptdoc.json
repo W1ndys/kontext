@@ -1,1 +1,73 @@
-{"module":{"name":"promptdoc","path":"internal/promptdoc","purpose":"负责生成 Markdown Prompt 文档的构建与保存，包括文件名生成和文件输出"},"owns":["Markdown Prompt 文档的文件名生成","Markdown Prompt 文档的写入与保存","Prompt 文档元数据管理（task_name、created_at 等）"],"not_responsible_for":["Prompt 内容本身的生成逻辑（由 packer 模块负责）",".kontext 目录下 JSON 制品的读写（由 schema 模块负责）","文件系统的底层扫描和遍历（由 fileutil 模块负责）","终端 UI 交互（由 ui 模块负责）"],"depends_on":[{"module":"fileutil","reason":"使用文件工具函数进行文件写入和目录创建操作"},{"module":"schema","reason":"引用 schema 包中的 TaskContext 结构体定义作为 Prompt 文档的元数据结构"}],"public_interface":[{"name":"Writer","signature":"type Writer struct { dir string; fileUtil *fileutil.FileUtil }","description":"Prompt 文档写入器，负责管理文档输出目录和文件操作工具"},{"name":"NewWriter","signature":"func NewWriter(dir string) *Writer","description":"创建新的 Writer 实例，dir 参数指定 Prompt 文档的输出目录"},{"name":"Write","signature":"func (w *Writer) Write(ctx *schema.TaskContext, content string) (string, error)","description":"将任务上下文和生成的 Prompt 内容写入文件，返回文件路径和可能的错误"},{"name":"EnsureDir","signature":"func (w *Writer) EnsureDir() error","description":"确保输出目录存在，如不存在则创建"},{"name":"GenerateFilename","signature":"func (w *Writer) GenerateFilename(ctx *schema.TaskContext) string","description":"根据任务上下文生成唯一的文件名，格式为 {task_name}_{timestamp}.md"}],"modification_rules":[{"rule":"Writer 是无状态组件，所有状态通过构造函数参数注入，不应维护内部可变状态","reason":"无状态设计便于并发调用和单元测试，避免写入冲突"},{"rule":"Write 方法必须保证原子性写入，使用临时文件+重命名的模式避免文件损坏","reason":"确保在写入过程中发生错误时不会留下不完整的文件"},{"rule":"文件名生成逻辑必须保证唯一性，避免同一任务多次写入时覆盖已有文件","reason":"用户可能需要查看历史生成的 Prompt 文档"},{"rule":"目录操作错误应返回明确的错误信息，便于调用者诊断权限或路径问题","reason":"Prompt 文档输出是用户可感知的功能，错误信息应友好"}]}
+{
+  "module": {
+    "name": "promptdoc",
+    "path": "internal/promptdoc",
+    "purpose": "负责生成 Markdown Prompt 文档的构建与保存，包括文件名生成和文件输出"
+  },
+  "owns": [
+    "Markdown Prompt 文档的文件名生成",
+    "Markdown Prompt 文档的写入与保存",
+    "Prompt 文档元数据管理（task_name、created_at 等）"
+  ],
+  "not_responsible_for": [
+    "Prompt 内容本身的生成逻辑（由 packer 模块负责）",
+    ".kontext 目录下 JSON 制品的读写（由 schema 模块负责）",
+    "文件系统的底层扫描和遍历（由 fileutil 模块负责）",
+    "终端 UI 交互（由 ui 模块负责）"
+  ],
+  "depends_on": [
+    {
+      "module": "fileutil",
+      "reason": "使用文件工具函数进行文件写入和目录创建操作"
+    },
+    {
+      "module": "schema",
+      "reason": "引用 schema 包中的 TaskContext 结构体定义作为 Prompt 文档的元数据结构"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "Writer",
+      "signature": "type Writer struct { dir string; fileUtil *fileutil.FileUtil }",
+      "description": "Prompt 文档写入器，负责管理文档输出目录和文件操作工具"
+    },
+    {
+      "name": "NewWriter",
+      "signature": "func NewWriter(dir string) *Writer",
+      "description": "创建新的 Writer 实例，dir 参数指定 Prompt 文档的输出目录"
+    },
+    {
+      "name": "Write",
+      "signature": "func (w *Writer) Write(ctx *schema.TaskContext, content string) (string, error)",
+      "description": "将任务上下文和生成的 Prompt 内容写入文件，返回文件路径和可能的错误"
+    },
+    {
+      "name": "EnsureDir",
+      "signature": "func (w *Writer) EnsureDir() error",
+      "description": "确保输出目录存在，如不存在则创建"
+    },
+    {
+      "name": "GenerateFilename",
+      "signature": "func (w *Writer) GenerateFilename(ctx *schema.TaskContext) string",
+      "description": "根据任务上下文生成唯一的文件名，格式为 {task_name}_{timestamp}.md"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "Writer 是无状态组件，所有状态通过构造函数参数注入，不应维护内部可变状态",
+      "reason": "无状态设计便于并发调用和单元测试，避免写入冲突"
+    },
+    {
+      "rule": "Write 方法必须保证原子性写入，使用临时文件+重命名的模式避免文件损坏",
+      "reason": "确保在写入过程中发生错误时不会留下不完整的文件"
+    },
+    {
+      "rule": "文件名生成逻辑必须保证唯一性，避免同一任务多次写入时覆盖已有文件",
+      "reason": "用户可能需要查看历史生成的 Prompt 文档"
+    },
+    {
+      "rule": "目录操作错误应返回明确的错误信息，便于调用者诊断权限或路径问题",
+      "reason": "Prompt 文档输出是用户可感知的功能，错误信息应友好"
+    }
+  ]
+}

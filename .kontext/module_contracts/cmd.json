@@ -92,27 +92,27 @@
     },
     {
       "name": "rootCmd",
-      "signature": "var rootCmd = &cobra.Command{...}",
+      "signature": "var rootCmd = \u0026cobra.Command{...}",
       "description": "Cobra 根命令，定义 CLI 入口、PersistentPreRunE 日志初始化、全局 flag"
     },
     {
       "name": "initCmd",
-      "signature": "var initCmd = &cobra.Command{...}",
+      "signature": "var initCmd = \u0026cobra.Command{...}",
       "description": "init 子命令，支持 --scan、--fresh、--resume 参数"
     },
     {
       "name": "packCmd",
-      "signature": "var packCmd = &cobra.Command{...}",
+      "signature": "var packCmd = \u0026cobra.Command{...}",
       "description": "pack 子命令（已弃用），支持 --from-file、--no-refine、--output 参数"
     },
     {
       "name": "validateCmd",
-      "signature": "var validateCmd = &cobra.Command{...}",
+      "signature": "var validateCmd = \u0026cobra.Command{...}",
       "description": "validate 子命令，校验 .kontext/ 目录下的 JSON 配置文件"
     },
     {
       "name": "updateCmd",
-      "signature": "var updateCmd = &cobra.Command{...}",
+      "signature": "var updateCmd = \u0026cobra.Command{...}",
       "description": "update 子命令，检测源码变更并更新 .kontext 物料"
     },
     {

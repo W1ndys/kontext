@@ -1,22 +1,9 @@
 {
-  "depends_on": [
-    {
-      "module": "标准库 (embed)",
-      "reason": "使用 Go embed 指令将模板文件嵌入二进制"
-    }
-  ],
   "module": {
     "name": "templates",
     "path": "templates",
     "purpose": "作为静态资源层，通过 Go embed 将提示词模板文件打包进二进制，并暴露为包级 string 变量，供流水线核心层在生成阶段渲染使用。"
   },
-  "not_responsible_for": [
-    "模板内容的渲染逻辑和变量替换",
-    "LLM 调用和响应处理",
-    "流水线流程控制和任务调度",
-    "模板内容的动态生成或修改",
-    "模板文件的加载路径解析"
-  ],
   "owns": [
     "管理所有 .tmpl 格式的提示词模板文件",
     "通过 Go embed 将模板文件打包进二进制",
@@ -25,36 +12,50 @@
     "定义 Pack 精筛阶段提示词模板",
     "定义 AI 初始化对话阶段提示词模板"
   ],
+  "not_responsible_for": [
+    "模板内容的渲染逻辑和变量替换",
+    "LLM 调用和响应处理",
+    "流水线流程控制和任务调度",
+    "模板内容的动态生成或修改",
+    "模板文件的加载路径解析"
+  ],
+  "depends_on": [
+    {
+      "module": "标准库 (embed)",
+      "reason": "使用 Go embed 指令将模板文件嵌入二进制"
+    }
+  ],
   "public_interface": [
     {
-      "description": "LLM 系统提示词模板，通过 Go embed 嵌入二进制",
       "name": "SystemPrompt",
-      "signature": "var SystemPrompt string"
+      "signature": "var SystemPrompt string",
+      "description": "LLM 系统提示词模板，通过 Go embed 嵌入二进制"
     },
     {
-      "description": "LLM 用户提示词模板，通过 Go embed 嵌入二进制",
       "name": "UserPrompt",
-      "signature": "var UserPrompt string"
+      "signature": "var UserPrompt string",
+      "description": "LLM 用户提示词模板，通过 Go embed 嵌入二进制"
     },
     {
-      "description": "Pack 精筛阶段系统提示词模板",
       "name": "PackRefineSystem",
-      "signature": "var PackRefineSystem string"
+      "signature": "var PackRefineSystem string",
+      "description": "Pack 精筛阶段系统提示词模板"
     },
     {
-      "description": "Pack 精筛阶段用户提示词模板",
       "name": "PackRefineUser",
-      "signature": "var PackRefineUser string"
+      "signature": "var PackRefineUser string",
+      "description": "Pack 精筛阶段用户提示词模板"
     },
     {
-      "description": "AI 初始化对话阶段系统提示词模板",
       "name": "InitInterviewSystem",
-      "signature": "var InitInterviewSystem string"
+      "signature": "var InitInterviewSystem string",
+      "description": "AI 初始化对话阶段系统提示词模板"
     },
     {
-      "description": "AI 初始化对话阶段用户提示词模板",
       "name": "InitInterviewUser",
-      "signature": "var InitInterviewUser string"
+      "signature": "var InitInterviewUser string",
+      "description": "AI 初始化对话阶段用户提示词模板"
     }
-  ]
+  ],
+  "modification_rules": null
 }

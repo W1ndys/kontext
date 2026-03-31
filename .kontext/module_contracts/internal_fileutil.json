@@ -1,4 +1,26 @@
 {
+  "module": {
+    "name": "fileutil",
+    "path": "internal/fileutil",
+    "purpose": "提供文件系统操作工具函数，包括目录扫描、文件读取、摘要提取等通用能力"
+  },
+  "owns": [
+    "文件基本读写操作（ReadFile、WriteFile）",
+    "文件和目录存在性检查（FileExists、DirExists）",
+    "目录自动创建（EnsureDir）",
+    "目录树扫描遍历（ScanDirectoryTree）",
+    "代码片段读取（ReadCodeSnippets）",
+    "文件摘要提取（ExtractFileSummary）",
+    "Go 文件查找（FindGoFiles）",
+    "多语言函数签名模式匹配"
+  ],
+  "not_responsible_for": [
+    "文件内容的解析和处理逻辑",
+    "特定业务逻辑的文件操作",
+    "网络文件传输",
+    "文件的压缩或加密",
+    "并发文件访问控制"
+  ],
   "depends_on": [
     {
       "module": "os",
@@ -21,73 +43,52 @@
       "reason": "字符串处理"
     }
   ],
-  "module": {
-    "name": "fileutil",
-    "path": "internal/fileutil",
-    "purpose": "提供文件系统操作工具函数，包括目录扫描、文件读取、摘要提取等通用能力"
-  },
-  "not_responsible_for": [
-    "文件内容的解析和处理逻辑",
-    "特定业务逻辑的文件操作",
-    "网络文件传输",
-    "文件的压缩或加密",
-    "并发文件访问控制"
-  ],
-  "owns": [
-    "文件基本读写操作（ReadFile、WriteFile）",
-    "文件和目录存在性检查（FileExists、DirExists）",
-    "目录自动创建（EnsureDir）",
-    "目录树扫描遍历（ScanDirectoryTree）",
-    "代码片段读取（ReadCodeSnippets）",
-    "文件摘要提取（ExtractFileSummary）",
-    "Go 文件查找（FindGoFiles）",
-    "多语言函数签名模式匹配"
-  ],
   "public_interface": [
     {
-      "description": "读取文件的全部内容",
       "name": "ReadFile",
-      "signature": "func ReadFile(path string) ([]byte, error)"
+      "signature": "func ReadFile(path string) ([]byte, error)",
+      "description": "读取文件的全部内容"
     },
     {
-      "description": "将数据写入文件，父目录不存在时自动创建",
       "name": "WriteFile",
-      "signature": "func WriteFile(path string, data []byte) error"
+      "signature": "func WriteFile(path string, data []byte) error",
+      "description": "将数据写入文件，父目录不存在时自动创建"
     },
     {
-      "description": "检查指定路径的文件是否存在",
       "name": "FileExists",
-      "signature": "func FileExists(path string) bool"
+      "signature": "func FileExists(path string) bool",
+      "description": "检查指定路径的文件是否存在"
     },
     {
-      "description": "检查指定路径的目录是否存在",
       "name": "DirExists",
-      "signature": "func DirExists(path string) bool"
+      "signature": "func DirExists(path string) bool",
+      "description": "检查指定路径的目录是否存在"
     },
     {
-      "description": "确保目录存在，不存在时自动创建",
       "name": "EnsureDir",
-      "signature": "func EnsureDir(path string) error"
+      "signature": "func EnsureDir(path string) error",
+      "description": "确保目录存在，不存在时自动创建"
     },
     {
-      "description": "递归扫描目录树，返回所有文件路径",
       "name": "ScanDirectoryTree",
-      "signature": "func ScanDirectoryTree(root string, maxDepth int) ([]string, error)"
+      "signature": "func ScanDirectoryTree(root string, maxDepth int) ([]string, error)",
+      "description": "递归扫描目录树，返回所有文件路径"
     },
     {
-      "description": "从指定路径列表读取代码片段前几行",
       "name": "ReadCodeSnippets",
-      "signature": "func ReadCodeSnippets(root string, paths []string, maxLines int) map[string]string"
+      "signature": "func ReadCodeSnippets(root string, paths []string, maxLines int) map[string]string",
+      "description": "从指定路径列表读取代码片段前几行"
     },
     {
-      "description": "提取文件摘要信息",
       "name": "ExtractFileSummary",
-      "signature": "func ExtractFileSummary(path string) (string, error)"
+      "signature": "func ExtractFileSummary(path string) (string, error)",
+      "description": "提取文件摘要信息"
     },
     {
-      "description": "在指定目录下查找所有Go文件",
       "name": "FindGoFiles",
-      "signature": "func FindGoFiles(root string) ([]string, error)"
+      "signature": "func FindGoFiles(root string) ([]string, error)",
+      "description": "在指定目录下查找所有Go文件"
     }
-  ]
+  ],
+  "modification_rules": null
 }

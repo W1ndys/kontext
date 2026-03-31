@@ -1,10 +1,26 @@
 {
-  "depends_on": [],
   "module": {
     "name": "schema",
     "path": "internal/schema",
     "purpose": "定义和校验 .kontext/ 目录下各类 JSON 制品的数据结构，包括 ProjectManifest、ArchitectureMap、Conventions、ModuleContract"
   },
+  "owns": [
+    "ProjectManifest 结构体定义与解析",
+    "ArchitectureMap 结构体定义与解析",
+    "ModuleContract 结构体定义与解析",
+    "Conventions 结构体定义与解析",
+    "Bundle 聚合配置结构体定义",
+    "各 JSON 制品的 Validate() 校验方法",
+    "LoadBundle() 配置批量加载接口",
+    "ValidateBundle() 配置验证接口",
+    "ContractFilename() 契约文件名生成",
+    "ContractModuleKey() 契约模块键提取",
+    "NormalizeContractJSON() 契约 JSON 规范化",
+    "InterfaceItem、ModificationRule、ModuleDependency 契约组件结构体",
+    "Project、TechStack、Scale、Status、CoreFlow 项目清单组件结构体",
+    "Layer、Rule 架构层级组件结构体",
+    "ConventionItem 规范条目结构体"
+  ],
   "not_responsible_for": [
     "业务逻辑实现",
     "文件系统操作",
@@ -13,16 +29,113 @@
     "模板渲染",
     "日志记录"
   ],
-  "owns": [
-    "ProjectManifest 结构体定义与解析",
-    "ArchitectureMap 结构体定义与解析",
-    "ModuleContract 结构体定义与解析",
-    "Conventions 结构体定义与解析",
-    "各 JSON 制品的 Validate() 校验方法",
-    "LoadBundle() 配置批量加载接口",
-    "ValidateBundle() 配置验证接口",
-    "GetContractSchema() 等 Schema 导出函数",
-    "ContractFilename() 契约文件名生成",
-    "ContractModuleKey() 契约模块键提取"
+  "depends_on": [
+    {
+      "module": "internal/fileutil",
+      "reason": "LoadBundle 使用 fileutil 进行文件读取和路径处理"
+    }
+  ],
+  "public_interface": [
+    {
+      "name": "ArchitectureMap",
+      "signature": "type ArchitectureMap struct { Layers []Layer; Rules []Rule }",
+      "description": "描述项目的分层架构和架构规则"
+    },
+    {
+      "name": "Layer",
+      "signature": "type Layer struct { Name string; Description string; Packages []string }",
+      "description": "描述一个架构层级，包含名称、说明和所属包"
+    },
+    {
+      "name": "Rule",
+      "signature": "type Rule struct { Rule string; Reason string }",
+      "description": "描述一条架构规则及其原因"
+    },
+    {
+      "name": "ModuleContract",
+      "signature": "type ModuleContract struct { Module ModuleInfo; Owns []string; NotResponsibleFor []string; DependsOn []ModuleDependency; PublicInterface []InterfaceItem; ModificationRules []ModificationRule }",
+      "description": "定义模块的职责边界和依赖关系"
+    },
+    {
+      "name": "ContractFilename",
+      "signature": "func ContractFilename(modulePath string) string",
+      "description": "生成契约文件名"
+    },
+    {
+      "name": "ContractModuleKey",
+      "signature": "func ContractModuleKey(c ModuleContract) string",
+      "description": "提取契约模块键"
+    },
+    {
+      "name": "NormalizeContractJSON",
+      "signature": "func NormalizeContractJSON(content string) (string, error)",
+      "description": "规范化契约 JSON"
+    },
+    {
+      "name": "Conventions",
+      "signature": "type Conventions struct { Coding []ConventionItem; ErrorHandling []ConventionItem; Forbidden []ConventionItem; AIRules []ConventionItem }",
+      "description": "描述项目的编码规范和 AI 协作规则"
+    },
+    {
+      "name": "ConventionItem",
+      "signature": "type ConventionItem struct { Rule string; Example string; Reason string }",
+      "description": "描述一条规范条目，包含规则、示例和原因"
+    },
+    {
+      "name": "Bundle",
+      "signature": "type Bundle struct { Manifest ProjectManifest; Architecture ArchitectureMap; Conventions Conventions; Contracts []ModuleContract }",
+      "description": "聚合 .kontext/ 目录下的所有配置数据"
+    },
+    {
+      "name": "LoadBundle",
+      "signature": "func LoadBundle(kontextDir string) (*Bundle, error)",
+      "description": "从 .kontext/ 目录加载所有配置文件"
+    },
+    {
+      "name": "ValidateBundle",
+      "signature": "func ValidateBundle(kontextDir string) []error",
+      "description": "验证配置的有效性"
+    },
+    {
+      "name": "ProjectManifest",
+      "signature": "type ProjectManifest struct { Project Project; TechStack TechStack; Scale Scale; Status Status }",
+      "description": "项目清单结构体，映射 PROJECT_MANIFEST.json"
+    },
+    {
+      "name": "Project",
+      "signature": "type Project struct { Name string; OneLine string; Type string; BusinessContext string; CoreFlows []CoreFlow }",
+      "description": "描述项目的基本信息和业务上下文"
+    },
+    {
+      "name": "TechStack",
+      "signature": "type TechStack struct { ... }",
+      "description": ""
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "新增结构体字段时必须添加 JSON tag，确保与 .kontext/ 目录下的 JSON 制品格式保持一致",
+      "reason": "schema 模块直接映射 JSON 文件结构，字段变更会影响配置解析"
+    },
+    {
+      "rule": "修改 Validate() 方法时必须保持向后兼容，确保已有配置仍能通过校验",
+      "reason": "Validate 是配置验证的公共接口，破坏性变更会导致现有项目配置失效"
+    },
+    {
+      "rule": "修改 Bundle 聚合结构时必须同步更新 LoadBundle() 和 ValidateBundle() 的逻辑",
+      "reason": "Bundle 是核心聚合类型，LoadBundle 和 ValidateBundle 依赖其完整结构"
+    },
+    {
+      "rule": "修改与 fileutil 的交互逻辑时需确保错误处理一致，不改变公开的错误类型",
+      "reason": "LoadBundle 依赖 fileutil 进行文件读取，接口变更会影响上层调用"
+    },
+    {
+      "rule": "新增 JSON 制品类型时必须在 Bundle 结构中添加对应字段，并在加载和验证逻辑中处理",
+      "reason": "Bundle 聚合所有配置数据，需要保持完整性"
+    },
+    {
+      "rule": "修改 ContractFilename 或 ContractModuleKey 的返回值格式时需同步更新相关调用方",
+      "reason": "这两个函数生成的值可能被用于文件路径或缓存键，格式变更会影响依赖模块"
+    }
   ]
 }

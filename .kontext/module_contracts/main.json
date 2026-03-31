@@ -1,47 +1,47 @@
 {
+  "module": {
+    "name": "main",
+    "path": "main",
+    "purpose": "作为应用程序的入口点，负责启动整个程序"
+  },
+  "owns": [
+    "程序启动入口控制",
+    "应用初始化流程触发"
+  ],
+  "not_responsible_for": [
+    "具体的命令处理逻辑",
+    "业务功能实现",
+    "子命令的具体行为"
+  ],
   "depends_on": [
     {
       "module": "cmd",
       "reason": "导入并执行 cmd 包中的 Execute 函数来启动命令行应用"
     }
   ],
-  "modification_rules": [
-    {
-      "reason": "main 作为程序入口点，其职责仅限于启动程序，保持简洁有助于程序的可维护性和可测试性",
-      "rule": "main 函数必须保持最小实现，只调用 cmd.Execute()，不应包含任何业务逻辑"
-    },
-    {
-      "reason": "命令处理逻辑应由 cmd 包负责，main 不应承担具体业务功能",
-      "rule": "禁止在 main 函数中直接处理命令参数或子命令逻辑"
-    },
-    {
-      "reason": "main 的职责边界明确为程序启动入口，扩展初始化应在下游模块完成",
-      "rule": "如需扩展应用初始化流程，应在 cmd 包或独立模块中实现，而非修改 main"
-    },
-    {
-      "reason": "cmd.Execute() 是应用启动的关键入口，破坏该调用将导致程序无法正常运行",
-      "rule": "对 main 的任何修改都必须确保 cmd.Execute() 能正常执行"
-    }
-  ],
-  "module": {
-    "name": "main",
-    "path": "main",
-    "purpose": "作为应用程序的入口点，负责启动整个程序"
-  },
-  "not_responsible_for": [
-    "具体的命令处理逻辑",
-    "业务功能实现",
-    "子命令的具体行为"
-  ],
-  "owns": [
-    "程序启动入口控制",
-    "应用初始化流程触发"
-  ],
   "public_interface": [
     {
-      "description": "程序入口函数，调用 cmd.Execute() 启动应用程序",
       "name": "main",
-      "signature": "func main()"
+      "signature": "func main()",
+      "description": "程序入口函数，调用 cmd.Execute() 启动应用程序"
+    }
+  ],
+  "modification_rules": [
+    {
+      "rule": "main 函数必须保持最小实现，只调用 cmd.Execute()，不应包含任何业务逻辑",
+      "reason": "main 作为程序入口点，其职责仅限于启动程序，保持简洁有助于程序的可维护性和可测试性"
+    },
+    {
+      "rule": "禁止在 main 函数中直接处理命令参数或子命令逻辑",
+      "reason": "命令处理逻辑应由 cmd 包负责，main 不应承担具体业务功能"
+    },
+    {
+      "rule": "如需扩展应用初始化流程，应在 cmd 包或独立模块中实现，而非修改 main",
+      "reason": "main 的职责边界明确为程序启动入口，扩展初始化应在下游模块完成"
+    },
+    {
+      "rule": "对 main 的任何修改都必须确保 cmd.Execute() 能正常执行",
+      "reason": "cmd.Execute() 是应用启动的关键入口，破坏该调用将导致程序无法正常运行"
     }
   ]
 }

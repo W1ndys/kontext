@@ -241,8 +241,8 @@ func writeJSONFile(path, content string) error {
 }
 
 // writeContractFile 将契约 JSON 通过结构体序列化确保字段顺序一致后写入文件。
-func writeContractFile(path, content string) error {
-	normalized, err := schema.NormalizeContractJSON(content)
+func writeContractFile(path, content, modulePath string) error {
+	normalized, err := schema.NormalizeContractJSON(content, modulePath)
 	if err != nil {
 		return fmt.Errorf("生成的 %s 不合法: %w", filepath.Base(path), err)
 	}
@@ -321,7 +321,7 @@ func WriteGeneratedContent(generated *GeneratedContent) error {
 		for name, content := range generated.ModuleContracts {
 			filename := schema.ContractFilename(name)
 			path := filepath.Join(kontextDir, "module_contracts", filename)
-			if err := writeContractFile(path, content); err != nil {
+			if err := writeContractFile(path, content, name); err != nil {
 				return fmt.Errorf("写入 %s 失败: %w", path, err)
 			}
 			fmt.Printf("    已创建: %s\n", path)

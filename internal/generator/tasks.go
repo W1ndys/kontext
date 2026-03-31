@@ -112,7 +112,7 @@ func BuildContractTasks(opts InitTaskOptions, modules []string, manifestContent,
 			},
 			Validate: ValidateJSON,
 			PostProcess: func(content string) (string, error) {
-				return schema.NormalizeContractJSON(content)
+				return schema.NormalizeContractJSON(content, mod)
 			},
 			OutputPath: filepath.Join(contractDir, schema.ContractFilename(mod)),
 		})

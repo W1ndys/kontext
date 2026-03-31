@@ -568,7 +568,8 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 
 	// 契约类型使用结构体序列化确保字段顺序一致
 	if strings.HasPrefix(action.Target, "contract:") {
-		normalized, err := schema.NormalizeContractJSON(content)
+		moduleName := strings.TrimPrefix(action.Target, "contract:")
+		normalized, err := schema.NormalizeContractJSON(content, moduleName)
 		if err != nil {
 			return fmt.Errorf("生成的契约 JSON 格式不合法: %w", err)
 		}

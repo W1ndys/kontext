@@ -819,7 +819,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		}
 
 		saveFinalContract := func(moduleName, content string) error {
-			normalized, err := schema.NormalizeContractJSON(content)
+			normalized, err := schema.NormalizeContractJSON(content, moduleName)
 			if err != nil {
 				return fmt.Errorf("JSON 校验失败: %w", err)
 			}

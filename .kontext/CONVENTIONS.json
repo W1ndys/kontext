@@ -1,166 +1,170 @@
 {
+  "ai_rules": [
+    {
+      "reason": "项目全局遵循此惯例（参见 cmd/root.go、cmd/pack.go 等所有 Cobra 命令定义），破坏语言一致性会导致用户体验割裂",
+      "rule": "生成或修改代码时，所有代码注释、错误消息、用户可见字符串必须使用中文；CLI 的 Short/Long 帮助文案必须提供中英双语（中文在前，' / ' 分隔英文）"
+    },
+    {
+      "reason": "项目通过 Client 接口统一管理超时、重试、日志记录和敏感信息脱敏；ChatStructured 依赖 invopop/jsonschema 生成 JSON Schema 约束输出格式，是保证 LLM 返回可靠反序列化的关键路径",
+      "rule": "所有 LLM 交互必须通过 internal/llm.Client 接口进行，不得在业务代码中直接构造 HTTP 请求或直接调用 openai-go 包；新增 LLM 调用场景时应使用 ChatStructured（结构化输出）或 ChatWithRetry（带重试），而非裸调 Chat/Generate"
+    },
+    {
+      "reason": "ChatStructured 方法通过反射生成 JSON Schema 并设置 strict=true，动态类型会导致 schema 生成失败或 LLM 返回不可解析的内容（参见 internal/llm/openai.go 中 generateJSONSchema 的使用方式）",
+      "rule": "新增 LLM 响应类型时，目标结构体必须包含完整的 json tag，且所有字段必须是 JSON Schema 可表达的类型（不允许 interface{}、map[string]interface{} 等动态类型），以确保 invopop/jsonschema 能生成 strict schema"
+    },
+    {
+      "reason": "项目在 cmd/logging_helpers.go 中实现了敏感信息脱敏，在 internal/config/config.go 中实现了环境变量 > 配置文件的优先级链；硬编码凭据会导致安全风险和 .gitignore 规则失效",
+      "rule": "不得在生成的代码中硬编码 API Key、Base URL 或模型名称；这些值必须通过 internal/config.Load() 加载（支持 ~/.kontext/config.json 和环境变量覆盖），且日志输出时必须经过脱敏处理"
+    },
+    {
+      "reason": ".gitignore 已明确排除这些路径，破坏此约定会导致敏感信息或临时产物泄露到仓库",
+      "rule": "新增文件或修改文件路径时，不得将 .kontext/logs/、.kontext/.cache/、.env 或 API Key 相关内容纳入版本控制；若新增需要忽略的产物目录，须同步更新 .gitignore"
+    },
+    {
+      "reason": "项目设计为单二进制分发，所有模板编译时嵌入（参见 templates/templates.go 的 embed 指令），运行时读取外部文件会破坏可移植性",
+      "rule": "提示词模板必须放在 templates/ 目录下以 .tmpl 为后缀，并在 templates/templates.go 中通过 go:embed 声明为包级 string 变量；业务代码通过 templates.XxxSystem / templates.XxxUser 引用，不得使用运行时文件读取"
+    },
+    {
+      "reason": "cmd/root.go 的 PersistentPreRunE 确保日志系统只初始化一次，cmd/logging_helpers.go 的 namedLogger 提供统一的命令级 logger 工厂；重复初始化会导致日志文件句柄泄露或输出混乱",
+      "rule": "新增 Cobra 子命令时，必须遵循 cmd/<command>.go 的文件命名模式；在 PersistentPreRunE 中已统一初始化日志，子命令内应通过 namedLogger(commandPath) 获取带命令路径标签的 logger，不得自行调用 slog.Default() 或 logging.Init()"
+    },
+    {
+      "reason": "项目全局采用错误包装模式（如 fmt.Errorf('阶段 1 (加载配置): %w', err)），保持错误链完整性便于 slog 结构化日志记录和问题定位",
+      "rule": "错误处理必须使用 fmt.Errorf 包装上下文信息并通过 %w 保留原始错误链；面向用户的错误消息使用中文描述，同时保留技术细节供日志追踪；不得使用 panic 处理可恢复错误"
+    },
+    {
+      "reason": "项目所有多步骤流程均实现了进度反馈（参见 packer/engine.go 的 progress()、cmd/init_scan.go 的 tracker），用户需要知道当前处于哪个阶段以及是否发生了可恢复的错误",
+      "rule": "涉及多个 LLM 调用的流程（如 init --scan 的多阶段扫描、pack 的 10 阶段流水线）必须通过进度回调（OnProgress/OnWarn）或 ui.Tracker 向用户展示当前进度；长时间运行的 LLM 调用应支持重试机制（llm.ChatWithRetry）并在重试时通过回调通知用户"
+    },
+    {
+      "reason": "已生成的 .kontext/ JSON 制品可能在用户项目中持久存在，破坏性变更会导致 validate 和 pack 命令在已有项目上失败",
+      "rule": "修改 .kontext/ 制品的结构体定义（internal/schema/ 下的类型）时，必须确保向后兼容：新增字段使用 omitempty tag，不得删除或重命名已有字段；若涉及破坏性变更，须同步更新 schema.ValidateBundle 的校验逻辑和相关模板"
+    }
+  ],
   "coding": [
     {
-      "rule": "使用标准 Go 格式化，通过 gofmt 或 go fmt ./... 处理缩进和空白",
-      "example": "go fmt ./..."
+      "example": "if err := fileutil.WriteFile(path, data); err != nil {\n    return fmt.Errorf(\"写入 %s 失败: %w\", path, err)\n}",
+      "rule": "错误处理采用 fmt.Errorf 包装并附带中文上下文描述，使用 %w 保留原始错误链"
     },
     {
-      "rule": "包名保持小写，导出标识符使用 PascalCase，内部辅助函数使用 camelCase",
-      "example": "func namedLogger(commandPath string) *slog.Logger // 导出: RunInteractiveInit, NewEngine, ScanCandidateFiles"
+      "example": "type MentionedFiles struct {\n    Paths   []string          `json:\"paths\"`\n    Reasons map[string]string `json:\"reasons\"`\n}\n// 调用时：\nclient.ChatStructured(req, \"mentioned_files\", &out)",
+      "rule": "LLM 客户端统一通过 internal/llm.Client 接口调用，所有 LLM 交互使用 ChatStructured 方法配合 JSON Schema 结构化输出，目标类型必须有明确的 json tag"
     },
     {
-      "rule": "错误包装使用 fmt.Errorf(\"...: %w\", err) 模式添加上下文",
-      "example": "return fmt.Errorf(\"阶段 1 (加载配置): %w\", err)"
+      "example": "engine.OnProgress = func(stage, total int, msg string) {\n    currentTask = tracker.AddTask(fmt.Sprintf(\"[%d/%d] %s\", stage, total, msg))\n}\nengine.OnWarn = func(msg string) {\n    tracker.Interject(func() { ui.Warn(\"%s\", msg) })\n}",
+      "rule": "流水线/多阶段引擎通过回调函数报告进度和警告，不直接写 stdout/stderr；使用 OnProgress 和 OnWarn 回调解耦 UI 与业务逻辑"
     },
     {
-      "rule": "LLM 客户端操作统一经过 internal/llm/ 模块，禁止直接调用 API",
-      "example": "client, err := llm.NewClient(llmCfg)"
+      "example": "logger := namedLogger(commandPathInit).With(\"mode\", \"scan\")\nlogger.Info(\"scan init requested\",\n    \"fresh\", freshFlag,\n    \"resume\", resumeFlag,\n)",
+      "rule": "日志使用 log/slog 结构化日志，通过 namedLogger 创建带命令路径的子 logger，键值对用 string key + typed value 形式"
     },
     {
-      "rule": "提示词模板使用 Go text/template 语法，通过 embed 打包进二进制",
-      "example": "// templates.go 中暴露为包级 string 变量，templates.InitInterviewSystem"
+      "example": "var packCmd = &cobra.Command{\n    Use:   `pack \"<任务描述/task description>\"`,\n    Short: \"将项目上下文打包为 Markdown Prompt 文档 / Pack project context into a structured Markdown prompt document\",\n    RunE: func(cmd *cobra.Command, args []string) error {\n        return runPack(args)\n    },\n}\nfunc init() {\n    packCmd.Flags().BoolVar(&packNoRefine, \"no-refine\", false, \"跳过 LLM 精筛 / Skip LLM-based refinement\")\n}",
+      "rule": "Cobra 命令定义遵循固定模式：包级 var 声明 cobra.Command，RunE 中调用独立函数实现逻辑；flag 在 init() 中注册；Short 描述使用中英双语用斜杠分隔"
     },
     {
-      "rule": "流水线中遇到 LLM 调用失败时采用优雅降级，不阻塞整体流程",
-      "example": "if err != nil { e.warn(fmt.Sprintf(\"⚠ 文件识别失败，将继续打包但不附加源码：%v\", err)); mentionedFiles = nil }"
+      "example": "sem := make(chan struct{}, o.maxConcurrency)\nvar wg sync.WaitGroup\nfor _, task := range layer {\n    wg.Add(1)\n    go func(t *AgentTask) {\n        defer wg.Done()\n        sem <- struct{}{}\n        defer func() { <-sem }()\n        // 执行任务...\n    }(task)\n}\nwg.Wait()",
+      "rule": "并发控制使用 sync.WaitGroup + channel 信号量模式限制最大并发数，共享状态通过 sync.Mutex 或 sync.Map 保护"
     },
     {
-      "rule": "模块契约验证使用 Validate() 方法，返回具体错误信息",
-      "example": "func (c ModuleContract) Validate() error { if c.Module.Name == \"\" { return fmt.Errorf(\"module.name 不能为空\") } }"
+      "example": "func WriteFile(path string, data []byte) error {\n    if err := EnsureDir(filepath.Dir(path)); err != nil {\n        return err\n    }\n    return os.WriteFile(path, data, 0644)\n}",
+      "rule": "文件系统操作统一通过 internal/fileutil 包封装，写文件前自动 EnsureDir 创建父目录，使用 0644 权限"
     },
     {
-      "rule": "进度回调通过 Engine 的 OnProgress 和 OnWarn 函数指针实现",
-      "example": "engine.OnProgress = func(stage, total int, msg string) { ... }"
+      "example": "// templates/templates.go\n//go:embed init_scan_system.tmpl\nvar InitScanSystem string\n\n// 使用时：\nuserMsg, err := generator.RenderTemplate(templates.InitInterviewUser, map[string]string{\n    \"Description\": description,\n})",
+      "rule": "提示词模板使用 Go text/template 语法，通过 embed 编译时嵌入；每个 .tmpl 文件在 templates/templates.go 中暴露为包级 string 变量，模板渲染使用独立的 RenderTemplate 辅助函数"
     },
     {
-      "rule": "缓存与检查点机制：阶段结果立即持久化，支持断点恢复",
-      "example": "cache.SaveStageResult(stage, data); cache.LoadStageResult(stage, &result)"
+      "example": "cfg, err := config.Load()\nif err != nil {\n    return fmt.Errorf(\"加载 LLM 配置失败: %w\", err)\n}\nllmCfg := cfg.ToLLMConfig()\nclient, err := llm.NewClient(llmCfg)",
+      "rule": "配置加载采用环境变量优先、文件配置兜底的策略；LLM 配置通过 internal/config.Load() 统一加载，返回后通过 ToLLMConfig() 转换为 llm.Config"
     },
     {
-      "rule": "敏感信息（API Key）通过日志脱敏辅助函数处理",
-      "example": "// cmd/logging_helpers.go 中 isSensitiveConfigKey 和 maskKey 函数"
-    },
-    {
-      "rule": "新增 Cobra 命令文件沿用 cmd/<command>.go 命名模式",
-      "example": "cmd/init.go, cmd/pack.go, cmd/update.go"
-    },
-    {
-      "rule": "代码注释和用户可见字符串使用中文，保持一致性",
-      "example": "Short: \"初始化 .kontext/ 目录 / Initialize .kontext/ directory\""
-    },
-    {
-      "rule": "文件读取使用 internal/fileutil/ 工具函数统一处理",
-      "example": "fileutil.ReadFile(path), fileutil.ScanDirectoryTree(root, depth)"
-    },
-    {
-      "rule": "LLM 结构化输出使用 JSON Schema，通过 invopop/jsonschema 生成",
-      "example": "schema, err := generateJSONSchema(out)"
+      "example": "resp, err := llm.ChatWithRetry(e.llmClient, req, 3, func(attempt int, retryErr error, backoff time.Duration) {\n    e.warn(fmt.Sprintf(\"⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...\", retryErr, backoff, attempt))\n})",
+      "rule": "LLM 调用失败时使用带重试的封装函数（如 llm.ChatWithRetry），重试回调通过闭包传递警告信息给 UI 层，而非直接打印"
     }
   ],
   "error_handling": [
     {
-      "rule": "所有错误必须携带上下文信息，使用 fmt.Errorf 包装",
-      "example": "fmt.Errorf(\"渲染模板失败: %v\", err)"
+      "example": "return fmt.Errorf(\"加载阶段 1 缓存失败: %w\", err)",
+      "rule": "使用 fmt.Errorf 和 %w 动词包装错误，保留原始错误链并添加中文业务上下文描述"
     },
     {
-      "rule": "CLI 命令返回错误时使用 ui.Error 输出并以非零状态码退出",
-      "example": "ui.Error(\"%v\", err); os.Exit(1)"
+      "example": "wrappedErr := fmt.Errorf(\"调用 LLM API 失败: %w\", err)\nreturn nil, wrappedErr",
+      "rule": "LLM API 调用错误统一包装为中文描述，格式为 '动作描述失败: %w'，不暴露底层 API 细节给用户"
     },
     {
-      "rule": "流水线阶段错误使用阶段编号前缀，便于定位问题",
-      "example": "fmt.Errorf(\"阶段 1 (加载配置): %w\", err)"
+      "example": "return \"\", fmt.Errorf(\"阶段 8 (渲染系统提示词): %w\", err)",
+      "rule": "流水线阶段性错误附带阶段编号，格式为 '阶段 N (阶段名): %w'，便于定位失败环节"
     },
     {
-      "rule": "LLM API 调用失败时使用内置重试机制，通过 llm.ChatWithRetry 实现",
-      "example": "llm.ChatWithRetry(client, req, 3, func(attempt int, err error, backoff time.Duration) { ... })"
+      "example": "if err != nil {\n    e.warn(fmt.Sprintf(\"⚠ 文件识别失败，将继续打包但不附加源码：%v\", err))\n    mentionedFiles = nil\n}",
+      "rule": "非致命错误使用 warn 回调通知用户并继续执行，不中断主流程；仅致命错误才 return err"
     },
     {
-      "rule": "用户交互取消操作时优雅退出，不输出错误堆栈",
-      "example": "fmt.Println(\"已取消。\"); return nil"
+      "example": "logger.Error(\"load llm config failed\", \"error\", err)\nlogger.Warn(\"compute project hash failed\", \"error\", err)",
+      "rule": "slog 结构化日志记录错误时使用 logger.Error/logger.Warn，必须携带 'error' 键值对和相关上下文字段"
     },
     {
-      "rule": "文件操作错误包含路径信息，便于排查",
-      "example": "fmt.Errorf(\"创建目录 %s 失败: %w\", d, err)"
+      "example": "var ErrOutputTruncated = fmt.Errorf(\"LLM 输出被截断\")\n// 使用处：\nif choice.FinishReason == \"length\" {\n    wrappedErr := fmt.Errorf(\"%w（finish_reason=length, content_length=%d）\", ErrOutputTruncated, len(content))\n}",
+      "rule": "LLM 客户端定义专用错误变量（如 ErrOutputTruncated），通过 errors.Is 进行语义化错误判断和重试决策"
     },
     {
-      "rule": "缓存加载失败时回退到从头执行，不阻塞主流程",
-      "example": "if err := cache.LoadStageResult(...); err != nil { logger.Warn(...); 从头开始 }"
+      "example": "resp, err := llm.ChatWithRetry(e.llmClient, req, 3, func(attempt int, retryErr error, backoff time.Duration) {\n    e.warn(fmt.Sprintf(\"⚠ LLM 调用失败(%s)，%s 后重试第 %d 次...\", retryErr, backoff, attempt))\n})",
+      "rule": "LLM 调用统一通过 retry 机制处理瞬时故障，重试时通过回调函数通知调用者当前重试次数和等待时间"
     },
     {
-      "rule": "破坏性操作前必须确认用户意图",
-      "example": "fmt.Print(\".kontext/ 已存在，是否覆盖？[y/N] \")"
+      "example": "if err != nil {\n    logger.Warn(\"clear cache failed\", \"error\", err)\n}",
+      "rule": "缓存和检查点加载失败时记录 warn 日志并降级为从头开始，不直接返回错误中断用户流程"
     },
     {
-      "rule": "非致命错误通过 OnWarn 回调通知用户，不中断流程",
-      "example": "e.warn(fmt.Sprintf(\"⚠ 文件识别失败，将继续打包：%v\", err))"
+      "example": "if !scanner.Scan() {\n    return \"\", \"\", fmt.Errorf(\"用户取消输入\")\n}",
+      "rule": "用户交互中断（EOF/取消）视为正常退出路径，返回明确的中文错误信息而非 panic"
+    },
+    {
+      "example": "skipErr := fmt.Errorf(\"任务 %s 因依赖任务失败而跳过\", task.ID)\nresult.Results[task.ID] = &TaskResult{\n    ID:  task.ID,\n    Err: skipErr,\n}\nresult.Errors = append(result.Errors, skipErr)",
+      "rule": "DAG 编排器中任务失败时标记 failed 集合，所有直接/间接依赖该任务的下游任务跳过执行并生成 skipErr，不影响无依赖关系的其他任务继续运行"
     }
   ],
   "forbidden": [
     {
-      "rule": "禁止提交 .env、API Key 或生成的 .kontext/ 缓存和日志文件",
-      "reason": "敏感信息必须保密，生成的制品应通过 .gitignore 排除"
+      "reason": "用户可见输出必须通过 internal/ui 包（ui.Info/ui.Warn/ui.Success/ui.Error）或 cmd 层的回调机制（OnProgress/OnWarn）处理，internal 层只负责通过 slog 记录结构化日志，否则会破坏 Tracker spinner 渲染且无法统一控制输出格式",
+      "rule": "禁止在 internal/ 包中直接使用 fmt.Println/fmt.Printf 输出用户可见信息"
     },
     {
-      "rule": "禁止硬编码 LLM 配置，必须通过 config.Load() 或环境变量获取",
-      "reason": "确保配置的灵活性和安全性，支持多环境部署"
+      "reason": "项目通过 internal/config 从 ~/.kontext/config.json 或环境变量（KONTEXT_LLM_API_KEY）读取敏感配置，日志输出时通过 cmd/logging_helpers.go 中的脱敏函数处理，硬编码会导致凭据泄露到版本控制",
+      "rule": "禁止在代码中硬编码 API Key、密钥或凭据"
     },
     {
-      "rule": "禁止在流水线中途直接返回未包装的错误",
-      "reason": "错误上下文对于问题排查至关重要"
+      "reason": ".gitignore 已明确排除这些路径，它们是运行时生成的缓存、日志和 Prompt 文档，不属于项目源码",
+      "rule": "禁止将 .kontext/logs/、.kontext/.cache/、.kontext/prompts/ 下的生成产物提交到 Git"
     },
     {
-      "rule": "禁止在命令执行过程中直接输出未格式化的 stderr 消息",
-      "example": "应使用 ui.Warn/ui.Error 或 slog 结构化日志"
+      "reason": "项目统一使用 ChatStructured 方法配合 invopop/jsonschema 生成 JSON Schema 约束 LLM 输出，所有响应类型在 internal/generator/types.go 和 internal/packer/types.go 中定义为带 json tag 的结构体，直接解析纯文本易导致格式不一致和反序列化失败",
+      "rule": "禁止在 LLM 交互中使用非结构化的纯文本解析来提取响应"
     },
     {
-      "rule": "禁止绕过 internal/llm/ 模块直接调用 OpenAI API",
-      "reason": "统一重试、日志和错误处理逻辑"
+      "reason": "项目采用严格的分层架构：cmd → internal/generator|packer|updater → internal/agent|llm|schema|config|cache|fileutil|ui|promptdoc，下层包不得反向引用上层包，Go 编译器也会直接拒绝循环引用",
+      "rule": "禁止在 internal/ 子包之间产生循环依赖"
     },
     {
-      "rule": "禁止在未校验用户输入有效性之前执行文件写入操作",
-      "reason": "防止路径遍历等安全问题"
+      "reason": "项目已完成从 YAML 到 JSON 的迁移（参见 docs/20260331011000），所有制品（PROJECT_MANIFEST/ARCHITECTURE_MAP/CONVENTIONS/module_contracts）均使用 encoding/json 处理，全局配置也已迁移为 config.json，仅保留旧版 config.yaml 的自动迁移逻辑",
+      "rule": "禁止使用 YAML 格式存储新的 .kontext/ 制品文件"
     },
     {
-      "rule": "禁止在测试中忽略错误返回值而不做断言",
-      "reason": "测试必须验证行为，忽略错误会降低测试价值"
+      "reason": "用户交互逻辑统一在 cmd/ 层处理（如 cmd/init_interactive.go、cmd/init_scan.go），generator/engine.go 的 runInterview 虽然接受 io.Reader 参数但这是通过依赖注入实现的，internal 层不应直接依赖终端 I/O",
+      "rule": "禁止在非 cmd/ 层直接读取 os.Stdin 或进行终端交互"
     },
     {
-      "rule": "禁止创建与已存在模块契约同名的包而不更新契约文件",
-      "reason": "模块契约是项目架构的核心约束，新增模块必须同步更新"
-    }
-  ],
-  "ai_rules": [
-    {
-      "rule": "所有 LLM 交互必须使用 JSON Schema 结构化输出",
-      "reason": "确保 AI 返回可解析的 JSON 而非自然语言，提高解析成功率和稳定性"
+      "reason": "项目通过 internal/llm/retry.go 提供 ChatWithRetry 和 GenerateWithRetry 等带重试的封装，所有 LLM 调用点（packer/engine.go、packer/identifier.go、packer/refiner.go、packer/namer.go）均使用重试机制并通过回调通知 UI 层，直接调用无重试的方法会导致网络抖动时整个流程失败",
+      "rule": "禁止在 LLM 调用中省略重试机制"
     },
     {
-      "rule": "提示词模板必须通过 Go embed 打包，禁止运行时读取外部模板文件",
-      "reason": "简化部署，模板变量在编译时确定，确保二进制自包含"
+      "reason": "所有提示词模板通过 Go embed 指令在 templates/templates.go 中嵌入为包级 string 变量，确保单二进制分发无外部依赖，新增模板必须遵循此模式",
+      "rule": "禁止在 templates/ 目录中使用非 .tmpl 后缀的模板文件或在运行时从文件系统加载模板"
     },
     {
-      "rule": "LLM 调用必须设置超时和重试机制，防止无限等待",
-      "reason": "网络问题可能导致长时间阻塞，重试机制提高鲁棒性"
-    },
-    {
-      "rule": "涉及多轮 LLM 调用的流程必须实现检查点缓存",
-      "reason": "避免网络中断导致进度丢失，支持断点恢复"
-    },
-    {
-      "rule": "LLM 生成的内容必须经过验证后再写入文件",
-      "reason": "确保生成的 JSON 符合 Schema，避免污染配置文件"
-    },
-    {
-      "rule": "文件识别和精筛结果必须包含识别原因说明",
-      "reason": "便于用户理解和审核 AI 的判断依据"
-    },
-    {
-      "rule": "模块契约匹配基于关键词提取，优先匹配模块名和用途字段",
-      "reason": "确保打包的上下文与任务真正相关，减少无关代码干扰"
-    },
-    {
-      "rule": "AI 交互日志必须脱敏处理，记录调用参数但不暴露 API Key",
-      "reason": "保护敏感信息，同时保留调试所需的关键日志"
+      "reason": "项目统一使用 fmt.Errorf(\"中文描述: %w\", err) 包装错误并保留调用链，如 packer/engine.go 中每个阶段的错误都带有阶段编号前缀，丢弃原始错误会导致无法定位根因",
+      "rule": "禁止在错误处理中丢弃原始错误信息（裸 return err 或 return fmt.Errorf(\"自定义消息\")）"
     }
   ]
 }

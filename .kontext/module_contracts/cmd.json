@@ -2,206 +2,126 @@
   "module": {
     "name": "cmd",
     "path": "cmd",
-    "purpose": "Cobra CLI 入口层，负责解析用户命令、初始化日志、编排业务流水线，暴露 init、validate、update、config、pack 等子命令"
+    "purpose": "基于 Cobra 框架的 CLI 命令定义与编排层，负责参数解析、用户交互（stdin/stdout）、依赖组装、调用内部模块完成业务逻辑，以及统一的日志初始化和错误处理。包含 init、pack、validate、update、config 五个子命令及其辅助函数。"
   },
   "owns": [
-    "CLI 命令定义（init、validate、update、config、pack）",
-    "命令行参数解析与 flag 管理",
-    "根命令日志初始化（PersistentPreRunE）",
-    "命令生命周期日志记录",
-    "扫描式初始化的流程编排（runScanInit、runScanPipeline、runScanInitFromCheckpoint）",
-    "交互式初始化的流程编排（runInteractiveInit、runAIInit、runStaticInitWithOverwrite）",
-    "任务输入解析（resolvePackTask、readTaskInput、readTaskFromPrompt）",
-    "配置管理的交互式命令行实现（runInteractiveConfig、runConfigSet、runConfigGet、runConfigList）",
-    "模型选择器的 TUI 实现（runModelSelector）",
-    "更新流程编排（update 命令的主逻辑）",
-    "静态初始化模板定义（defaultManifest 等 JSON 模板）",
-    "扫描阶段辅助函数（localAnalyzeFiles、readFirstNLines、isSourceFile）",
-    "敏感信息脱敏（maskKey）",
-    "常量定义（默认目录路径、命令路径标识）"
+    "注册和配置所有 Cobra 子命令（init/pack/validate/update/config/help），定义 CLI 参数和标志",
+    "root 命令的 PersistentPreRunE 中全局初始化结构化日志",
+    "init 命令的三种模式调度：--scan（自动扫描）、交互式（AI 生成）、静态模板",
+    "init --scan 的完整扫描流水线编排（阶段 1-10），包括缓存检测、断点恢复、阶段进度展示",
+    "init 交互式流程的用户输入收集、覆盖确认、AI 初始化调度",
+    "init 静态模板模式的目录创建和默认模板文件写入",
+    "pack 命令的任务输入解析（参数/文件/stdin/编辑器交互式输入）、LLM 客户端创建、引擎调用",
+    "validate 命令调用 schema.ValidateBundle 并格式化输出校验结果",
+    "update 命令的变更检测展示、用户确认、更新进度报告",
+    "config 命令的交互式 TUI 配置、set/get/list 子命令、API Key 脱敏显示",
+    "config TUI 的模型选择列表（基于 Bubble Tea）",
+    "日志辅助函数：命名 logger、敏感配置键检测、命令生命周期日志跳过判断",
+    "默认 JSON 模板常量定义（defaultManifest/defaultArchitecture/defaultConventions/defaultContract）",
+    "init --scan 中本地文件分析回退逻辑（localAnalyzeFiles）",
+    "进度打印辅助函数、文件列表展示、源码文件判断",
+    "Version 变量的注入与 go install 场景的 debug.ReadBuildInfo 回退"
   ],
   "not_responsible_for": [
-    "LLM 客户端创建和调用逻辑（由 internal/llm 负责）",
-    "配置文件的数据结构定义和校验（由 internal/schema 负责）",
-    "检查点缓存的底层持久化实现（由 internal/cache 负责）",
-    "文件系统的底层操作（由 internal/fileutil 负责）",
-    "提示词模板的定义和渲染（由 templates 包负责）",
-    "Markdown Prompt 文档的构建（由 internal/promptdoc 负责）",
-    "结构化日志的核心实现（由 internal/logging 负责）",
-    "终端进度条和颜色渲染的实现（由 internal/ui 负责）",
-    "generator 模块的多阶段扫描和 LLM 生成逻辑（由 internal/generator 负责）",
-    "updater 模块的变更检测和更新逻辑（由 internal/updater 负责）",
-    "packer 模块的上下文打包流水线（由 internal/packer 负责）"
+    "LLM API 的实际网络通信和重试逻辑（由 internal/llm 负责）",
+    "JSON 制品的结构体定义和反序列化（由 internal/schema 负责）",
+    "init 扫描/生成的核心业务逻辑（由 internal/generator 负责）",
+    "pack 流水线的 10 阶段具体实现（由 internal/packer 负责）",
+    "update 的变更检测、规划和执行逻辑（由 internal/updater 负责）",
+    "缓存检查点的序列化/反序列化和 hash 计算（由 internal/cache 负责）",
+    "全局 LLM 配置文件的读写和环境变量覆盖（由 internal/config 负责）",
+    "文件系统底层操作（由 internal/fileutil 负责）",
+    "结构化日志的初始化实现和文件输出（由 internal/logging 负责）",
+    "提示词模板的嵌入和暴露（由 templates 负责）",
+    "Markdown Prompt 文档的构建和持久化（由 internal/promptdoc 负责）",
+    "DAG 任务编排（由 internal/agent 负责）"
   ],
   "depends_on": [
     {
-      "module": "cache",
-      "reason": "runScanInit 中调用 cache.IsCheckpointValid、cache.ClearCache、cache.NewCheckpoint、cache.SaveCheckpoint；runScanInitFromCheckpoint 中加载阶段缓存数据"
+      "module": "internal/generator",
+      "reason": "init 命令调用 generator.RunInteractiveInit 和 generator 的扫描分析类型（AnalyzedFiles/SelectedFiles）进行交互式和扫描初始化"
     },
     {
-      "module": "config",
-      "reason": "pack 命令加载全局 LLM 配置（config.Load）；config 命令直接管理配置（config.Load、config.Set）"
+      "module": "internal/packer",
+      "reason": "pack 命令创建 packer.Engine 并调用 Pack 方法执行上下文打包流水线"
     },
     {
-      "module": "fileutil",
-      "reason": "resolvePackTask 中读取任务文件（fileutil.ReadFile）；检查 .kontext 目录是否存在"
+      "module": "internal/updater",
+      "reason": "update 命令调用 updater 的 Detect/Plan/Execute 函数完成增量更新流程"
     },
     {
-      "module": "generator",
-      "reason": "runScanInitPipeline 调用 generator.AnalyzedFiles、generator.SelectedFiles 等数据结构"
+      "module": "internal/config",
+      "reason": "加载全局 LLM 配置（config.Load），在 init/pack/update/config 命令中用于获取 API Key、Base URL、Model 等参数"
     },
     {
-      "module": "llm",
-      "reason": "pack 命令和 update 命令创建 LLM 客户端（llm.NewClient）"
+      "module": "internal/llm",
+      "reason": "使用 llm.NewClient 创建 LLM 客户端实例，传递给 generator/packer/updater 引擎；config 命令中使用 llm.FetchModels 获取可用模型列表"
     },
     {
-      "module": "logging",
-      "reason": "namedLogger 依赖 logging 包获取结构化日志记录器；root 命令初始化日志时调用 logging.Init"
+      "module": "internal/schema",
+      "reason": "validate 命令调用 schema.ValidateBundle 进行配置校验；init --scan 流程中使用 schema.LoadBundle 加载已生成的制品"
     },
     {
-      "module": "packer",
-      "reason": "pack 命令创建 packer.Engine 并调用 Pack 方法执行打包流水线"
+      "module": "internal/cache",
+      "reason": "init --scan 流程中使用 cache.Checkpoint 进行断点恢复、cache.SaveCheckpoint/LoadStageResult 保存和加载阶段中间结果"
     },
     {
-      "module": "schema",
-      "reason": "validate 命令调用 schema.ValidateBundle 校验配置文件"
+      "module": "internal/fileutil",
+      "reason": "检查 .kontext/ 目录和文件是否存在（DirExists/FileExists）、创建目录（EnsureDir）、写入模板文件（WriteFile）、读取文件内容（ReadFile）"
+    },
+    {
+      "module": "internal/ui",
+      "reason": "使用 ui.Info/Warn/Error/Success 输出彩色提示信息，使用 ui.NewTracker 创建进度 Tracker 展示扫描和打包进度"
+    },
+    {
+      "module": "internal/logging",
+      "reason": "在 root 命令的 PersistentPreRunE 中调用 logging.Init 初始化全局结构化日志，使用 logging.CurrentLogFilePath 获取日志文件路径"
     },
     {
       "module": "templates",
-      "reason": "init_scan.go 和 init_interactive.go 使用 templates 包中的模板字符串渲染提示词"
-    },
-    {
-      "module": "ui",
-      "reason": "所有命令使用 ui.Info、ui.Warn、ui.Error、ui.Success 输出用户消息；使用 ui.NewTracker 显示进度"
-    },
-    {
-      "module": "updater",
-      "reason": "update 命令使用 updater.Detector、updater.Planner、updater.Executor 执行更新流程"
+      "reason": "init --scan 流程中使用模板字符串（如 templates.InitScanSelectSystem）构建 LLM 提示词"
     }
   ],
   "public_interface": [
     {
       "name": "Execute",
       "signature": "func Execute()",
-      "description": "CLI 程序入口函数，由 main.go 调用，执行根命令并处理错误退出"
+      "description": "CLI 入口函数，由 main.go 调用。初始化 Cobra help 命令的中英双语描述，执行根命令，失败时输出错误并 os.Exit(1)"
     },
     {
       "name": "Version",
-      "signature": "var Version = \"dev\"",
-      "description": "程序版本号，构建时通过 ldflags 注入，默认值为 dev"
-    },
-    {
-      "name": "rootCmd",
-      "signature": "var rootCmd = \u0026cobra.Command{...}",
-      "description": "Cobra 根命令，定义 CLI 入口、PersistentPreRunE 日志初始化、全局 flag"
-    },
-    {
-      "name": "initCmd",
-      "signature": "var initCmd = \u0026cobra.Command{...}",
-      "description": "init 子命令，支持 --scan、--fresh、--resume 参数"
-    },
-    {
-      "name": "packCmd",
-      "signature": "var packCmd = \u0026cobra.Command{...}",
-      "description": "pack 子命令（已弃用），支持 --from-file、--no-refine、--output 参数"
-    },
-    {
-      "name": "validateCmd",
-      "signature": "var validateCmd = \u0026cobra.Command{...}",
-      "description": "validate 子命令，校验 .kontext/ 目录下的 JSON 配置文件"
-    },
-    {
-      "name": "updateCmd",
-      "signature": "var updateCmd = \u0026cobra.Command{...}",
-      "description": "update 子命令，检测源码变更并更新 .kontext 物料"
-    },
-    {
-      "name": "defaultKontextDir",
-      "signature": "const defaultKontextDir = \".kontext\"",
-      "description": "Kontext 配置目录的默认路径"
-    },
-    {
-      "name": "defaultProjectDir",
-      "signature": "const defaultProjectDir = \".\"",
-      "description": "项目根目录的默认路径"
-    },
-    {
-      "name": "defaultScanDepth",
-      "signature": "const defaultScanDepth = 5",
-      "description": "扫描目录树时的默认最大深度（init_scan.go 中定义）"
-    },
-    {
-      "name": "runScanInit",
-      "signature": "func runScanInit() error",
-      "description": "执行扫描式初始化，检查缓存有效性并决定是否恢复或从头开始"
-    },
-    {
-      "name": "runScanInitFromCheckpoint",
-      "signature": "func runScanInitFromCheckpoint(cp *cache.Checkpoint) error",
-      "description": "从检查点恢复扫描初始化，加载已完成阶段的缓存数据并继续执行"
-    },
-    {
-      "name": "runScanPipeline",
-      "signature": "func runScanPipeline(cp *cache.Checkpoint, startStage int, data *scanStageData) error",
-      "description": "执行扫描流水线阶段 6-9，调用 LLM 生成 .kontext JSON 制品"
-    },
-    {
-      "name": "runInteractiveInit",
-      "signature": "func runInteractiveInit() error",
-      "description": "执行交互式初始化，询问用户项目描述并调用 LLM 生成配置"
-    },
-    {
-      "name": "resolvePackTask",
-      "signature": "func resolvePackTask(args []string) (string, string, error)",
-      "description": "解析 pack 命令的任务输入，支持从参数、文件、stdin 或交互式获取，返回任务文本和来源标识"
-    },
-    {
-      "name": "namedLogger",
-      "signature": "func namedLogger(commandPath string) *slog.Logger",
-      "description": "创建带有命令路径标识的结构化日志记录器"
-    },
-    {
-      "name": "maskKey",
-      "signature": "func maskKey(key string) string",
-      "description": "对敏感配置项（如 api_key）进行脱敏处理，输出部分遮盖的字符串"
+      "signature": "var Version string",
+      "description": "构建时通过 -ldflags 注入的版本号，默认为 'dev'。若未注入则尝试从 debug.ReadBuildInfo 中读取（支持 go install 场景）"
     }
   ],
   "modification_rules": [
     {
-      "rule": "命令层只能依赖核心流水线层和基础设施层，不能直接依赖模板资源层",
-      "reason": "命令层通过流水线层的 Engine 抽象调用模板，模板渲染逻辑封装在核心流水线内部，保持命令代码简洁且易于测试"
+      "rule": "新增 Cobra 子命令时，必须在 cmd/root.go 的 init() 函数中注册，并遵循 cmd/<command>.go 的文件命名模式",
+      "reason": "保持命令注册的集中管理和文件命名的一致性"
     },
     {
-      "rule": "所有日志记录必须通过 namedLogger() 创建，不能直接使用 slog.Default()",
-      "reason": "确保每条日志都带有命令路径标识，便于日志分析和问题定位"
+      "rule": "命令层不得直接实现复杂业务逻辑，应委托给对应的业务引擎层（generator/packer/updater）",
+      "reason": "保持命令层的职责为参数解析和依赖组装，业务逻辑由引擎层封装"
     },
     {
-      "rule": "扫描式初始化必须支持检查点缓存与断点恢复，不允许在缓存有效时跳过恢复提示",
-      "reason": "init --scan 涉及多轮 LLM 调用，网络中断会导致进度丢失，缓存机制确保可恢复性，提升用户体验"
+      "rule": "修改面向用户的文本时，必须同时提供中英双语帮助文案",
+      "reason": "项目约定 CLI 帮助文案保持中英双语一致"
     },
     {
-      "rule": "用户交互必须使用 ui 包提供的函数（Info、Warn、Error、Success），不能直接使用 fmt.Println",
-      "reason": "统一用户消息格式，支持颜色渲染和国际化，便于后续样式调整"
+      "rule": "涉及 API Key 等敏感配置的日志输出，必须经过脱敏处理（参考 logging_helpers.go 中的 isSensitiveConfigKey）",
+      "reason": "防止敏感信息泄露到日志文件中"
     },
     {
-      "rule": "敏感信息（API Key 等）必须通过 maskKey 函数脱敏后再记录日志",
-      "reason": "防止敏感信息泄露到日志文件，保护用户隐私和安全"
+      "rule": "init --scan 流程修改阶段数或阶段顺序时，必须同步更新缓存检查点的阶段编号和恢复逻辑",
+      "reason": "断点恢复依赖阶段编号的一致性，否则会导致从错误的阶段恢复"
     },
     {
-      "rule": "新增命令文件必须遵循现有命名模式（cmd/<command>.go），并在 root.go 中注册",
-      "reason": "保持代码组织一致性，便于团队理解和维护"
+      "rule": "业务引擎的进度报告必须通过回调函数（OnProgress/OnWarn）实现，命令层不得将 ui 包直接传入引擎",
+      "reason": "保持引擎层与终端输出的解耦，便于测试时替换为静默回调"
     },
     {
-      "rule": "命令层不包含核心业务逻辑，仅负责任务分发和流程编排",
-      "reason": "核心业务逻辑应独立于 CLI 框架，便于未来作为库被其他程序调用"
-    },
-    {
-      "rule": "所有 LLM 调用必须通过 llm.NewClient 创建客户端，禁止直接使用 openai SDK",
-      "reason": "统一封装确保重试策略、日志、脱敏等行为一致"
-    },
-    {
-      "rule": "配置修改（config set）必须调用 config.Save() 保存到文件",
-      "reason": "确保配置持久化，用户下次运行时能读取到修改后的配置"
+      "rule": "cmd 包不得被任何 internal 包反向依赖",
+      "reason": "cmd 是最上层的命令编排层，反向依赖会导致循环引用"
     }
   ]
 }

@@ -1,86 +1,92 @@
 {
   "module": {
-    "name": "config",
+    "name": "internal/config",
     "path": "internal/config",
-    "purpose": "负责管理用户级全局 LLM 配置，包括定位 ~/.kontext/config.yaml、读取与保存配置文件、对配置值进行规范化处理，并将持久化配置转换为 internal/llm 可直接消费的运行时配置对象。\n"
+    "purpose": "管理全局 LLM 配置文件（~/.kontext/config.json）的读取、保存和环境变量覆盖，支持从旧版 YAML 格式自动迁移到 JSON 格式，并将用户配置转换为 internal/llm.Config 供 LLM 客户端使用"
   },
   "owns": [
-    "定义全局配置文件的数据结构，包括顶层 FileConfig 与 llm 配置段",
-    "解析用户目录下的全局配置文件路径并确保配置文件落盘位置一致",
-    "从 YAML 配置文件加载 LLM 相关参数",
-    "将 LLM 配置写回 YAML 文件并负责持久化格式",
-    "对 Base URL 做标准化处理，减少不同 OpenAI 兼容端点写法差异",
-    "将配置文件中的 LLMConfig 转换为 llm.Config 运行时对象"
+    "全局配置文件路径解析（~/.kontext/config.json）",
+    "从磁盘加载 LLM 配置（JSON 格式），支持环境变量覆盖（API Key、Base URL、Model 等）",
+    "将 LLM 配置持久化保存到 ~/.kontext/config.json",
+    "首次加载时检测并自动从旧版 config.yaml 迁移为 config.json",
+    "解析旧版 YAML 配置文件内容",
+    "将 LLMConfig 转换为 internal/llm.Config 类型，供 LLM 客户端直接使用",
+    "Base URL 格式标准化（自动补全 /v1 后缀、识别常见 LLM 服务商 URL 模式）"
   ],
   "not_responsible_for": [
-    "不负责实际发起模型请求、流式输出或重试逻辑",
-    "不负责 CLI 参数解析、交互式表单或终端界面展示",
-    "不负责 .kontext 项目物料的加载、校验或生成",
-    "不负责环境变量之外的业务级配置合并策略"
+    "LLM API 的实际网络通信和请求发送（由 internal/llm 负责）",
+    "项目级 .kontext/ 目录下的制品配置（由 internal/schema 负责）",
+    "命令行参数解析和用户交互式配置流程（由 cmd 层负责）",
+    "配置的 TUI 界面展示（由 cmd/config_tui.go 使用 Bubble Tea 实现）"
   ],
   "depends_on": [
     {
-      "module": "llm",
-      "reason": "需要将持久化的 LLMConfig 转换为 llm.Config，供上层创建模型客户端时使用"
+      "module": "internal/llm",
+      "reason": "引用 llm.Config 类型定义，LLMConfig.ToLLMConfig() 方法将用户配置转换为 llm.Config 供客户端使用"
     }
   ],
   "public_interface": [
     {
       "name": "FileConfig",
-      "signature": "type FileConfig struct { LLM LLMConfig `yaml:\"llm\"` }",
-      "description": "全局配置文件 ~/.kontext/config.yaml 的顶层 YAML 结构，当前包含 llm 配置段"
+      "signature": "type FileConfig struct { LLM LLMConfig `json:\"llm\"` }",
+      "description": "~/.kontext/config.json 的顶层 JSON 结构体，包含 LLM 配置块"
+    },
+    {
+      "name": "LLMConfig",
+      "signature": "type LLMConfig struct { ... }",
+      "description": "LLM 相关配置项的结构体，包含 API Key、Base URL、Model、Temperature、MaxTokens、Timeout 等字段"
     },
     {
       "name": "GlobalConfigPath",
       "signature": "func GlobalConfigPath() (string, error)",
-      "description": "返回全局配置文件的标准路径，用于读写用户级配置"
+      "description": "返回全局配置文件的完整路径（~/.kontext/config.json），如果用户主目录无法获取则返回错误"
     },
     {
       "name": "Load",
       "signature": "func Load() (*LLMConfig, error)",
-      "description": "从全局配置文件加载 LLM 配置并返回可供上层使用的配置对象"
+      "description": "加载全局 LLM 配置。优先读取 config.json 文件，再用环境变量覆盖对应字段，首次加载时自动触发 YAML 到 JSON 的迁移"
     },
     {
       "name": "Save",
       "signature": "func Save(cfg *LLMConfig) error",
-      "description": "将给定的 LLM 配置写入全局配置文件，必要时创建目录或覆盖已有文件"
+      "description": "将 LLM 配置保存到 ~/.kontext/config.json，自动创建目录结构"
     },
     {
       "name": "ToLLMConfig",
       "signature": "func (c *LLMConfig) ToLLMConfig() *llm.Config",
-      "description": "把配置文件中的 LLMConfig 转换为 internal/llm 使用的运行时配置结构"
+      "description": "将 LLMConfig 转换为 internal/llm.Config 类型，供 LLM 客户端初始化使用"
     },
     {
       "name": "NormalizeBaseURL",
       "signature": "func NormalizeBaseURL(url string) string",
-      "description": "对输入的 Base URL 做标准化，统一结尾路径或格式细节"
+      "description": "标准化 Base URL 格式，自动移除尾部斜杠并补全必要的路径后缀"
     },
     {
       "name": "NormalizeBaseURLWithHint",
       "signature": "func NormalizeBaseURLWithHint(url string) (string, bool, string)",
-      "description": "标准化 Base URL，并返回是否发生修正及提示信息，便于 CLI 向用户展示建议"
+      "description": "标准化 Base URL 并返回是否进行了修改以及修改提示信息，用于 TUI 配置时向用户展示 URL 被自动调整的详情"
     }
   ],
   "modification_rules": [
     {
-      "rule": "新增或调整配置字段时，必须同时更新 YAML 读写逻辑，并保证旧配置文件尽可能向后兼容",
-      "reason": "config 是用户级持久化入口，字段变更会直接影响已有安装环境中的配置可读性"
+      "rule": "修改配置字段时必须同步更新 FileConfig/LLMConfig 结构体的 JSON tag",
+      "reason": "配置文件使用 encoding/json 序列化/反序列化，JSON tag 不一致会导致字段丢失"
     },
     {
-      "rule": "任何运行时使用的 LLM 参数都应先通过 LLMConfig 到 llm.Config 的转换入口输出，不要让上层自行拼装",
-      "reason": "这样可以把默认值、格式规范化和兼容处理集中在 config 模块内，避免调用方行为分叉"
+      "rule": "新增配置项时必须在 Load() 函数中添加对应的环境变量覆盖逻辑",
+      "reason": "所有配置项都应支持环境变量覆盖，这是 CLI 工具的标准实践，用户在 CI/CD 环境中依赖此机制"
     },
     {
-      "rule": "Base URL 的规范化规则必须保持幂等，重复调用不应持续改变结果",
-      "reason": "Load、Save 与 CLI 展示可能多次调用该逻辑，非幂等实现会导致配置内容抖动"
+      "rule": "不得在此包中引入除 internal/llm 之外的其他 internal 包依赖",
+      "reason": "config 是配置管理层，位于依赖图的较底层，引入上层包会导致循环依赖"
     },
     {
-      "rule": "修改配置文件路径规则时，必须继续保持 GlobalConfigPath 作为唯一定位入口",
-      "reason": "统一路径解析可以避免不同命令在不同位置读写配置，造成状态不一致"
+      "rule": "YAML 迁移逻辑（migrateYAMLToJSON/parseLegacyYAML）修改时需确保向后兼容",
+      "reason": "用户可能仍有旧版 config.yaml 文件，迁移失败不应阻止程序启动"
     },
     {
-      "rule": "不要在该模块中引入具体模型请求或 provider 协议处理逻辑",
-      "reason": "模块边界要求 config 只负责配置持久化与转换，实际模型交互应留在 llm 模块"
+      "rule": "NormalizeBaseURL 的行为变更需同步更新 NormalizeBaseURLWithHint 的提示信息",
+      "reason": "两个函数共享 URL 标准化逻辑，提示信息需与实际行为一致以避免用户困惑"
     }
   ]
 }

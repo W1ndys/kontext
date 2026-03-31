@@ -1,241 +1,164 @@
 {
   "module": {
-    "name": "packer",
+    "name": "internal/packer",
     "path": "internal/packer",
-    "purpose": "编排基于任务描述的 Prompt 打包流水线。从 .kontext 物料加载项目知识，扫描候选文件，\n借助 LLM 识别并精筛相关源码上下文，匹配模块契约，渲染模板，生成面向大模型的 Prompt 文档。\n"
+    "purpose": "pack 命令的核心引擎，执行 10 阶段流水线：加载配置 → 扫描候选文件 → LLM 识别需求相关文件 → 收集候选上下文 → LLM 精筛候选上下文 → 整理文件与上下文 → 构建模板数据 → 渲染提示词并调用 LLM 生成 Prompt → 生成输出文件名 → 保存 Markdown Prompt 文档"
   },
   "owns": [
-    "Pack 十阶段流水线编排",
-    "目录树扫描与文件摘要/代码片段预加载的上下文收集",
-    "基于 LLM 的相关文件识别（含批量分片与合并）",
-    "基于候选文件摘要与模块契约的上下文精筛",
-    "基于任务关键词与相关文件路径的模块契约筛选",
-    "Prompt 模板数据组装与提示词渲染",
-    "输出文件命名提示与最终文档保存编排",
-    "LLM 识别结果的校验与清洗（validateAndCleanMentionedFiles）",
-    "候选文件源码扩展名过滤（supportedCodeExtensions）",
-    "文件路径到 Markdown 围栏语言标识的映射（markdownFenceLanguage）",
-    "LLM 聊天请求构建辅助（buildChatRequest）",
-    "候选文件数、上下文文件数、字节数等限制常量管理（limits.go）",
-    "识别阶段用户提示词模板渲染（renderIdentifyUserPrompt）",
-    "已识别文件构建辅助（buildIdentifiedFiles / buildIdentifiedFilesFromPaths）",
-    "精筛后相关文件选择与契约过滤（selectRelevantFiles / filterContractsByRelevantFiles）",
-    "源码文件过滤（collectSourceFiles）与文件内容读取截断（readIdentifiedFileContent）",
-    "文件路径到模块名推断（moduleNameFromPath）",
-    "分批识别结果合并（mergeMentionedFiles）",
-    "流水线进度回调与警告日志输出（progress / warn）",
-    "单批次 LLM 文件识别调用（identifyRelevantFilesBatch）",
-    "识别阶段模板数据类型定义（identifyTemplateData）",
-    "辅助数值函数（min）",
-    "扫描深度常量管理（scanDepth）",
-    "单批次识别候选上限常量管理（maxIdentifyCandidateBatchSize）"
+    "编排 pack 命令的 10 阶段流水线，按固定顺序串行执行",
+    "扫描项目目录生成候选文件清单（ScanCandidateFiles）",
+    "调用 LLM 识别与用户任务需求相关的文件（IdentifyRelevantFiles）",
+    "收集候选上下文信息，包括 schema bundle、已识别文件内容、匹配文件摘要（CollectContext）",
+    "预加载被识别文件的源码内容（PreloadIdentifiedFiles）",
+    "调用 LLM 对候选文件进行精筛，判断哪些文件应纳入最终 Prompt（RefineContext）",
+    "基于关键词匹配在项目文件中查找与任务相关的文件（matcher.go）",
+    "整理精筛结果与已识别文件，合并到最终上下文中（HydrateContext）",
+    "构建提示词模板渲染所需的数据结构（BuildTemplateData）",
+    "渲染 system/user 提示词并调用 LLM 生成最终 Markdown Prompt 文档",
+    "调用 LLM 生成输出文件名建议（GenerateFilenameSuggestion）",
+    "定义 pack 流水线中使用的数据类型（MentionedFiles、IdentifiedFile、CandidateFile 等）",
+    "定义文件大小限制常量，控制源码收集时的截断行为（limits.go）",
+    "提供 prompt_template.go 中的模板渲染辅助函数（RenderSystemPrompt、RenderUserPrompt）"
   ],
   "not_responsible_for": [
-    "定义或校验 .kontext YAML 物料结构本身",
-    "实现底层文件系统扫描、读写与摘要提取细节",
-    "实现具体的 OpenAI 协议适配、流式传输和重试底层机制",
-    "维护嵌入式模板资源内容本身",
-    "提供 CLI 参数解析、终端交互和命令入口"
+    "不负责 .kontext/ 目录下 JSON 制品的结构定义和加载（由 internal/schema 负责）",
+    "不负责 LLM API 的底层通信、重试逻辑和错误分类（由 internal/llm 负责）",
+    "不负责 Markdown Prompt 文件名的最终生成格式和磁盘持久化（由 internal/promptdoc 负责）",
+    "不负责提示词模板文件的嵌入和暴露（由 templates 包负责）",
+    "不负责命令行参数解析和用户交互（由 cmd 层负责）",
+    "不负责 init 命令的扫描/生成流程（由 internal/generator 负责）",
+    "不负责 update 命令的增量更新流程（由 internal/updater 负责）",
+    "不负责全局 LLM 配置的读取和管理（由 internal/config 负责）",
+    "不负责直接操作 stdout/stderr 输出（通过 OnProgress/OnWarn 回调向上层报告状态）"
   ],
   "depends_on": [
     {
-      "module": "fileutil",
-      "reason": "扫描项目目录树、提取文件摘要并读取候选源码内容"
+      "module": "internal/llm",
+      "reason": "所有 LLM 调用（文件识别、精筛、Prompt 生成、文件名生成）均通过 llm.Client 接口进行，使用 llm.ChatWithRetry 实现带重试的聊天请求"
     },
     {
-      "module": "llm",
-      "reason": "相关文件识别、上下文精筛及最终 Prompt 文档的流式生成"
+      "module": "internal/schema",
+      "reason": "通过 schema.LoadBundle 加载 .kontext/ 目录下的全部 JSON 制品（manifest、architecture、conventions、contracts），作为上下文输入提供给 LLM"
     },
     {
-      "module": "promptdoc",
-      "reason": "生成输出文件名并将最终 Prompt 文档保存到 .kontext/prompts"
-    },
-    {
-      "module": "schema",
-      "reason": "加载 .kontext Bundle，使用模块契约与架构信息参与筛选和模板组装"
+      "module": "internal/promptdoc",
+      "reason": "使用 promptdoc.GenerateFilename 生成输出文件名，使用 promptdoc.SavePrompt 将最终 Markdown Prompt 保存到磁盘"
     },
     {
       "module": "templates",
-      "reason": "渲染文件识别、上下文精筛及最终 Prompt 生成所需的提示词模板"
+      "reason": "引用 templates 包中嵌入的提示词模板字符串（如 pack_identify_files_system/user、pack_refine_system/user、llm_system_prompt、llm_user_prompt、pack_generate_filename_system/user），用于渲染 LLM 的 system/user prompt"
     }
   ],
   "public_interface": [
     {
       "name": "Engine",
-      "signature": "type Engine struct { llmClient llm.Client; kontextDir string; projectDir string; OnProgress func(stage, total int, msg string); DisableRefine bool; FilenameHint string }",
-      "description": "Pack 流水线编排器"
+      "signature": "type Engine struct { OnProgress func(stage, total int, msg string); OnWarn func(msg string); DisableRefine bool; OutputPath string }",
+      "description": "Pack 流水线的编排引擎，封装完整的 10 阶段执行流程。通过 OnProgress 和 OnWarn 回调向调用方报告进度和警告。DisableRefine 控制是否跳过 LLM 精筛阶段，OutputPath 允许用户指定输出文件路径"
     },
     {
       "name": "NewEngine",
       "signature": "func NewEngine(llmClient llm.Client, kontextDir, projectDir string) *Engine",
-      "description": "创建新的 Pack 引擎实例"
+      "description": "创建一个新的 Pack 引擎实例，接收 LLM 客户端、.kontext 目录路径和项目根目录路径"
     },
     {
-      "name": "Pack",
+      "name": "Engine.Pack",
       "signature": "func (e *Engine) Pack(task string) (string, error)",
-      "description": "执行完整 Pack 流程（10 阶段），返回生成的 Prompt 文档绝对路径"
-    },
-    {
-      "name": "CandidateContext",
-      "signature": "type CandidateContext struct { DirectoryTree []string; MatchedFiles []string; FileSummaries map[string]string; CodeSnippets map[string]string; Contracts []schema.ModuleContract; RelevantFiles []FileRelevance; MentionedReasons map[string]string; IdentifiedFiles []IdentifiedFile }",
-      "description": "候选上下文数据：目录树、匹配文件、摘要、代码片段、契约和精筛结果"
+      "description": "执行完整的 10 阶段流水线，接收用户任务描述，返回生成的 Prompt 文件绝对路径"
     },
     {
       "name": "ScanCandidateFiles",
-      "signature": "func ScanCandidateFiles(root string) ([]string, error)",
-      "description": "扫描项目目录并返回候选文件相对路径列表"
-    },
-    {
-      "name": "CollectContext",
-      "signature": "func CollectContext(bundle *schema.Bundle, task string, root string, mentionedFiles *MentionedFiles) (*CandidateContext, error)",
-      "description": "执行粗筛上下文收集，构建目录树、文件摘要和初步模块契约集合"
-    },
-    {
-      "name": "PreloadIdentifiedFiles",
-      "signature": "func PreloadIdentifiedFiles(root string, ctx *CandidateContext) error",
-      "description": "为已匹配文件预读取源码片段，填充文件内容供精筛使用"
-    },
-    {
-      "name": "HydrateContext",
-      "signature": "func HydrateContext(task string, ctx *CandidateContext, refine *RefineResult)",
-      "description": "根据精筛结果整理最终相关文件、过滤契约并构建附带源码上下文"
-    },
-    {
-      "name": "BuildTemplateData",
-      "signature": "func BuildTemplateData(task string, bundle *schema.Bundle, ctx *CandidateContext) *TemplateData",
-      "description": "将 Bundle 与上下文数据转换为 Prompt 模板渲染数据"
-    },
-    {
-      "name": "MentionedFiles",
-      "signature": "type MentionedFiles struct { Paths []string `json:\"paths\"`; Reasons map[string]string `json:\"reasons\"` }",
-      "description": "文件识别阶段返回的相关文件列表及识别原因"
-    },
-    {
-      "name": "IdentifiedFile",
-      "signature": "type IdentifiedFile struct { Path string `json:\"path\"`; Reason string `json:\"reason\"`; Content string `json:\"content\"`; Truncated bool `json:\"truncated\"` }",
-      "description": "单个被识别并附带源码内容的文件"
+      "signature": "func ScanCandidateFiles(projectDir string) ([]string, error)",
+      "description": "扫描项目目录生成候选文件路径列表，排除 .kontext/、.git/ 等目录和二进制文件"
     },
     {
       "name": "IdentifyRelevantFiles",
-      "signature": "func IdentifyRelevantFiles(client llm.Client, task string, candidatePaths []string, projectRoot, architectureSummary, moduleSummary string, onRetry func(attempt int, err error, backoff time.Duration)) (*MentionedFiles, error)",
-      "description": "调用 LLM 从候选路径中识别与任务相关的文件，支持分批处理与合并"
+      "signature": "func IdentifyRelevantFiles(client llm.Client, task string, candidateFiles []string, projectDir string, archSummary string, moduleSummary string, onRetry func(attempt int, retryErr error, backoff time.Duration)) (*MentionedFiles, error)",
+      "description": "调用 LLM 从候选文件列表中识别与任务需求相关的文件，返回结构化的 MentionedFiles"
     },
     {
-      "name": "MatchContracts",
-      "signature": "func MatchContracts(task string, contracts []schema.ModuleContract) []schema.ModuleContract",
-      "description": "根据任务关键词从全部模块契约中匹配相关契约"
+      "name": "CollectContext",
+      "signature": "func CollectContext(bundle *schema.Bundle, task string, projectDir string, mentioned *MentionedFiles) (*PackContext, error)",
+      "description": "收集候选上下文信息，整合 schema bundle 数据、匹配文件和已识别文件信息"
     },
     {
-      "name": "CandidateFile",
-      "signature": "type CandidateFile struct { Path string `json:\"path\"`; Summary string `json:\"summary\"` }",
-      "description": "发送给精筛模型的候选文件摘要项"
+      "name": "PreloadIdentifiedFiles",
+      "signature": "func PreloadIdentifiedFiles(projectDir string, ctx *PackContext) error",
+      "description": "预加载被识别文件的源码内容到 PackContext 中，支持大小限制截断"
     },
     {
       "name": "RefineContext",
-      "signature": "func RefineContext(client llm.Client, task string, candidates []CandidateFile, contracts []schema.ModuleContract, identifiedFiles []IdentifiedFile, onRetry func(attempt int, err error, backoff time.Duration)) (*RefineResult, error)",
-      "description": "调用 LLM 对候选文件和契约进行精筛"
+      "signature": "func RefineContext(client llm.Client, task string, candidates []CandidateFile, contracts []schema.ModuleContract, identifiedFiles []IdentifiedFile, onRetry func(attempt int, retryErr error, backoff time.Duration)) (*RefineResult, error)",
+      "description": "调用 LLM 对候选文件进行精筛，返回应保留的文件列表及其理由"
     },
     {
-      "name": "FileRelevance",
-      "signature": "type FileRelevance struct { Path string `json:\"path\"`; Score float64 `json:\"score\"`; Reason string `json:\"reason\"` }",
-      "description": "精筛返回的单个文件相关性评分与原因"
+      "name": "HydrateContext",
+      "signature": "func HydrateContext(task string, ctx *PackContext, refine *RefineResult)",
+      "description": "将精筛结果与已识别文件信息合并整理到 PackContext 中，准备最终上下文"
     },
     {
-      "name": "RefineResult",
-      "signature": "type RefineResult struct { RelevantFiles []FileRelevance `json:\"relevant_files\"`; RelevantContracts []string `json:\"relevant_contracts\"` }",
-      "description": "上下文精筛阶段的完整返回结果"
+      "name": "BuildTemplateData",
+      "signature": "func BuildTemplateData(task string, bundle *schema.Bundle, ctx *PackContext) *TemplateData",
+      "description": "构建提示词模板渲染所需的数据结构"
     },
     {
-      "name": "TemplateData",
-      "signature": "type TemplateData struct { Task string; ProjectName string; ProjectOneLine string; ProjectType string; Phase string; ArchitectureSummary string; TechStack []string; Conventions []string; Contracts []schema.ModuleContract; ContextFiles []ContextFileData; DirectoryTree string }",
-      "description": "Prompt 模板渲染所需的完整数据结构"
+      "name": "RenderSystemPrompt",
+      "signature": "func RenderSystemPrompt() (string, error)",
+      "description": "渲染 pack 流水线的 LLM system prompt 模板"
     },
     {
-      "name": "ContextFileData",
-      "signature": "type ContextFileData struct { Path string; Language string; Content string; Reason string; Truncated bool }",
-      "description": "模板渲染中单个上下文文件的数据"
+      "name": "RenderUserPrompt",
+      "signature": "func RenderUserPrompt(data *TemplateData) (string, error)",
+      "description": "渲染 pack 流水线的 LLM user prompt 模板，传入模板数据"
+    },
+    {
+      "name": "GenerateFilenameSuggestion",
+      "signature": "func GenerateFilenameSuggestion(client llm.Client, task string, onRetry func(attempt int, retryErr error, backoff time.Duration)) (string, error)",
+      "description": "调用 LLM 根据任务描述生成一个简短的英文文件名建议"
+    },
+    {
+      "name": "MentionedFiles",
+      "signature": "type MentionedFiles struct { Paths []string; Reasons map[string]string }",
+      "description": "LLM 文件识别阶段的结构化返回，包含识别出的文件路径列表及每个文件的识别原因"
+    },
+    {
+      "name": "IdentifiedFile",
+      "signature": "type IdentifiedFile struct { Path string; Reason string; Content string; Truncated bool }",
+      "description": "单个被识别文件的信息，包含路径、识别原因、文件内容（可能截断）和截断标记"
+    },
+    {
+      "name": "CandidateFile",
+      "signature": "type CandidateFile struct { Path string; Summary string }",
+      "description": "候选文件信息，包含文件路径和摘要描述"
     }
   ],
   "modification_rules": [
     {
-      "rule": "保持 Pack 流水线的阶段顺序与职责边界，不得将识别、精筛、渲染或保存步骤交叉合并。",
-      "reason": "engine.go 以 packStages(10) 阶段组织流程，架构要求固定阶段式顺序。"
+      "rule": "新增或修改流水线阶段时必须更新 packStages 常量和 Engine.Pack 方法中的阶段编号",
+      "reason": "阶段总数和编号直接影响 OnProgress 回调向用户展示的进度信息，不一致会导致进度显示异常"
     },
     {
-      "rule": "新增上下文数据须遵守 limits.go 中的候选文件数、上下文文件数、单文件和总字节数限制。",
-      "reason": "collector.go 通过常量限制控制上下文预算。"
+      "rule": "所有 LLM 调用必须通过 llm.Client 接口进行，不得直接构造 OpenAI API 请求",
+      "reason": "确保日志记录、重试逻辑、超时控制和结构化输出的一致性，也便于测试时 mock"
     },
     {
-      "rule": "物料读取与契约筛选必须通过 schema 数据结构，不得在 packer 内复制 schema 定义。",
-      "reason": "schema 是项目知识物料的唯一结构定义中心。"
+      "rule": "不得在 packer 包内直接操作 stdout/stderr 或调用 ui 包",
+      "reason": "引擎层通过 OnProgress/OnWarn 回调向命令层报告状态，保持引擎的可测试性和与终端 UI 的解耦"
     },
     {
-      "rule": "与模型交互必须依赖 llm.Client 抽象，不得直接接入供应商 SDK。",
-      "reason": "模型适配收敛于 llm 模块。"
+      "rule": "不得 import internal/generator 或 internal/updater 包",
+      "reason": "三个业务引擎之间不得相互 import，它们通过共享的 schema 和 llm 包间接协作"
     },
     {
-      "rule": "模板文本不硬编码到 packer，修改渲染输入须同步维护 BuildTemplateData 与模板的数据一致性。",
-      "reason": "模板资源由 templates 包统一管理。"
+      "rule": "修改模板渲染逻辑时必须同步检查 templates 包中对应 .tmpl 文件的变量绑定",
+      "reason": "模板变量名和数据结构必须匹配，不一致会导致运行时模板渲染失败"
     },
     {
-      "rule": "LLM 识别或精筛失败时保持降级策略：记录告警并使用已有候选上下文继续生成。",
-      "reason": "engine.go 已实现失败后继续打包的容错行为。"
+      "rule": "文件大小限制和截断逻辑的修改必须同步更新 limits.go 中的常量定义",
+      "reason": "集中管理限制常量，避免硬编码分散在多个文件中导致不一致"
     },
     {
-      "rule": "保存输出文件继续委托给 promptdoc，不在 packer 内自行实现文件命名和落盘。",
-      "reason": "promptdoc 是专用输出适配层。"
-    },
-    {
-      "rule": "分批识别候选文件时，每批不超过 maxIdentifyCandidateBatchSize（100）条路径，合并结果总数不超过 maxIdentifiedFiles（20）。",
-      "reason": "limits.go 定义批次与结果上限，identifier.go 的分片和合并逻辑依赖这些常量。"
-    },
-    {
-      "rule": "validateAndCleanMentionedFiles 必须对 LLM 返回的路径做存在性校验与清洗，丢弃不存在或超出项目根目录的条目。",
-      "reason": "LLM 可能幻觉出不存在的文件路径，需在识别结果进入后续阶段前过滤。"
-    },
-    {
-      "rule": "supportedCodeExtensions 扩展名白名单变更时须同步评估 limits.go 中候选文件数上限是否仍合理。",
-      "reason": "扩展名过滤直接影响候选文件规模，与上下文预算常量紧密耦合。"
-    },
-    {
-      "rule": "renderIdentifyUserPrompt 的模板变量变更须与 templates 包中对应嵌入式模板保持同步。",
-      "reason": "模板渲染参数与模板文本必须一一对应，否则运行时 panic 或产生空白段落。"
-    },
-    {
-      "rule": "buildChatRequest 构建的消息结构须遵循 llm.ChatRequest 接口约定，不得绕过 Client 直接构造 HTTP 请求。",
-      "reason": "保持与 llm 模块的单一交互通道，确保重试、超时等横切逻辑统一生效。"
-    },
-    {
-      "rule": "MatchContracts 的关键词匹配逻辑变更时须补充对应单元测试，覆盖中英文混合、路径片段和模块名匹配场景。",
-      "reason": "契约筛选准确度直接影响最终 Prompt 质量，回归风险较高。"
-    },
-    {
-      "rule": "selectRelevantFiles 与 filterContractsByRelevantFiles 的筛选逻辑须与 RefineResult 的数据结构保持一致，字段重命名时须同步更新。",
-      "reason": "精筛结果到最终上下文的映射是流水线关键衔接点，结构不一致会导致静默丢失文件或契约。"
-    },
-    {
-      "rule": "mergeMentionedFiles 合并多批识别结果时须去重并保留每个路径最早出现的 reason，总数裁剪至 maxIdentifiedFiles。",
-      "reason": "分批结果可能包含重叠路径，合并策略需确定性且可测试。"
-    },
-    {
-      "rule": "collectSourceFiles 过滤逻辑变更时须同步更新 ScanCandidateFiles 的行为，二者共享扩展名白名单。",
-      "reason": "两个函数在不同阶段过滤文件，白名单不一致会导致识别阶段选中但预加载阶段丢失文件。"
-    },
-    {
-      "rule": "moduleNameFromPath 的路径推断规则变更须同步更新 filterContractsByRelevantFiles 中的匹配逻辑。",
-      "reason": "模块名推断直接驱动契约过滤，二者必须使用相同的命名约定。"
-    },
-    {
-      "rule": "readIdentifiedFileContent 的截断阈值须与 limits.go 中 maxSingleFileBytes 常量保持一致，不得硬编码魔法数字。",
-      "reason": "截断行为依赖统一的预算常量，散落的硬编码值会导致预算失控。"
-    },
-    {
-      "rule": "buildIdentifiedFiles 与 buildIdentifiedFilesFromPaths 的输出结构须与 IdentifiedFile 类型定义完全一致，新增字段时两个构建函数须同步更新。",
-      "reason": "下游 PreloadIdentifiedFiles 和精筛阶段依赖完整的 IdentifiedFile 结构。"
-    },
-    {
-      "rule": "markdownFenceLanguage 映射表新增语言时须确保对应扩展名已在 supportedCodeExtensions 白名单中。",
-      "reason": "仅白名单内的文件才会进入上下文，映射表中多余条目虽无害但会造成维护混淆。"
+      "rule": "新增的 LLM 结构化输出类型需要确保有正确的 json tag 以支持 JSON Schema 生成",
+      "reason": "LLM 结构化输出依赖 invopop/jsonschema 从 Go 结构体生成 JSON Schema，缺少 json tag 会导致 schema 不正确"
     }
   ]
 }

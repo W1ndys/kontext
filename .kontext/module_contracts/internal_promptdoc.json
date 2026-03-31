@@ -1,73 +1,60 @@
 {
   "module": {
-    "name": "promptdoc",
+    "name": "internal/promptdoc",
     "path": "internal/promptdoc",
-    "purpose": "负责生成 Markdown Prompt 文档的构建与保存，包括文件名生成和文件输出"
+    "purpose": "Markdown Prompt 文档的文件名生成与磁盘持久化，负责将 pack 流水线的最终输出写入 .kontext/prompts/ 目录"
   },
   "owns": [
-    "Markdown Prompt 文档的文件名生成",
-    "Markdown Prompt 文档的写入与保存",
-    "Prompt 文档元数据管理（task_name、created_at 等）"
+    "将渲染完成的 Markdown Prompt 内容写入磁盘文件",
+    "确保输出目录 .kontext/prompts/ 存在",
+    "根据给定的文件名和输出目录拼接最终文件路径",
+    "Prompt 文档的磁盘持久化与路径管理"
   ],
   "not_responsible_for": [
-    "Prompt 内容本身的生成逻辑（由 packer 模块负责）",
-    ".kontext 目录下 JSON 制品的读写（由 schema 模块负责）",
-    "文件系统的底层扫描和遍历（由 fileutil 模块负责）",
-    "终端 UI 交互（由 ui 模块负责）"
+    "Prompt 内容的渲染与模板处理（由 internal/packer 负责）",
+    "文件名的生成逻辑（由 internal/packer/namer.go 通过 LLM 生成）",
+    ".kontext/ 目录下 JSON 制品的读写（由 internal/schema 和 internal/fileutil 负责）",
+    "LLM 调用与结构化输出（由 internal/llm 负责）",
+    "用户交互与命令参数解析（由 cmd 负责）"
   ],
-  "depends_on": [
-    {
-      "module": "fileutil",
-      "reason": "使用文件工具函数进行文件写入和目录创建操作"
-    },
-    {
-      "module": "schema",
-      "reason": "引用 schema 包中的 TaskContext 结构体定义作为 Prompt 文档的元数据结构"
-    }
-  ],
+  "depends_on": [],
   "public_interface": [
     {
       "name": "Writer",
-      "signature": "type Writer struct { dir string; fileUtil *fileutil.FileUtil }",
-      "description": "Prompt 文档写入器，负责管理文档输出目录和文件操作工具"
+      "signature": "type Writer struct { OutputDir string }",
+      "description": "Prompt 文档写入器，持有输出目录路径，提供文档持久化方法"
     },
     {
       "name": "NewWriter",
-      "signature": "func NewWriter(dir string) *Writer",
-      "description": "创建新的 Writer 实例，dir 参数指定 Prompt 文档的输出目录"
+      "signature": "func NewWriter(outputDir string) *Writer",
+      "description": "创建一个新的 Writer 实例，指定 Prompt 文档的输出目录"
     },
     {
-      "name": "Write",
-      "signature": "func (w *Writer) Write(ctx *schema.TaskContext, content string) (string, error)",
-      "description": "将任务上下文和生成的 Prompt 内容写入文件，返回文件路径和可能的错误"
-    },
-    {
-      "name": "EnsureDir",
-      "signature": "func (w *Writer) EnsureDir() error",
-      "description": "确保输出目录存在，如不存在则创建"
-    },
-    {
-      "name": "GenerateFilename",
-      "signature": "func (w *Writer) GenerateFilename(ctx *schema.TaskContext) string",
-      "description": "根据任务上下文生成唯一的文件名，格式为 {task_name}_{timestamp}.md"
+      "name": "Writer.Write",
+      "signature": "func (w *Writer) Write(filename string, content string) (string, error)",
+      "description": "将 Markdown Prompt 内容写入指定文件名的文件，自动创建输出目录（如不存在），返回最终写入的文件路径和可能的错误"
     }
   ],
   "modification_rules": [
     {
-      "rule": "Writer 是无状态组件，所有状态通过构造函数参数注入，不应维护内部可变状态",
-      "reason": "无状态设计便于并发调用和单元测试，避免写入冲突"
+      "rule": "不得在本模块中引入任何 internal/ 子包的依赖",
+      "reason": "根据架构规范，promptdoc 是无依赖的叶子节点模块，必须保持零业务耦合"
     },
     {
-      "rule": "Write 方法必须保证原子性写入，使用临时文件+重命名的模式避免文件损坏",
-      "reason": "确保在写入过程中发生错误时不会留下不完整的文件"
+      "rule": "输出目录固定为调用方传入的路径，不得硬编码 .kontext/prompts/ 路径",
+      "reason": "保持模块通用性，输出路径的决定权在调用方（packer/cmd）"
     },
     {
-      "rule": "文件名生成逻辑必须保证唯一性，避免同一任务多次写入时覆盖已有文件",
-      "reason": "用户可能需要查看历史生成的 Prompt 文档"
+      "rule": "写入文件时必须确保目录存在（MkdirAll），不得假设目录已预先创建",
+      "reason": "首次 pack 时 prompts 目录可能不存在，模块需自行处理"
     },
     {
-      "rule": "目录操作错误应返回明确的错误信息，便于调用者诊断权限或路径问题",
-      "reason": "Prompt 文档输出是用户可感知的功能，错误信息应友好"
+      "rule": "修改 Write 方法签名时需同步更新 internal/packer 中的调用方",
+      "reason": "packer 是 promptdoc 的主要消费者，接口变更会直接影响 pack 流水线"
+    },
+    {
+      "rule": "文件写入操作必须使用原子或安全的方式，避免写入中断导致不完整文件",
+      "reason": "Prompt 文档是最终用户可见的输出产物，必须保证文件完整性"
     }
   ]
 }

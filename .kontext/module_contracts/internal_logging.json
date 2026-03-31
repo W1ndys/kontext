@@ -1,111 +1,108 @@
 {
   "module": {
-    "name": "logging",
+    "name": "internal/logging",
     "path": "internal/logging",
-    "purpose": "封装 slog 实现结构化日志，支持 text 和 json 格式，支持日志文件输出"
+    "purpose": "基于 log/slog 的结构化日志初始化与管理，支持文件和控制台双输出、日志级别配置、多格式输出（text/json）、fanout 多目标写入"
   },
   "owns": [
-    "基于 slog 的结构化日志初始化和配置",
-    "text 和 json 格式的日志处理器实现",
-    "日志文件输出管理（打开、写入、轮转）",
-    "fanoutHandler 实现（多 handler 分发）",
-    "命令级别日志生成（CommandLogger）",
-    "日志级别解析和配置",
-    "默认日志文件路径管理",
-    "日志目录路径管理",
-    "日志相关的环境变量读取（KONTEXT_LOG_LEVEL, KONTEXT_LOG_FORMAT）"
+    "全局 slog.Logger 的初始化与单例管理",
+    "日志级别解析（从字符串到 slog.Level 的转换）",
+    "日志文件路径管理（默认日志目录 .kontext/logs/、按时间生成日志文件名）",
+    "日志文件的创建与打开",
+    "日志 Handler 的构建（text 格式和 json 格式）",
+    "fanout Handler 实现：将同一条日志同时写入文件和控制台等多个输出",
+    "为特定命令创建带命令名属性的子 Logger（CommandLogger）",
+    "通过环境变量（KONTEXT_LOG_LEVEL、KONTEXT_LOG_FORMAT）控制日志行为"
   ],
   "not_responsible_for": [
-    "日志的聚合、收集和分析",
-    "日志的远程传输或网络发送",
-    "日志的长期存储和归档策略",
-    "日志监控或告警逻辑",
-    "应用级别的业务逻辑",
-    "非结构化日志处理"
+    "敏感信息脱敏（由 cmd/logging_helpers.go 负责）",
+    "业务逻辑中的日志记录策略决定（由各业务模块自行决定记录什么）",
+    "终端用户可见的彩色输出（由 internal/ui 负责）",
+    "日志文件的清理和轮转"
   ],
   "depends_on": [],
   "public_interface": [
     {
       "name": "Options",
-      "signature": "type Options struct { Level string; Format string; Output string; },",
-      "description": "日志初始化配置选项"
+      "signature": "type Options struct { Level string; Format string; FilePath string }",
+      "description": "日志初始化选项，指定日志级别、输出格式和日志文件路径"
     },
     {
       "name": "Init",
       "signature": "func Init(opts Options) (*slog.Logger, error)",
-      "description": "根据配置选项初始化日志系统，返回 slog.Logger"
+      "description": "根据 Options 初始化全局 slog.Logger，设置文件和控制台双输出的 fanout Handler，返回初始化后的 Logger 实例"
     },
     {
       "name": "Default",
       "signature": "func Default() *slog.Logger",
-      "description": "获取默认日志记录器实例"
+      "description": "返回全局默认的 slog.Logger 实例，如果尚未通过 Init 初始化则返回 slog 默认 Logger"
     },
     {
       "name": "ParseLevel",
       "signature": "func ParseLevel(level string) (slog.Level, error)",
-      "description": "解析日志级别字符串为 slog.Level"
+      "description": "将字符串形式的日志级别（debug/info/warn/error）解析为 slog.Level，不区分大小写"
     },
     {
       "name": "CommandLogger",
       "signature": "func CommandLogger(commandName string) *slog.Logger",
-      "description": "创建带命令名前缀的日志记录器"
+      "description": "基于全局 Logger 创建带 command 属性的子 Logger，用于标识日志来源命令"
     },
     {
       "name": "CurrentLogFilePath",
       "signature": "func CurrentLogFilePath() string",
-      "description": "获取当前日志文件路径"
+      "description": "返回当前正在使用的日志文件路径"
     },
     {
       "name": "DefaultLogFilePath",
       "signature": "func DefaultLogFilePath(now time.Time) (string, error)",
-      "description": "生成基于时间的默认日志文件路径"
+      "description": "根据给定时间生成默认日志文件的完整路径（格式为 .kontext/logs/YYYYMMDD_HHMMSS.log）"
     },
     {
       "name": "DefaultLogDirPath",
       "signature": "func DefaultLogDirPath() (string, error)",
-      "description": "获取默认日志目录路径"
+      "description": "返回默认日志目录路径（.kontext/logs/），如果目录不存在则创建"
+    },
+    {
+      "name": "DefaultLevel",
+      "signature": "const DefaultLevel = \"info\"",
+      "description": "默认日志级别常量"
+    },
+    {
+      "name": "DefaultFormat",
+      "signature": "const DefaultFormat = \"text\"",
+      "description": "默认日志输出格式常量"
+    },
+    {
+      "name": "EnvLogLevel",
+      "signature": "const EnvLogLevel = \"KONTEXT_LOG_LEVEL\"",
+      "description": "控制日志级别的环境变量名"
+    },
+    {
+      "name": "EnvLogFormat",
+      "signature": "const EnvLogFormat = \"KONTEXT_LOG_FORMAT\"",
+      "description": "控制日志格式的环境变量名"
     }
   ],
   "modification_rules": [
     {
-      "rule": "必须保持与 slog.Logger 接口的兼容性，所有公共函数返回值必须是 *slog.Logger",
-      "reason": "slog 是标准库日志接口，保持兼容性确保其他模块可无缝集成"
+      "rule": "不得引入对项目中任何其他 internal 包的依赖",
+      "reason": "logging 是最底层的基础设施包，被几乎所有其他模块依赖，引入上层依赖会导致循环依赖"
     },
     {
-      "rule": "Init 函数必须返回 (*slog.Logger, error)，错误处理不能被忽略",
-      "reason": "日志系统初始化失败可能导致关键信息丢失，必须显式处理错误"
+      "rule": "Init 函数必须保持幂等性或明确的单次初始化语义",
+      "reason": "全局 Logger 在程序启动时由 cmd/root.go 的 PersistentPreRunE 统一初始化，多次初始化可能导致日志输出异常"
     },
     {
-      "rule": "日志格式（text/json）的切换不能改变日志字段结构",
-      "reason": "下游日志分析工具依赖统一的字段结构，格式变更可能导致解析失败"
+      "rule": "新增日志输出格式时需同时支持文件和控制台双输出",
+      "reason": "fanout Handler 是核心设计，确保所有日志同时写入文件供排查和写入控制台供实时查看"
     },
     {
-      "rule": "日志文件写入必须使用非阻塞方式，避免日志操作影响命令执行性能",
-      "reason": "日志是辅助功能，不应成为性能瓶颈或导致命令响应延迟"
+      "rule": "日志文件路径默认写入 .kontext/logs/ 目录，不得更改默认位置约定",
+      "reason": ".gitignore 已配置忽略该目录，更改路径可能导致日志文件被意外提交到版本库"
     },
     {
-      "rule": "环境变量 KONTEXT_LOG_LEVEL 和 KONTEXT_LOG_FORMAT 的读取逻辑必须保留",
-      "reason": "这些是用户配置日志行为的标准方式，变更会破坏现有用户配置"
-    },
-    {
-      "rule": "不能引入业务逻辑相关的日志字段或上下文",
-      "reason": "logging 模块职责是提供通用日志基础设施，业务逻辑应在调用方处理"
-    },
-    {
-      "rule": "CommandLogger 函数必须为命令日志添加统一的命令名前缀格式",
-      "reason": "确保不同命令的日志可被正确区分和过滤"
-    },
-    {
-      "rule": "路径相关函数（CurrentLogFilePath、DefaultLogFilePath、DefaultLogDirPath）的签名不能改变",
-      "reason": "这些函数可能被多个模块调用，签名变更会导致连锁破坏"
-    },
-    {
-      "rule": "不能在该模块中实现日志的远程传输、聚合或存储归档功能",
-      "reason": "根据模块职责定义，日志的传输、分析和归档不属于该模块范畴"
-    },
-    {
-      "rule": "fanoutHandler 的实现必须确保多 handler 场景下的日志顺序一致性",
-      "reason": "多 handler 同时写入时需避免竞态条件导致日志混乱"
+      "rule": "修改环境变量名（EnvLogLevel/EnvLogFormat）时需同步更新文档和 cmd 层的引用",
+      "reason": "环境变量是用户配置日志行为的公开接口，修改会造成破坏性变更"
     }
   ]
 }

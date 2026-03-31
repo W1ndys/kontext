@@ -1,63 +1,44 @@
 {
   "module": {
-    "name": "fileutil",
+    "name": "internal/fileutil",
     "path": "internal/fileutil",
-    "purpose": "提供文件系统操作工具函数，包括目录扫描、文件读取、摘要提取等通用能力"
+    "purpose": "提供文件系统底层操作工具，包括文件读写、目录创建与存在性检查、项目目录树扫描、源码摘要提取、模块路径解析等功能，是项目中几乎所有上层模块共同依赖的基础设施层"
   },
   "owns": [
-    "文件基本读写操作（ReadFile、WriteFile）",
-    "文件和目录存在性检查（FileExists、DirExists）",
-    "目录自动创建（EnsureDir）",
-    "目录树扫描遍历（ScanDirectoryTree）",
-    "代码片段读取（ReadCodeSnippets）",
-    "文件摘要提取（ExtractFileSummary）",
-    "Go 文件查找（FindGoFiles）",
-    "多语言函数签名模式匹配"
+    "文件读取（ReadFile）和写入（WriteFile），写入时自动创建父目录",
+    "文件和目录的存在性检查（FileExists、DirExists）",
+    "目录创建（EnsureDir），支持递归创建",
+    "项目目录树扫描（ScanDirectoryTree），按指定最大深度递归遍历目录并返回文件路径列表",
+    "源码片段批量读取（ReadCodeSnippets），按指定行数读取多个文件的前 N 行内容",
+    "单个文件的函数/类签名摘要提取（ExtractFileSummary），支持 Go、Python、JS、TS、TSX 等多语言的签名模式匹配",
+    "从架构 JSON 和文件列表中解析模块路径（ExtractModulesFromArchAndFiles、ExtractModulesFromFileList）",
+    "项目模块扫描（ScanProjectModules），结合架构信息和文件列表推断项目包含的模块"
   ],
   "not_responsible_for": [
-    "文件内容的解析和处理逻辑",
-    "特定业务逻辑的文件操作",
-    "网络文件传输",
-    "文件的压缩或加密",
-    "并发文件访问控制"
+    "任何业务逻辑（init/pack/update 流程编排）",
+    "LLM 调用或网络通信",
+    "JSON 制品的结构体定义与校验（属于 internal/schema）",
+    "日志初始化与管理（属于 internal/logging）",
+    "终端 UI 展示（属于 internal/ui）",
+    "Git 操作（属于 internal/updater）",
+    "配置文件管理（属于 internal/config）"
   ],
-  "depends_on": [
-    {
-      "module": "os",
-      "reason": "基础文件系统和路径操作"
-    },
-    {
-      "module": "filepath",
-      "reason": "路径字符串处理和目录操作"
-    },
-    {
-      "module": "bufio",
-      "reason": "带缓冲的文件读取"
-    },
-    {
-      "module": "regexp",
-      "reason": "函数签名模式匹配"
-    },
-    {
-      "module": "strings",
-      "reason": "字符串处理"
-    }
-  ],
+  "depends_on": [],
   "public_interface": [
     {
       "name": "ReadFile",
       "signature": "func ReadFile(path string) ([]byte, error)",
-      "description": "读取文件的全部内容"
+      "description": "读取指定路径文件的全部内容，底层调用 os.ReadFile"
     },
     {
       "name": "WriteFile",
       "signature": "func WriteFile(path string, data []byte) error",
-      "description": "将数据写入文件，父目录不存在时自动创建"
+      "description": "将数据写入指定路径的文件，如果父目录不存在则自动递归创建，文件权限为 0644"
     },
     {
       "name": "FileExists",
       "signature": "func FileExists(path string) bool",
-      "description": "检查指定路径的文件是否存在"
+      "description": "检查指定路径的文件是否存在且不是目录"
     },
     {
       "name": "DirExists",
@@ -67,28 +48,63 @@
     {
       "name": "EnsureDir",
       "signature": "func EnsureDir(path string) error",
-      "description": "确保目录存在，不存在时自动创建"
+      "description": "确保指定路径的目录存在，如果不存在则递归创建（权限 0755）"
     },
     {
       "name": "ScanDirectoryTree",
       "signature": "func ScanDirectoryTree(root string, maxDepth int) ([]string, error)",
-      "description": "递归扫描目录树，返回所有文件路径"
+      "description": "从指定根目录开始递归扫描目录树，返回不超过指定深度的所有文件相对路径列表"
     },
     {
       "name": "ReadCodeSnippets",
       "signature": "func ReadCodeSnippets(root string, paths []string, maxLines int) map[string]string",
-      "description": "从指定路径列表读取代码片段前几行"
+      "description": "批量读取多个文件的前 N 行源码内容，返回路径到内容的映射。用于为 LLM 提供源码片段上下文"
     },
     {
       "name": "ExtractFileSummary",
       "signature": "func ExtractFileSummary(path string) (string, error)",
-      "description": "提取文件摘要信息"
+      "description": "提取单个源码文件的摘要信息，包括文件头（前20行）和函数/类/方法签名列表。通过语言特定的正则表达式匹配签名模式（支持 Go/Python/JS/TS/TSX）"
     },
     {
-      "name": "FindGoFiles",
-      "signature": "func FindGoFiles(root string) ([]string, error)",
-      "description": "在指定目录下查找所有Go文件"
+      "name": "ExtractModulesFromArchAndFiles",
+      "signature": "func ExtractModulesFromArchAndFiles(archJSON string, allFiles []string) []string",
+      "description": "从架构 JSON 字符串中提取 packages 列表，并与实际文件列表交叉验证，返回有效的模块路径列表"
+    },
+    {
+      "name": "ExtractModulesFromFileList",
+      "signature": "func ExtractModulesFromFileList(allFiles []string) []string",
+      "description": "从文件路径列表中推断模块（包）路径，通过提取目录前缀并去重排序得到模块列表"
+    },
+    {
+      "name": "ScanProjectModules",
+      "signature": "func ScanProjectModules(root, archJSON string) ([]string, error)",
+      "description": "扫描项目根目录下的所有文件，结合架构 JSON 信息推断项目包含的模块列表。优先使用架构信息，回退到文件列表推断"
     }
   ],
-  "modification_rules": null
+  "modification_rules": [
+    {
+      "rule": "不得引入对任何其他 internal 包的依赖",
+      "reason": "fileutil 是最底层的基础设施包，被几乎所有上层模块依赖，引入上层依赖会导致循环依赖"
+    },
+    {
+      "rule": "新增的语言签名匹配模式必须添加到 signaturePatterns 变量中，并与对应的文件扩展名关联",
+      "reason": "ExtractFileSummary 通过文件扩展名查找签名模式，新语言支持必须在此处注册才能生效"
+    },
+    {
+      "rule": "所有文件写入操作必须先确保父目录存在",
+      "reason": "WriteFile 已内置此逻辑，新增的写入相关函数也应遵循此模式，避免运行时目录不存在导致写入失败"
+    },
+    {
+      "rule": "ScanDirectoryTree 必须跳过 .git、node_modules、.kontext/logs、.kontext/.cache 等生成产物目录",
+      "reason": "这些目录包含大量无关文件，扫描它们会严重影响性能和结果质量"
+    },
+    {
+      "rule": "函数应保持无状态和无副作用（文件 I/O 除外），不使用包级可变变量",
+      "reason": "作为工具函数库，无状态设计确保并发安全和可测试性"
+    },
+    {
+      "rule": "修改公共接口签名时必须同步更新所有调用方",
+      "reason": "fileutil 被 schema、cache、agent、generator、updater、cmd 等多个模块依赖，签名变更影响范围广"
+    }
+  ]
 }

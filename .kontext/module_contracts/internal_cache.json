@@ -1,93 +1,132 @@
 {
   "module": {
-    "name": "cache",
+    "name": "internal/cache",
     "path": "internal/cache",
-    "purpose": "提供 init --scan 的检查点缓存与断点恢复功能，支持扫描中间结果的持久化"
+    "purpose": "为 init --scan 流程提供断点恢复能力，通过项目目录 hash 判断缓存有效性，按阶段保存和加载中间结果到 .kontext/.cache/ 目录，支持从任意已完成阶段恢复执行"
   },
   "owns": [
-    "检查点（Checkpoint）的创建、序列化与反序列化",
-    "分阶段扫描结果的保存与恢复",
-    "项目结构 hash 计算与缓存有效性验证",
-    "缓存目录结构管理"
+    "管理 .kontext/.cache/ 缓存目录的创建和清理",
+    "保存和加载扫描检查点元数据（scan_checkpoint.json），记录当前完成的阶段和生成文件状态",
+    "按阶段编号保存和加载中间结果数据（JSON 序列化/反序列化）",
+    "支持按阶段+分片编号保存和加载分段中间结果（用于大阶段的分步产出）",
+    "通过项目目录结构 hash 判断缓存是否过期",
+    "更新检查点中的已完成阶段号和已生成文件标记"
   ],
   "not_responsible_for": [
-    "文件内容的实际读取或写入",
-    "目录树扫描的具体实现",
-    "命令行参数的解析与验证",
-    "扫描逻辑的执行流程控制"
+    "缓存内容的语义解释（对缓存数据的业务含义完全无感知）",
+    "LLM 调用或任何网络通信",
+    "决定何时触发缓存恢复的业务逻辑（由 cmd 层和 generator 引擎决策）",
+    "项目目录的扫描（委托给 internal/fileutil）",
+    ".kontext/ 目录下制品文件（manifest/architecture/conventions/contract）的读写"
   ],
   "depends_on": [
     {
-      "module": "fileutil",
-      "reason": "ComputeProjectHash 需要调用 fileutil.ScanDirectoryTree 进行项目目录扫描以计算项目结构 hash"
+      "module": "internal/fileutil",
+      "reason": "使用 fileutil.ScanDirectoryTree 扫描项目目录树以计算项目 hash，判断缓存有效性"
     }
   ],
   "public_interface": [
     {
       "name": "Checkpoint",
-      "signature": "type Checkpoint struct { ... }",
-      "description": "检查点数据结构，包含项目 hash、当前阶段、生成文件状态等信息"
+      "signature": "type Checkpoint struct { Version string; ProjectHash string; CurrentStage int; StartedAt time.Time; UpdatedAt time.Time; GeneratedFiles map[string]bool }",
+      "description": "检查点元数据结构体，记录缓存版本、项目 hash、当前已完成阶段、时间戳和已生成文件状态"
     },
     {
       "name": "NewCheckpoint",
       "signature": "func NewCheckpoint(projectHash string) *Checkpoint",
-      "description": "创建新的检查点实例"
+      "description": "创建一个新的 Checkpoint 实例，初始化版本号、项目 hash、起始时间和空的 GeneratedFiles 映射"
     },
     {
       "name": "SaveCheckpoint",
       "signature": "func SaveCheckpoint(cp *Checkpoint) error",
-      "description": "将检查点元数据序列化保存到缓存目录"
+      "description": "将检查点元数据序列化为 JSON 并保存到 .kontext/.cache/scan_checkpoint.json"
     },
     {
       "name": "LoadCheckpoint",
       "signature": "func LoadCheckpoint() (*Checkpoint, error)",
-      "description": "从缓存目录加载检查点元数据"
-    },
-    {
-      "name": "IsCheckpointValid",
-      "signature": "func IsCheckpointValid(projectDir string, maxDepth int) (bool, *Checkpoint, error)",
-      "description": "验证检查点有效性，检查项目结构 hash 是否匹配"
-    },
-    {
-      "name": "UpdateCheckpointStage",
-      "signature": "func UpdateCheckpointStage(cp *Checkpoint, stage int) error",
-      "description": "更新检查点的当前阶段"
-    },
-    {
-      "name": "UpdateGeneratedFile",
-      "signature": "func UpdateGeneratedFile(cp *Checkpoint, filename string, done bool) error",
-      "description": "标记生成文件的状态（完成/未完成）"
+      "description": "从 .kontext/.cache/scan_checkpoint.json 加载并反序列化检查点元数据"
     },
     {
       "name": "SaveStageResult",
       "signature": "func SaveStageResult(stage int, data interface{}) error",
-      "description": "保存分阶段扫描结果到缓存"
-    },
-    {
-      "name": "LoadStageResult",
-      "signature": "func LoadStageResult(stage int, out interface{}) error",
-      "description": "从缓存加载指定阶段的扫描结果"
+      "description": "将指定阶段的中间结果序列化为 JSON 并保存到缓存目录"
     },
     {
       "name": "SaveStageResultPart",
       "signature": "func SaveStageResultPart(stage int, part int, data interface{}) error",
-      "description": "保存分阶段结果的某个部分，支持断点续传"
+      "description": "将指定阶段的分片中间结果序列化为 JSON 并保存到缓存目录"
+    },
+    {
+      "name": "LoadStageResult",
+      "signature": "func LoadStageResult(stage int, out interface{}) error",
+      "description": "从缓存目录加载指定阶段的中间结果并反序列化到 out 指针"
     },
     {
       "name": "LoadStageResultPart",
       "signature": "func LoadStageResultPart(stage int, part int, out interface{}) error",
-      "description": "加载分阶段结果的指定部分"
+      "description": "从缓存目录加载指定阶段的分片中间结果并反序列化到 out 指针"
+    },
+    {
+      "name": "IsCheckpointValid",
+      "signature": "func IsCheckpointValid(projectDir string, maxDepth int) (bool, *Checkpoint, error)",
+      "description": "判断缓存是否有效：检查检查点文件是否存在、版本是否匹配、项目 hash 是否一致，返回有效性标志和已加载的检查点"
+    },
+    {
+      "name": "UpdateCheckpointStage",
+      "signature": "func UpdateCheckpointStage(cp *Checkpoint, stage int) error",
+      "description": "更新检查点的当前已完成阶段号和更新时间，并持久化到磁盘"
+    },
+    {
+      "name": "UpdateGeneratedFile",
+      "signature": "func UpdateGeneratedFile(cp *Checkpoint, filename string, done bool) error",
+      "description": "更新检查点中指定文件的生成完成状态，并持久化到磁盘"
     },
     {
       "name": "ClearCache",
       "signature": "func ClearCache() error",
-      "description": "清除所有缓存数据"
+      "description": "清除整个 .kontext/.cache/ 缓存目录"
     },
     {
       "name": "ComputeProjectHash",
       "signature": "func ComputeProjectHash(projectDir string, maxDepth int) (string, error)",
-      "description": "计算项目目录结构 hash，用于缓存有效性验证"
+      "description": "扫描项目目录树并计算排序后文件列表的 SHA-256 hash 值，用于判断项目结构是否发生变化"
+    },
+    {
+      "name": "CacheDir",
+      "signature": "const CacheDir = \".kontext/.cache\"",
+      "description": "缓存目录相对于项目根目录的路径常量"
+    },
+    {
+      "name": "CheckpointFile",
+      "signature": "const CheckpointFile = \"scan_checkpoint.json\"",
+      "description": "检查点元数据文件名常量"
+    },
+    {
+      "name": "CacheVersion",
+      "signature": "const CacheVersion = \"1.0\"",
+      "description": "当前缓存格式版本常量，用于版本兼容性判断"
     }
   ],
-  "modification_rules": null
+  "modification_rules": [
+    {
+      "rule": "不得在 cache 包中引入对缓存数据内容的语义理解",
+      "reason": "cache 是纯 I/O 层，只负责序列化/反序列化和文件操作，业务语义由调用方（cmd/generator）负责"
+    },
+    {
+      "rule": "不得依赖 internal/llm、internal/schema、internal/generator、internal/packer 等业务包",
+      "reason": "cache 是底层基础设施，仅依赖 internal/fileutil，添加上层依赖会导致循环依赖"
+    },
+    {
+      "rule": "修改 Checkpoint 结构体字段时必须同步更新 CacheVersion 常量",
+      "reason": "版本号用于判断缓存兼容性，结构变更但版本不变会导致旧缓存反序列化失败"
+    },
+    {
+      "rule": "所有文件操作必须在 .kontext/.cache/ 目录下进行，不得写入其他位置",
+      "reason": "缓存目录有明确的边界，ClearCache 会递归删除该目录，写入其他位置会导致清理不完整或误删"
+    },
+    {
+      "rule": "SaveStageResult 和 LoadStageResult 的阶段编号必须与 generator 引擎中的阶段定义保持一致",
+      "reason": "阶段编号是 cache 和 generator 之间的隐式契约，不一致会导致恢复时加载到错误的中间结果"
+    }
+  ]
 }

@@ -1,185 +1,118 @@
 {
   "module": {
-    "name": "updater",
+    "name": "internal/updater",
     "path": "internal/updater",
-    "purpose": "实现 update 命令逻辑，检测项目源码与 .kontext/ 物料的偏差，生成更新计划，经用户确认后调用 LLM 重新生成受影响的制品"
+    "purpose": "update 命令的核心引擎，采用检测-规划-执行三阶段设计，通过 git diff 检测项目变更文件，规划需要重新生成的 .kontext/ 制品（manifest/architecture/conventions/contract），然后调用 LLM 增量重新生成受影响的制品"
   },
   "owns": [
-    "检测项目源码目录与 .kontext/ 物料的变更差异",
-    "识别新增或删除的包目录（对比 ARCHITECTURE_MAP.json 中的 packages）",
-    "检测模块契约是否过期（对比导出符号和 owns 条目）",
-    "检测缺少契约的新模块或代码已删除但契约仍存在的废弃模块",
-    "检查 PROJECT_MANIFEST.json 是否因技术栈变化需要更新",
-    "生成结构化的变更报告（ChangeReport）和更新计划（Plan）",
-    "逐个调用 LLM 重新生成受影响的 JSON 物料并写入文件",
-    "变更检测和更新计划的数据模型（types.go）",
-    "变更检测主函数 DetectChanges",
-    "更新计划编排函数 PlanUpdates",
-    "更新执行器 Executor 及 NewExecutor 构造器",
-    "包和模块实体的分析（actualPackages、actualModules）",
-    "导出符号的提取与契约匹配检测（extractExportedSymbols、contractMentionsSymbol）",
-    "契约新鲜度比较（isContractFresherThanSource）",
-    "模块摘要收集（collectModuleSummaries）",
-    "过期契约检测逻辑（detectStaleContract）",
-    "Manifest 废弃信号生成（manifestReasonsFromSignals）",
-    "执行器进度事件通知（emitProgress、SetProgressHandler）",
-    "生成内容的验证和回退处理（validateGeneratedContent、fallbackJSON）",
-    "契约文件的批量生成与单次生成策略（executeContractBatch、generateContractInParts、generateContractSinglePass）",
-    "LLM 心跳监控防止超时（startLLMHeartbeat）",
-    "文件备份和清理机制（backupIfExists、pruneBackups）",
-    "变更报告格式化输出（formatDirectoryChanges、formatContractChanges、formatManifestSignals）",
-    "强制全量更新和指定目标更新（PlanForceUpdateAll、PlanTargetUpdate）",
-    "契约文件名迁移（migrateContractFileNames）"
+    "通过 git 命令检测工作目录中发生变更的文件列表（detector）",
+    "根据变更文件分析受影响的模块和制品，生成更新计划（planner）",
+    "按更新计划逐个调用 LLM 重新生成受影响的 JSON 制品并写入磁盘（executor）",
+    "定义更新流程中使用的数据类型，包括变更文件信息、更新计划、更新任务等（types）",
+    "渲染 update 相关的提示词模板（update_system/update_manifest/update_architecture/update_contract 等）",
+    "将更新后的制品写回 .kontext/ 目录，替换旧版本"
   ],
   "not_responsible_for": [
-    "直接操作检查点文件（由 cache 模块负责）",
-    "LLM 调用的底层实现（由 llm 模块负责）",
-    "用户交互界面渲染细节（由 ui 模块负责）",
-    "配置文件加载（由 config 模块负责）",
-    "生成 Prompt 文档（由 promptdoc 模块负责）",
-    "确定项目根目录路径（由 CLI 层负责）"
+    "初始化生成 .kontext/ 制品（由 internal/generator 负责）",
+    "pack 命令的上下文打包流程（由 internal/packer 负责）",
+    ".kontext/ JSON 制品的结构体定义和校验逻辑（由 internal/schema 负责）",
+    "LLM API 调用的底层通信、重试和错误处理（由 internal/llm 负责）",
+    "用户交互、命令参数解析和确认提示（由 cmd 层负责）",
+    "git 客户端的安装和配置（假设 git 已安装在系统 PATH 中）"
   ],
   "depends_on": [
     {
-      "module": "config",
-      "reason": "需要加载全局 LLM 配置以执行更新任务"
+      "module": "internal/llm",
+      "reason": "调用 LLM 客户端重新生成受影响的制品内容（manifest/architecture/conventions/contract）"
     },
     {
-      "module": "llm",
-      "reason": "调用 LLM 重新生成受影响的 .kontext 制品"
+      "module": "internal/schema",
+      "reason": "加载现有的 .kontext/ JSON 制品作为更新的基准，使用 ProjectManifest/ArchitectureMap/Conventions/ModuleContract 等类型定义"
     },
     {
-      "module": "ui",
-      "reason": "向用户展示更新计划并获取确认反馈"
+      "module": "internal/fileutil",
+      "reason": "读取变更文件的源码内容、写入更新后的制品文件、文件系统操作"
     },
     {
-      "module": "schema",
-      "reason": "读取和解析 .kontext/ 目录下的物料 schema 数据"
-    },
-    {
-      "module": "fileutil",
-      "reason": "提供文件读取、写入、路径处理等工具函数"
-    },
-    {
-      "module": "generator",
-      "reason": "用于模板渲染生成契约内容"
+      "module": "templates",
+      "reason": "使用 update_system/update_manifest/update_architecture/update_contract 等嵌入式提示词模板构造 LLM 请求"
     }
   ],
   "public_interface": [
     {
-      "name": "DetectChanges",
-      "signature": "func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error)",
-      "description": "检测项目源码与 .kontext 物料之间的偏差，返回变更报告"
+      "name": "Detector",
+      "signature": "type Detector struct { ... }",
+      "description": "变更检测器，通过执行 git diff 命令识别项目中发生变更的文件列表"
     },
     {
-      "name": "PlanUpdates",
-      "signature": "func PlanUpdates(report *ChangeReport) []UpdateAction",
-      "description": "根据变更报告生成更新动作列表"
+      "name": "Detector.Detect",
+      "signature": "func (d *Detector) Detect(ctx context.Context) ([]ChangedFile, error)",
+      "description": "检测项目中自上次提交以来发生变更的文件，返回变更文件列表"
     },
     {
-      "name": "PlanForceUpdateAll",
-      "signature": "func PlanForceUpdateAll(report *ChangeReport) []UpdateAction",
-      "description": "生成强制全量更新动作列表"
+      "name": "Planner",
+      "signature": "type Planner struct { ... }",
+      "description": "更新规划器，根据变更文件列表分析受影响的模块和制品，生成更新执行计划"
     },
     {
-      "name": "PlanTargetUpdate",
-      "signature": "func PlanTargetUpdate(target string) ([]UpdateAction, error)",
-      "description": "生成指定目标的更新动作列表"
+      "name": "Planner.Plan",
+      "signature": "func (p *Planner) Plan(ctx context.Context, changes []ChangedFile) (*UpdatePlan, error)",
+      "description": "根据变更文件列表分析影响范围，生成需要更新的制品清单和执行计划"
     },
     {
-      "name": "ListAvailableTargets",
-      "signature": "func ListAvailableTargets(kontextDir string) []string",
-      "description": "列出可用的更新目标模块"
-    },
-    {
-      "name": "NewExecutor",
-      "signature": "func NewExecutor(client llm.Client, kontextDir, projectDir string) *Executor",
-      "description": "构造更新执行器实例"
+      "name": "Executor",
+      "signature": "type Executor struct { ... }",
+      "description": "更新执行器，按照更新计划逐个调用 LLM 重新生成受影响的制品"
     },
     {
       "name": "Executor.Execute",
-      "signature": "func (e *Executor) Execute(report *ChangeReport, actions []UpdateAction) ([]string, error)",
-      "description": "执行更新计划，逐个调用 LLM 重新生成受影响的物料"
+      "signature": "func (e *Executor) Execute(ctx context.Context, plan *UpdatePlan) error",
+      "description": "按更新计划执行制品的增量重新生成，调用 LLM 并将结果写入 .kontext/ 目录"
     },
     {
-      "name": "Executor.SetProgressHandler",
-      "signature": "func (e *Executor) SetProgressHandler(handler func(ProgressEvent))",
-      "description": "设置执行进度回调处理器"
+      "name": "ChangedFile",
+      "signature": "type ChangedFile struct { Path string; Status string }",
+      "description": "表示一个发生变更的文件，包含文件路径和变更状态（新增/修改/删除）"
     },
     {
-      "name": "ChangeReport",
-      "signature": "type ChangeReport struct { DirectoryChanges []DirectoryChange; ContractChanges []ContractChange; ManifestLikelyStale bool }",
-      "description": "汇总检测到的物料变化的数据结构"
+      "name": "UpdatePlan",
+      "signature": "type UpdatePlan struct { Tasks []UpdateTask; AffectedModules []string }",
+      "description": "更新执行计划，包含需要执行的更新任务列表和受影响的模块列表"
     },
     {
-      "name": "DirectoryChange",
-      "signature": "type DirectoryChange struct { Path string; Type string }",
-      "description": "描述目录或包的变更"
-    },
-    {
-      "name": "ContractChange",
-      "signature": "type ContractChange struct { Module string; Type string; Details string }",
-      "description": "描述模块契约的变更"
-    },
-    {
-      "name": "ProgressEvent",
-      "signature": "type ProgressEvent struct { ... }",
-      "description": "执行器进度事件通知结构"
-    },
-    {
-      "name": "UpdateAction",
-      "signature": "type UpdateAction struct { ... }",
-      "description": "描述单个更新动作的结构"
+      "name": "UpdateTask",
+      "signature": "type UpdateTask struct { ArtifactType string; ModuleName string; Reason string }",
+      "description": "单个更新任务，指定需要重新生成的制品类型（manifest/architecture/conventions/contract）、关联的模块名和更新原因"
     }
   ],
   "modification_rules": [
     {
-      "rule": "updater 模块处于 in_progress 状态，修改时需保持与已完成模块一致的质量标准",
-      "reason": "保持架构一致性，避免后续重构成本"
+      "rule": "保持检测-规划-执行三阶段分离，不要将 git 检测逻辑混入执行器或将制品生成逻辑混入规划器",
+      "reason": "三阶段设计使得流程可观测、可调试，且便于命令层在规划后插入用户确认步骤"
     },
     {
-      "rule": "detector、planner、executor 的职责分离应严格遵守，不能相互侵入",
-      "reason": "确保模块内部分层清晰，便于单元测试和维护"
+      "rule": "不得引入对 internal/generator 或 internal/packer 的依赖",
+      "reason": "updater 是独立的增量更新引擎，有自己的模板和执行逻辑，不复用其他引擎的代码，避免引擎间耦合"
     },
     {
-      "rule": "所有 LLM 调用必须通过 llm 模块进行，禁止直接使用 openai SDK",
-      "reason": "统一封装确保重试策略、日志、脱敏等行为一致"
+      "rule": "通过函数回调（如 OnProgress/SetProgressHandler）向上层报告执行进度，不得直接操作 stdout/stderr 或调用 internal/ui 包",
+      "reason": "业务引擎层不应直接控制终端输出，进度展示由命令层通过回调处理"
     },
     {
-      "rule": "变更检测逻辑应基于文件系统扫描和 schema 内容解析，不能依赖外部命令",
-      "reason": "确保跨平台兼容性和无外部依赖"
+      "rule": "所有 LLM 调用必须通过 internal/llm.Client 接口进行，使用 update 专用的提示词模板",
+      "reason": "统一的 LLM 调用接口保证重试、日志和结构化输出的一致性"
     },
     {
-      "rule": "ExecutePlan 方法在执行前必须展示计划并等待用户确认，不应自动执行",
-      "reason": "防止误操作导致 .kontext 制品被意外覆盖"
+      "rule": "更新后的制品必须使用 JSON 格式存储，与现有 .kontext/ 制品格式保持一致",
+      "reason": "统一数据格式确保 schema 层的加载和校验逻辑可正常工作"
     },
     {
-      "rule": "检测逻辑应缓存已读取的 schema 数据，避免重复解析",
-      "reason": "优化性能，减少不必要的文件 IO 和 JSON 解析开销"
+      "rule": "新增制品类型的更新支持时，需同步添加对应的模板文件到 templates/ 目录",
+      "reason": "每种制品的更新都需要专用的提示词模板来指导 LLM 生成"
     },
     {
-      "rule": "备份文件操作应通过 fileutil 模块进行，不能直接操作备份文件",
-      "reason": "统一文件操作接口，便于日志记录和错误处理"
-    },
-    {
-      "rule": "执行器进度事件通知必须通过回调机制（SetProgressHandler）实现，不能阻塞主流程",
-      "reason": "确保 UI 模块能实时展示执行进度，用户体验友好"
-    },
-    {
-      "rule": "LLM 生成的内容在写入文件前必须经过验证，验证失败时执行回退策略",
-      "reason": "防止无效 JSON 破坏 .kontext 物料完整性"
-    },
-    {
-      "rule": "批量生成契约时应支持部分生成和单次生成两种策略，根据契约复杂度选择",
-      "reason": "避免单个契约过大导致 LLM 超时或上下文溢出"
-    },
-    {
-      "rule": "LLM 调用应实现心跳监控机制，防止长耗时任务阻塞",
-      "reason": "确保更新任务在合理时间内完成或及时反馈超时状态"
-    },
-    {
-      "rule": "PlanForceUpdateAll 和 PlanTargetUpdate 应独立于变更报告执行",
-      "reason": "支持用户在未执行 DetectChanges 的情况下直接发起全量或定点更新"
+      "rule": "git 命令调用应处理 git 不可用或非 git 仓库的异常情况，返回有意义的错误信息",
+      "reason": "用户环境可能未安装 git 或当前目录非 git 仓库，需要优雅降级"
     }
   ]
 }

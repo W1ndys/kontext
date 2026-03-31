@@ -1,141 +1,150 @@
 {
   "module": {
-    "name": "schema",
+    "name": "internal/schema",
     "path": "internal/schema",
-    "purpose": "定义和校验 .kontext/ 目录下各类 JSON 制品的数据结构，包括 ProjectManifest、ArchitectureMap、Conventions、ModuleContract"
+    "purpose": "定义 .kontext/ 目录下所有 JSON 制品（ProjectManifest、ArchitectureMap、Conventions、ModuleContract）的 Go 结构体，提供 LoadBundle 一次性加载全部制品和 ValidateBundle 逐项校验的能力。是业务引擎层和命令层共同依赖的数据契约层。"
   },
   "owns": [
-    "ProjectManifest 结构体定义与解析",
-    "ArchitectureMap 结构体定义与解析",
-    "ModuleContract 结构体定义与解析",
-    "Conventions 结构体定义与解析",
-    "Bundle 聚合配置结构体定义",
-    "各 JSON 制品的 Validate() 校验方法",
-    "LoadBundle() 配置批量加载接口",
-    "ValidateBundle() 配置验证接口",
-    "ContractFilename() 契约文件名生成",
-    "ContractModuleKey() 契约模块键提取",
-    "NormalizeContractJSON() 契约 JSON 规范化",
-    "InterfaceItem、ModificationRule、ModuleDependency 契约组件结构体",
-    "Project、TechStack、Scale、Status、CoreFlow 项目清单组件结构体",
-    "Layer、Rule 架构层级组件结构体",
-    "ConventionItem 规范条目结构体"
+    "定义 ProjectManifest 结构体及其嵌套类型（Project、CoreFlow、TechStack、KeyDecision、Scale、Status）",
+    "定义 ArchitectureMap 结构体及其嵌套类型（Layer、Rule）",
+    "定义 Conventions 结构体及其嵌套类型",
+    "定义 ModuleContract 结构体及其嵌套类型（ModuleInfo、Dependency、PublicInterface、ModificationRule）",
+    "提供 Bundle 聚合结构体，将所有制品统一聚合",
+    "提供 LoadBundle 函数，从 .kontext/ 目录一次性加载 manifest/architecture/conventions/contracts JSON 文件并反序列化",
+    "提供 ValidateBundle 函数，校验 .kontext/ 目录下所有制品文件的存在性和结构完整性",
+    "定义 JSON 制品文件的路径约定（PROJECT_MANIFEST.json、ARCHITECTURE_MAP.json、CONVENTIONS.json、module_contracts/*.json）"
   ],
   "not_responsible_for": [
-    "业务逻辑实现",
-    "文件系统操作",
-    "LLM 调用封装",
-    "配置加载逻辑（仅定义配置结构，不负责加载）",
-    "模板渲染",
-    "日志记录"
+    "JSON 制品的生成逻辑（由 internal/generator 负责）",
+    "JSON 制品的增量更新（由 internal/updater 负责）",
+    "LLM 调用和网络通信（由 internal/llm 负责）",
+    "文件系统的底层读写操作（由 internal/fileutil 提供，本模块调用其接口）",
+    "制品的业务语义校验（如检查模块契约间的循环依赖）",
+    "全局配置管理（由 internal/config 负责）"
   ],
   "depends_on": [
     {
       "module": "internal/fileutil",
-      "reason": "LoadBundle 使用 fileutil 进行文件读取和路径处理"
+      "reason": "使用 fileutil 的文件读取函数从磁盘加载 JSON 制品文件内容"
     }
   ],
   "public_interface": [
     {
-      "name": "ArchitectureMap",
-      "signature": "type ArchitectureMap struct { Layers []Layer; Rules []Rule }",
-      "description": "描述项目的分层架构和架构规则"
-    },
-    {
-      "name": "Layer",
-      "signature": "type Layer struct { Name string; Description string; Packages []string }",
-      "description": "描述一个架构层级，包含名称、说明和所属包"
-    },
-    {
-      "name": "Rule",
-      "signature": "type Rule struct { Rule string; Reason string }",
-      "description": "描述一条架构规则及其原因"
-    },
-    {
-      "name": "ModuleContract",
-      "signature": "type ModuleContract struct { Module ModuleInfo; Owns []string; NotResponsibleFor []string; DependsOn []ModuleDependency; PublicInterface []InterfaceItem; ModificationRules []ModificationRule }",
-      "description": "定义模块的职责边界和依赖关系"
-    },
-    {
-      "name": "ContractFilename",
-      "signature": "func ContractFilename(modulePath string) string",
-      "description": "生成契约文件名"
-    },
-    {
-      "name": "ContractModuleKey",
-      "signature": "func ContractModuleKey(c ModuleContract) string",
-      "description": "提取契约模块键"
-    },
-    {
-      "name": "NormalizeContractJSON",
-      "signature": "func NormalizeContractJSON(content string) (string, error)",
-      "description": "规范化契约 JSON"
-    },
-    {
-      "name": "Conventions",
-      "signature": "type Conventions struct { Coding []ConventionItem; ErrorHandling []ConventionItem; Forbidden []ConventionItem; AIRules []ConventionItem }",
-      "description": "描述项目的编码规范和 AI 协作规则"
-    },
-    {
-      "name": "ConventionItem",
-      "signature": "type ConventionItem struct { Rule string; Example string; Reason string }",
-      "description": "描述一条规范条目，包含规则、示例和原因"
-    },
-    {
       "name": "Bundle",
       "signature": "type Bundle struct { Manifest ProjectManifest; Architecture ArchitectureMap; Conventions Conventions; Contracts []ModuleContract }",
-      "description": "聚合 .kontext/ 目录下的所有配置数据"
+      "description": "聚合 .kontext/ 目录下所有加载的配置数据，将 manifest、architecture、conventions、contracts 统一打包"
     },
     {
       "name": "LoadBundle",
       "signature": "func LoadBundle(kontextDir string) (*Bundle, error)",
-      "description": "从 .kontext/ 目录加载所有配置文件"
+      "description": "从 .kontext/ 目录加载所有 JSON 配置文件。Manifest 为必须项；Architecture、Conventions、Contracts 缺失时使用零值（容错策略）"
     },
     {
       "name": "ValidateBundle",
       "signature": "func ValidateBundle(kontextDir string) []error",
-      "description": "验证配置的有效性"
+      "description": "校验 .kontext/ 目录下所有 JSON 制品文件，返回所有校验错误的列表"
     },
     {
       "name": "ProjectManifest",
-      "signature": "type ProjectManifest struct { Project Project; TechStack TechStack; Scale Scale; Status Status }",
-      "description": "项目清单结构体，映射 PROJECT_MANIFEST.json"
+      "signature": "type ProjectManifest struct { Project Project `json:\"project\"`; TechStack TechStack `json:\"tech_stack\"`; Scale Scale `json:\"scale\"`; Status Status `json:\"status\"` }",
+      "description": "映射 .kontext/PROJECT_MANIFEST.json 的顶层结构，描述项目基本信息、技术栈、规模和状态"
     },
     {
       "name": "Project",
-      "signature": "type Project struct { Name string; OneLine string; Type string; BusinessContext string; CoreFlows []CoreFlow }",
+      "signature": "type Project struct { Name string `json:\"name\"`; OneLine string `json:\"one_line\"`; Type string `json:\"type\"`; BusinessContext string `json:\"business_context\"`; CoreFlows []CoreFlow `json:\"core_flows\"` }",
       "description": "描述项目的基本信息和业务上下文"
     },
     {
+      "name": "CoreFlow",
+      "signature": "type CoreFlow struct { Name string `json:\"name\"`; EntryPoint string `json:\"entry_point\"`; Steps string `json:\"steps\"` }",
+      "description": "描述一条核心业务流程"
+    },
+    {
       "name": "TechStack",
-      "signature": "type TechStack struct { ... }",
-      "description": ""
+      "signature": "type TechStack struct { Language string `json:\"language\"`; CLIFramework string `json:\"cli_framework\"`; LLMClient string `json:\"llm_client\"`; DataFormat string `json:\"data_format\"`; TemplateEngine string `json:\"template_engine\"`; SchemaValidator string `json:\"schema_validator\"`; GitClient string `json:\"git_client\"`; KeyDecisions []KeyDecision `json:\"key_decisions\"` }",
+      "description": "描述项目的技术栈信息"
+    },
+    {
+      "name": "KeyDecision",
+      "signature": "type KeyDecision struct { Decision string `json:\"decision\"`; Reason string `json:\"reason\"`; Constraint string `json:\"constraint\"` }",
+      "description": "描述一个关键技术决策及其原因和约束"
+    },
+    {
+      "name": "Scale",
+      "signature": "type Scale struct { EstimatedFiles string `json:\"estimated_files\"`; Modules string `json:\"modules\"`; Phase string `json:\"phase\"` }",
+      "description": "描述项目规模信息"
+    },
+    {
+      "name": "Status",
+      "signature": "type Status struct { CompletedModules []string `json:\"completed_modules\"`; InProgress []string `json:\"in_progress\"`; NotStarted []string `json:\"not_started\"` }",
+      "description": "描述项目各模块的完成状态"
+    },
+    {
+      "name": "ArchitectureMap",
+      "signature": "type ArchitectureMap struct { Layers []Layer `json:\"layers\"`; Rules []Rule `json:\"rules\"` }",
+      "description": "映射 .kontext/ARCHITECTURE_MAP.json，描述项目分层架构和依赖规则"
+    },
+    {
+      "name": "Layer",
+      "signature": "type Layer struct { Name string `json:\"name\"`; Description string `json:\"description\"`; Packages []string `json:\"packages\"` }",
+      "description": "描述架构中的一个层次"
+    },
+    {
+      "name": "Rule",
+      "signature": "type Rule struct { Rule string `json:\"rule\"`; Reason string `json:\"reason\"` }",
+      "description": "描述一条架构依赖规则"
+    },
+    {
+      "name": "Conventions",
+      "signature": "type Conventions struct { ... }",
+      "description": "映射 .kontext/CONVENTIONS.json，描述项目编码规范与约束"
+    },
+    {
+      "name": "ModuleContract",
+      "signature": "type ModuleContract struct { Module ModuleInfo `json:\"module\"`; Owns []string `json:\"owns\"`; NotResponsibleFor []string `json:\"not_responsible_for\"`; DependsOn []Dependency `json:\"depends_on\"`; PublicInterface []PublicInterface `json:\"public_interface\"`; ModificationRules []ModificationRule `json:\"modification_rules\"` }",
+      "description": "映射 .kontext/module_contracts/*.json，描述单个模块的职责边界、依赖关系和接口契约"
+    },
+    {
+      "name": "ModuleInfo",
+      "signature": "type ModuleInfo struct { Name string `json:\"name\"`; Path string `json:\"path\"`; Purpose string `json:\"purpose\"` }",
+      "description": "描述模块的基本信息"
+    },
+    {
+      "name": "Dependency",
+      "signature": "type Dependency struct { Module string `json:\"module\"`; Reason string `json:\"reason\"` }",
+      "description": "描述一个模块依赖及其原因"
+    },
+    {
+      "name": "PublicInterface",
+      "signature": "type PublicInterface struct { Name string `json:\"name\"`; Signature string `json:\"signature\"`; Description string `json:\"description\"` }",
+      "description": "描述模块对外暴露的一个函数或类型"
+    },
+    {
+      "name": "ModificationRule",
+      "signature": "type ModificationRule struct { Rule string `json:\"rule\"`; Reason string `json:\"reason\"` }",
+      "description": "描述修改该模块时必须遵守的规则"
     }
   ],
   "modification_rules": [
     {
-      "rule": "新增结构体字段时必须添加 JSON tag，确保与 .kontext/ 目录下的 JSON 制品格式保持一致",
-      "reason": "schema 模块直接映射 JSON 文件结构，字段变更会影响配置解析"
+      "rule": "新增或修改 JSON 制品结构体字段时，必须同步更新对应的 json tag，确保与 .kontext/ 目录下的 JSON 文件格式一致",
+      "reason": "结构体字段与 JSON 文件的键名通过 json tag 绑定，不一致会导致反序列化失败"
     },
     {
-      "rule": "修改 Validate() 方法时必须保持向后兼容，确保已有配置仍能通过校验",
-      "reason": "Validate 是配置验证的公共接口，破坏性变更会导致现有项目配置失效"
+      "rule": "新增制品类型时，必须在 Bundle 结构体中添加对应字段，并在 LoadBundle 和 ValidateBundle 中处理加载和校验逻辑",
+      "reason": "Bundle 是所有制品的聚合入口，遗漏会导致上层模块无法访问新制品"
     },
     {
-      "rule": "修改 Bundle 聚合结构时必须同步更新 LoadBundle() 和 ValidateBundle() 的逻辑",
-      "reason": "Bundle 是核心聚合类型，LoadBundle 和 ValidateBundle 依赖其完整结构"
+      "rule": "不得在 schema 包中引入 internal/llm、internal/generator、internal/packer、internal/config 等上层包的依赖",
+      "reason": "schema 是纯数据定义与加载层，位于依赖链底层，引入上层依赖会造成循环依赖"
     },
     {
-      "rule": "修改与 fileutil 的交互逻辑时需确保错误处理一致，不改变公开的错误类型",
-      "reason": "LoadBundle 依赖 fileutil 进行文件读取，接口变更会影响上层调用"
+      "rule": "LoadBundle 对 Manifest 以外的制品文件缺失采用容错策略（零值），修改时不得改变此行为",
+      "reason": "确保在 init 流程中制品尚未全部生成时，其他命令仍可正常加载已有的部分制品"
     },
     {
-      "rule": "新增 JSON 制品类型时必须在 Bundle 结构中添加对应字段，并在加载和验证逻辑中处理",
-      "reason": "Bundle 聚合所有配置数据，需要保持完整性"
-    },
-    {
-      "rule": "修改 ContractFilename 或 ContractModuleKey 的返回值格式时需同步更新相关调用方",
-      "reason": "这两个函数生成的值可能被用于文件路径或缓存键，格式变更会影响依赖模块"
+      "rule": "修改结构体定义后，需检查 internal/generator、internal/packer、internal/updater 中是否有使用该类型的代码需要同步调整",
+      "reason": "schema 包的类型被多个上层模块依赖，字段变更可能导致编译错误或运行时行为异常"
     }
   ]
 }

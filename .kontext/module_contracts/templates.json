@@ -2,60 +2,228 @@
   "module": {
     "name": "templates",
     "path": "templates",
-    "purpose": "作为静态资源层，通过 Go embed 将提示词模板文件打包进二进制，并暴露为包级 string 变量，供流水线核心层在生成阶段渲染使用。"
+    "purpose": "通过 Go embed 打包所有提示词模板文件（.tmpl），并以包级 string 变量的形式暴露给其他模块使用。本包是纯数据包，不包含任何业务逻辑。"
   },
   "owns": [
-    "管理所有 .tmpl 格式的提示词模板文件",
-    "通过 Go embed 将模板文件打包进二进制",
-    "将模板内容暴露为包级 string 变量供外部调用",
-    "定义 LLM 系统提示词和用户提示词模板",
-    "定义 Pack 精筛阶段提示词模板",
-    "定义 AI 初始化对话阶段提示词模板"
+    "管理所有 .tmpl 提示词模板文件的编译时嵌入（Go embed）",
+    "为 init 命令提供系统/用户提示词模板（对话式、扫描式、生成式）",
+    "为 pack 命令提供 LLM 系统/用户提示词模板（文件识别、精筛、文件名生成、渲染）",
+    "为 update 命令提供制品重新生成的提示词模板",
+    "将每个 .tmpl 文件暴露为包级 string 常量，供调用方通过 text/template 渲染"
   ],
   "not_responsible_for": [
-    "模板内容的渲染逻辑和变量替换",
-    "LLM 调用和响应处理",
-    "流水线流程控制和任务调度",
-    "模板内容的动态生成或修改",
-    "模板文件的加载路径解析"
+    "模板的渲染与变量填充（由调用方使用 text/template 完成）",
+    "任何业务逻辑、LLM 调用或数据处理",
+    "模板的动态加载或运行时文件读取（所有模板编译时嵌入）",
+    "提示词内容的语义校验"
   ],
-  "depends_on": [
-    {
-      "module": "标准库 (embed)",
-      "reason": "使用 Go embed 指令将模板文件嵌入二进制"
-    }
-  ],
+  "depends_on": [],
   "public_interface": [
     {
-      "name": "SystemPrompt",
-      "signature": "var SystemPrompt string",
-      "description": "LLM 系统提示词模板，通过 Go embed 嵌入二进制"
+      "name": "InitGenerateSystemPrompt",
+      "signature": "var InitGenerateSystemPrompt string",
+      "description": "init 生成阶段的 system prompt 模板"
     },
     {
-      "name": "UserPrompt",
-      "signature": "var UserPrompt string",
-      "description": "LLM 用户提示词模板，通过 Go embed 嵌入二进制"
+      "name": "InitGenerateUserPrompt",
+      "signature": "var InitGenerateUserPrompt string",
+      "description": "init 生成阶段的通用 user prompt 模板"
     },
     {
-      "name": "PackRefineSystem",
-      "signature": "var PackRefineSystem string",
-      "description": "Pack 精筛阶段系统提示词模板"
+      "name": "InitGenerateManifestUserPrompt",
+      "signature": "var InitGenerateManifestUserPrompt string",
+      "description": "init 生成 PROJECT_MANIFEST 的 user prompt 模板"
     },
     {
-      "name": "PackRefineUser",
-      "signature": "var PackRefineUser string",
-      "description": "Pack 精筛阶段用户提示词模板"
+      "name": "InitGenerateArchitectureUserPrompt",
+      "signature": "var InitGenerateArchitectureUserPrompt string",
+      "description": "init 生成 ARCHITECTURE_MAP 的 user prompt 模板"
     },
     {
-      "name": "InitInterviewSystem",
-      "signature": "var InitInterviewSystem string",
-      "description": "AI 初始化对话阶段系统提示词模板"
+      "name": "InitGenerateConventionsUserPrompt",
+      "signature": "var InitGenerateConventionsUserPrompt string",
+      "description": "init 生成 CONVENTIONS 的 user prompt 模板"
     },
     {
-      "name": "InitInterviewUser",
-      "signature": "var InitInterviewUser string",
-      "description": "AI 初始化对话阶段用户提示词模板"
+      "name": "InitGenerateContractUserPrompt",
+      "signature": "var InitGenerateContractUserPrompt string",
+      "description": "init 生成 MODULE_CONTRACT 的 user prompt 模板"
+    },
+    {
+      "name": "InitInterviewSystemPrompt",
+      "signature": "var InitInterviewSystemPrompt string",
+      "description": "init 交互式对话阶段的 system prompt 模板"
+    },
+    {
+      "name": "InitInterviewUserPrompt",
+      "signature": "var InitInterviewUserPrompt string",
+      "description": "init 交互式对话阶段的 user prompt 模板"
+    },
+    {
+      "name": "InitScanSystemPrompt",
+      "signature": "var InitScanSystemPrompt string",
+      "description": "init --scan 扫描阶段的 system prompt 模板"
+    },
+    {
+      "name": "InitScanUserPrompt",
+      "signature": "var InitScanUserPrompt string",
+      "description": "init --scan 扫描阶段的 user prompt 模板"
+    },
+    {
+      "name": "InitScanAnalyzeSystemPrompt",
+      "signature": "var InitScanAnalyzeSystemPrompt string",
+      "description": "init --scan 文件分析阶段的 system prompt 模板"
+    },
+    {
+      "name": "InitScanAnalyzeUserPrompt",
+      "signature": "var InitScanAnalyzeUserPrompt string",
+      "description": "init --scan 文件分析阶段的 user prompt 模板"
+    },
+    {
+      "name": "InitScanSelectSystemPrompt",
+      "signature": "var InitScanSelectSystemPrompt string",
+      "description": "init --scan 重点文件选择阶段的 system prompt 模板"
+    },
+    {
+      "name": "InitScanSelectUserPrompt",
+      "signature": "var InitScanSelectUserPrompt string",
+      "description": "init --scan 重点文件选择阶段的 user prompt 模板"
+    },
+    {
+      "name": "InitScanManifestSystemPrompt",
+      "signature": "var InitScanManifestSystemPrompt string",
+      "description": "init --scan 生成 PROJECT_MANIFEST 的 system prompt 模板"
+    },
+    {
+      "name": "InitScanArchitectureSystemPrompt",
+      "signature": "var InitScanArchitectureSystemPrompt string",
+      "description": "init --scan 生成 ARCHITECTURE_MAP 的 system prompt 模板"
+    },
+    {
+      "name": "InitScanConventionsSystemPrompt",
+      "signature": "var InitScanConventionsSystemPrompt string",
+      "description": "init --scan 生成 CONVENTIONS 的 system prompt 模板"
+    },
+    {
+      "name": "InitScanConventionsSectionSystemPrompt",
+      "signature": "var InitScanConventionsSectionSystemPrompt string",
+      "description": "init --scan 生成 CONVENTIONS 分段内容的 system prompt 模板"
+    },
+    {
+      "name": "InitScanContractSystemPrompt",
+      "signature": "var InitScanContractSystemPrompt string",
+      "description": "init --scan 生成 MODULE_CONTRACT 的 system prompt 模板"
+    },
+    {
+      "name": "InitScanDepgraphSystemPrompt",
+      "signature": "var InitScanDepgraphSystemPrompt string",
+      "description": "init --scan 分析模块依赖图的 system prompt 模板"
+    },
+    {
+      "name": "LLMSystemPrompt",
+      "signature": "var LLMSystemPrompt string",
+      "description": "pack 流水线中 LLM 渲染 Prompt 的 system prompt 模板"
+    },
+    {
+      "name": "LLMUserPrompt",
+      "signature": "var LLMUserPrompt string",
+      "description": "pack 流水线中 LLM 渲染 Prompt 的 user prompt 模板"
+    },
+    {
+      "name": "PackIdentifyFilesSystemPrompt",
+      "signature": "var PackIdentifyFilesSystemPrompt string",
+      "description": "pack 流水线文件识别阶段的 system prompt 模板"
+    },
+    {
+      "name": "PackIdentifyFilesUserPrompt",
+      "signature": "var PackIdentifyFilesUserPrompt string",
+      "description": "pack 流水线文件识别阶段的 user prompt 模板"
+    },
+    {
+      "name": "PackRefineSystemPrompt",
+      "signature": "var PackRefineSystemPrompt string",
+      "description": "pack 流水线 LLM 精筛阶段的 system prompt 模板"
+    },
+    {
+      "name": "PackRefineUserPrompt",
+      "signature": "var PackRefineUserPrompt string",
+      "description": "pack 流水线 LLM 精筛阶段的 user prompt 模板"
+    },
+    {
+      "name": "PackGenerateFilenameSystemPrompt",
+      "signature": "var PackGenerateFilenameSystemPrompt string",
+      "description": "pack 流水线输出文件名生成的 system prompt 模板"
+    },
+    {
+      "name": "PackGenerateFilenameUserPrompt",
+      "signature": "var PackGenerateFilenameUserPrompt string",
+      "description": "pack 流水线输出文件名生成的 user prompt 模板"
+    },
+    {
+      "name": "UpdateSystemPrompt",
+      "signature": "var UpdateSystemPrompt string",
+      "description": "update 命令重新生成制品的 system prompt 模板"
+    },
+    {
+      "name": "UpdateManifestPrompt",
+      "signature": "var UpdateManifestPrompt string",
+      "description": "update 命令重新生成 PROJECT_MANIFEST 的模板"
+    },
+    {
+      "name": "UpdateArchitecturePrompt",
+      "signature": "var UpdateArchitecturePrompt string",
+      "description": "update 命令重新生成 ARCHITECTURE_MAP 的模板"
+    },
+    {
+      "name": "UpdateContractPrompt",
+      "signature": "var UpdateContractPrompt string",
+      "description": "update 命令重新生成 MODULE_CONTRACT 的模板"
+    },
+    {
+      "name": "UpdateContractPart1Prompt",
+      "signature": "var UpdateContractPart1Prompt string",
+      "description": "update 命令分步重新生成 CONTRACT 第一部分的模板"
+    },
+    {
+      "name": "UpdateContractPart2Prompt",
+      "signature": "var UpdateContractPart2Prompt string",
+      "description": "update 命令分步重新生成 CONTRACT 第二部分的模板"
+    },
+    {
+      "name": "UpdateContractPart2aPrompt",
+      "signature": "var UpdateContractPart2aPrompt string",
+      "description": "update 命令分步重新生成 CONTRACT 第二部分 a 段的模板"
+    },
+    {
+      "name": "UpdateContractPart2bPrompt",
+      "signature": "var UpdateContractPart2bPrompt string",
+      "description": "update 命令分步重新生成 CONTRACT 第二部分 b 段的模板"
     }
   ],
-  "modification_rules": null
+  "modification_rules": [
+    {
+      "rule": "新增 .tmpl 文件时，必须同步在 templates.go 中添加对应的 //go:embed 指令和包级 string 变量",
+      "reason": "仅将 .tmpl 文件放入目录不会自动暴露，必须通过 embed 指令显式声明才能被编译进二进制"
+    },
+    {
+      "rule": "不得在 templates 包中引入任何 import 依赖（标准库 embed 除外）",
+      "reason": "templates 是纯数据包，零依赖设计确保不会引入循环依赖，也保证包的加载零开销"
+    },
+    {
+      "rule": "不得在 templates 包中添加任何函数、方法或业务逻辑代码",
+      "reason": "模板渲染由调用方（generator/packer/updater）负责，templates 包仅负责持有模板字符串"
+    },
+    {
+      "rule": "修改已有模板的占位符（{{ .XXX }}）时，必须同步检查所有引用该模板的调用方传入的数据结构",
+      "reason": "模板变量与调用方传入的 struct 字段一一对应，变量名不匹配会导致渲染失败"
+    },
+    {
+      "rule": "模板变量命名遵循 Go text/template 规范，使用 PascalCase 字段名",
+      "reason": "Go text/template 引擎通过反射访问导出字段，小写字段名无法访问"
+    },
+    {
+      "rule": "提示词模板内容使用中文编写，与项目整体语言风格保持一致",
+      "reason": "项目面向中文开发者社区，所有面向用户和面向 LLM 的提示词统一使用中文"
+    }
+  ]
 }

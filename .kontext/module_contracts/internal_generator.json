@@ -2,140 +2,153 @@
   "module": {
     "name": "internal/generator",
     "path": "internal/generator",
-    "purpose": "负责项目初始化阶段的任务编排、LLM 交互协议解析及生成内容的后处理"
+    "purpose": "init 命令的核心引擎，编排交互式对话和自动扫描两种初始化流程，通过多轮 LLM 调用分阶段生成 .kontext/ 目录下的全部 JSON 制品（PROJECT_MANIFEST、ARCHITECTURE_MAP、CONVENTIONS、MODULE_CONTRACT）"
   },
   "owns": [
-    "任务类型定义（TaskIDManifest、TaskIDArchitecture、TaskIDConventions）",
-    "初始化任务构建（BuildInitTasks）",
-    "契约任务构建（BuildContractTasks）",
-    "LLM 响应解析（ParseInterviewResponse、ParseGeneratedJSON、ParseAnalyzedFiles、ParseSelectedFiles、ParseSingleFileJSON、ParseModuleContractJSON）",
-    "生成内容清理（stripThinkingTokens、stripCodeBlock）",
-    "数据结构定义（InterviewResponse、GeneratedContent、AnalyzedFiles）"
+    "交互式初始化的多轮对话流程（runInterview）：构建 system/user prompt，与用户进行最多 20 轮问答，收集需求信息并生成需求摘要",
+    "交互式初始化的分阶段生成流程（generateAndWrite）：按依赖顺序生成 manifest → architecture → conventions → contracts，每个制品生成后立即写入磁盘",
+    "自动扫描初始化流程（RunScanInit）：扫描项目目录树 → LLM 分析文件分类 → 选择重点文件 → 读取源码 → 分步生成所有制品",
+    "InterviewResponse 结构化解析：将 LLM 返回的 JSON 解析为 question/done 两种状态",
+    "GeneratedContent / SingleFileContent / ModuleContractContent 等响应类型定义",
+    "模块依赖图分析（ModuleDependencyGraph）：通过 LLM 分析模块间依赖关系，为 CONTRACT 生成提供上下文",
+    "构建 AgentTask DAG 任务声明（BuildInitTasks / BuildContractTasks）：将制品生成编排为有向无环图交给 agent.Orchestrator 执行",
+    "LLM prompt 模板渲染（RenderTemplate）：使用 text/template 渲染 init 相关的各种 system/user prompt",
+    "源码解析与文件摘要提取（parser.go）：调用 fileutil 扫描项目目录，生成文件概要供 LLM 分析",
+    "编码规范生成（conventions.go）：调用 LLM 生成 CONVENTIONS 制品",
+    "静态模板初始化：当用户未提供描述时，写入默认模板文件"
   ],
   "not_responsible_for": [
-    "Agent 任务的具体执行逻辑（由 agent 包负责）",
-    "Schema 定义（由 schema 包负责）",
-    "模板内容管理（由 templates 包负责）",
-    "文件系统的实际读写操作"
+    "pack 命令的上下文打包流程（由 internal/packer 负责）",
+    "update 命令的增量更新流程（由 internal/updater 负责）",
+    "CLI 参数解析和用户交互入口（由 cmd 层负责）",
+    "LLM API 的网络通信、重试和错误处理（由 internal/llm 负责）",
+    "JSON 制品的结构体定义和加载校验（由 internal/schema 负责）",
+    "检查点的持久化存储和断点恢复判断（由 internal/cache 负责，cmd 层协调调用）",
+    "DAG 任务的拓扑排序和并发执行（由 internal/agent 负责）",
+    "终端进度条的渲染和生命周期管理（由 internal/ui 负责）",
+    "全局 LLM 配置的读取和管理（由 internal/config 负责）"
   ],
   "depends_on": [
     {
       "module": "internal/agent",
-      "reason": "任务构建结果返回 AgentTask 类型，且任务由 agent 包执行"
+      "reason": "使用 agent.NewOrchestrator 和 agent.AgentTask 构建 DAG 编排制品生成任务，实现 manifest/architecture/conventions 的依赖驱动并行生成"
+    },
+    {
+      "module": "internal/llm",
+      "reason": "通过 llm.Client 接口调用 LLM 完成多轮对话（Chat）、结构化输出（ChatStructured）等操作，使用 llm.Message 构建消息历史"
+    },
+    {
+      "module": "internal/fileutil",
+      "reason": "调用 fileutil.EnsureDir 创建 .kontext/ 目录结构，调用 fileutil.WriteFile 写入生成的制品文件，调用文件扫描函数获取项目目录树和源码内容"
     },
     {
       "module": "internal/schema",
-      "reason": "可能依赖 schema 包中的类型定义"
+      "reason": "引用 schema.ArchitectureMap 等类型解析 LLM 生成的制品内容，从已生成的 architecture 中提取模块列表用于 CONTRACT 生成"
+    },
+    {
+      "module": "internal/ui",
+      "reason": "使用 ui.NewTracker / ui.Task 在生成过程中显示实时进度（spinner + 任务状态），通过 tracker.AddTask / task.DoneWithLabel 报告阶段完成情况"
     },
     {
       "module": "templates",
-      "reason": "可能使用 templates 包中的模板进行任务构建"
+      "reason": "引用 templates.InitInterviewSystem / InitInterviewUser / InitScanSystem 等包级字符串常量作为 LLM 提示词模板"
     }
   ],
   "public_interface": [
     {
-      "name": "stripThinkingTokens",
-      "signature": "func stripThinkingTokens(s string) string",
-      "description": "去除 LLM 返回内容中的思考标记"
+      "name": "RunInteractiveInit",
+      "signature": "func RunInteractiveInit(client llm.Client, description string) error",
+      "description": "执行 AI 交互式初始化的完整两阶段流程：先通过多轮对话澄清需求，再分阶段生成所有 .kontext/ JSON 制品"
     },
     {
-      "name": "stripCodeBlock",
-      "signature": "func stripCodeBlock(s string) string",
-      "description": "去除 markdown 代码块标记和 thinking tokens"
+      "name": "RunScanInit",
+      "signature": "func RunScanInit(client llm.Client, opts ScanOptions) error",
+      "description": "执行自动扫描初始化流程：扫描项目目录树，通过 LLM 分析文件、选择重点源码，分步生成 manifest/architecture/conventions/contracts"
     },
     {
-      "name": "ParseInterviewResponse",
-      "signature": "func ParseInterviewResponse(raw string) (*InterviewResponse, error)",
-      "description": "解析对话阶段返回的结构化响应"
-    },
-    {
-      "name": "ParseGeneratedJSON",
-      "signature": "func ParseGeneratedJSON(raw string) (*GeneratedContent, error)",
-      "description": "解析生成阶段返回的配置文件内容"
-    },
-    {
-      "name": "ParseAnalyzedFiles",
-      "signature": "func ParseAnalyzedFiles(raw string) (*AnalyzedFiles, error)",
-      "description": "解析扫描阶段识别的关键文件列表"
-    },
-    {
-      "name": "ParseSelectedFiles",
-      "signature": "func ParseSelectedFiles(raw string) (*SelectedFiles, error)",
-      "description": "解析选择的文件列表"
-    },
-    {
-      "name": "ParseSingleFileJSON",
-      "signature": "func ParseSingleFileJSON(raw string) (*SingleFileContent, error)",
-      "description": "解析单个文件的内容"
-    },
-    {
-      "name": "ParseModuleContractJSON",
-      "signature": "func ParseModuleContractJSON(raw string) (*ModuleContractContent, error)",
-      "description": "解析模块契约 JSON 内容"
-    },
-    {
-      "name": "ContractTaskID",
-      "signature": "func ContractTaskID(moduleName string) string",
-      "description": "生成模块契约任务的 ID"
+      "name": "RenderTemplate",
+      "signature": "func RenderTemplate(tmplStr string, data interface{}) (string, error)",
+      "description": "使用 text/template 渲染给定的模板字符串和数据，返回渲染结果"
     },
     {
       "name": "BuildInitTasks",
-      "signature": "func BuildInitTasks(opts InitTaskOptions) []*agent.AgentTask",
-      "description": "构建初始化阶段的任务列表"
+      "signature": "func BuildInitTasks(opts InitTaskOptions) []agent.AgentTask",
+      "description": "根据交互式初始化选项构建第一阶段（manifest/architecture/conventions）的 AgentTask DAG 任务列表"
     },
     {
       "name": "BuildContractTasks",
-      "signature": "func BuildContractTasks(opts InitTaskOptions, modules []string, manifestContent, archContent string) []*agent.AgentTask",
-      "description": "构建契约阶段的任务列表"
+      "signature": "func BuildContractTasks(opts ContractTaskOptions) []agent.AgentTask",
+      "description": "根据已生成的 architecture 中的模块列表，为每个模块构建 CONTRACT 生成的 AgentTask 任务"
     },
     {
       "name": "InterviewResponse",
-      "signature": "type InterviewResponse struct",
-      "description": "对话阶段返回的结构化响应类型"
+      "signature": "type InterviewResponse struct { Type string `json:\"type\"`; Question string `json:\"question\"`; Options []string `json:\"options\"`; Summary string `json:\"summary\"` }",
+      "description": "LLM 在对话阶段返回的结构化响应，Type 为 question 表示继续提问，为 done 表示对话结束并提供摘要"
     },
     {
       "name": "GeneratedContent",
-      "signature": "type GeneratedContent struct",
-      "description": "生成阶段返回的配置文件内容类型"
+      "signature": "type GeneratedContent struct { ProjectManifest string `json:\"project_manifest\"`; ArchitectureMap string `json:\"architecture_map\"`; Conventions string `json:\"conventions\"`; ModuleContracts map[string]string `json:\"module_contracts\"` }",
+      "description": "LLM 在生成阶段返回的配置文件内容集合"
+    },
+    {
+      "name": "SingleFileContent",
+      "signature": "type SingleFileContent struct { Content string `json:\"content\"` }",
+      "description": "分步生成单个制品文件时的 LLM 响应结构"
+    },
+    {
+      "name": "ModuleContractContent",
+      "signature": "type ModuleContractContent struct { ModuleName string `json:\"module_name\"`; Content string `json:\"content\"` }",
+      "description": "单个模块契约生成的 LLM 响应结构，包含模块名和 JSON 内容"
     },
     {
       "name": "AnalyzedFiles",
-      "signature": "type AnalyzedFiles struct",
-      "description": "扫描阶段识别的关键文件列表类型"
+      "signature": "type AnalyzedFiles struct { ConfigFiles []string `json:\"config_files\"`; SourceFiles []string `json:\"source_files\"` }",
+      "description": "LLM 在扫描阶段识别出的配置文件和源码文件分类列表"
+    },
+    {
+      "name": "SelectedFiles",
+      "signature": "type SelectedFiles struct { KeyFiles []string `json:\"key_files\"`; Reasons map[string]string `json:\"reasons\"` }",
+      "description": "LLM 选择的重点文件列表及选择理由"
+    },
+    {
+      "name": "ModuleDependencyGraph",
+      "signature": "type ModuleDependencyGraph struct { Modules []ModuleDep `json:\"modules\"` }",
+      "description": "模块间依赖关系图，由 LLM 分析生成，用于确定 CONTRACT 生成顺序和提供依赖上下文"
+    },
+    {
+      "name": "ModuleDep",
+      "signature": "type ModuleDep struct { Name string `json:\"name\"`; Path string `json:\"path\"`; Purpose string `json:\"purpose\"`; DependsOn []string `json:\"depends_on\"` }",
+      "description": "单个模块的依赖关系信息，包含模块名、路径、用途描述和依赖列表"
     }
   ],
   "modification_rules": [
     {
-      "rule": "新增或修改生成流程时，必须保持对 llm.Client 抽象的依赖，不得直接在本模块中引入具体模型供应商 SDK 调用。",
-      "reason": "模块边界要求 LLM 协议细节收敛到 llm 层，避免 generator 与具体供应商实现耦合。"
+      "rule": "修改多轮对话流程时，必须确保 InterviewResponse 的 Type 字段仍然支持 'question' 和 'done' 两种状态",
+      "reason": "对话状态机依赖此二值判断来决定继续提问还是结束对话"
     },
     {
-      "rule": "所有新增的落盘逻辑都必须先进行 YAML 合法性校验，再调用 fileutil 写入目标路径。",
-      "reason": "该模块是 .kontext 物料生成入口，若跳过校验会把无效配置传播到 validate、pack 与 update 下游。"
+      "rule": "修改分阶段生成的任务依赖关系时，必须同步更新 BuildInitTasks 和 BuildContractTasks 中的 DependsOn 声明",
+      "reason": "DAG 拓扑排序依赖正确的依赖声明，错误的依赖关系会导致任务执行顺序错乱或引用未生成的制品"
     },
     {
-      "rule": "模板文本必须继续来自 templates 包，业务代码只负责渲染和传参，不得把大段提示词硬编码在流程函数中。",
-      "reason": "模板资产已被独立管理，硬编码会破坏提示词可维护性并与既有架构约束冲突。"
+      "rule": "每个制品生成后必须立即写入磁盘，不得在所有制品生成完毕后批量写入",
+      "reason": "LLM 调用可能因网络中断失败，逐步写入确保已完成的制品不丢失，配合 cache 层的检查点机制可实现断点恢复"
     },
     {
-      "rule": "交互式初始化流程必须维持'访谈澄清 -> 需求摘要 -> YAML 生成'的两阶段顺序。",
-      "reason": "RunInteractiveInit 的核心价值在于先收敛需求再生成配置，跳过摘要阶段会降低输出稳定性。"
+      "rule": "新增 LLM 响应类型时，必须在 types.go 中定义对应的结构体并添加 json tag",
+      "reason": "所有 LLM 结构化输出依赖 invopop/jsonschema 从 Go 结构体生成 JSON Schema，缺少 json tag 会导致 schema 生成失败"
     },
     {
-      "rule": "解析 LLM 返回内容时必须兼容 markdown 代码块包裹、JSON 解析失败与空字段回退等异常情况。",
-      "reason": "该模块直接面对不稳定的模型输出，鲁棒解析是保证生成成功率的关键。"
+      "rule": "不得在 generator 包中直接操作 stdout/stderr，进度报告必须通过 ui.Tracker 或 agent.Orchestrator 的 ProgressHandler 回调",
+      "reason": "保持引擎层与终端 I/O 的解耦，便于测试和 UI 层替换"
     },
     {
-      "rule": "模块级文件过滤逻辑只能基于路径归属做输入裁剪，不应在此处引入 schema、pack 或 update 的业务判断。",
-      "reason": "FilterFilesByModule 和 BelongsToModule 属于生成前处理辅助函数，越界会导致模块职责膨胀。"
+      "rule": "不得 import internal/packer 或 internal/updater",
+      "reason": "三个业务引擎之间不得相互依赖，通过共享的 schema 和 llm 层间接协作"
     },
     {
-      "rule": "扩展扫描初始化相关结构时，应优先通过 types.go 中的结构体统一声明输入输出格式。",
-      "reason": "本模块对外的结构化契约集中在 types.go，分散定义会增加解析与调用方的不一致风险。"
-    },
-    {
-      "rule": "不得让 generator 反向依赖 cmd、schema、packer 或 updater。",
-      "reason": "依赖图规定 generator 只依赖 fileutil、llm、templates，反向扩张会破坏分层并可能引入循环依赖。"
+      "rule": "修改 prompt 模板引用时，必须确认对应的 .tmpl 文件存在于 templates/ 目录且在 templates.go 中已注册为包级变量",
+      "reason": "模板通过 Go embed 编译时打包，运行时无法动态加载缺失的模板文件"
     }
   ]
 }

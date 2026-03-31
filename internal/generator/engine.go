@@ -15,6 +15,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/w1ndys/kontext/internal/agent"
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
@@ -159,120 +160,66 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		}
 	}
 
+	orch := agent.NewOrchestrator(client)
+
 	tracker := ui.NewTracker()
 	tracker.Start()
 
-	// ── 阶段 1: 生成 PROJECT_MANIFEST ──
-	task := tracker.AddTask("生成 PROJECT_MANIFEST.json")
-	manifestUserMsg, err := RenderTemplate(templates.InitGenerateManifestUser, map[string]string{
-		"Summary":      summary,
-		"Conversation": conversation,
+	// 活跃的 tracker task 索引，用于进度回调
+	activeTasks := &sync.Map{}
+	orch.SetProgressHandler(func(event agent.ProgressEvent) {
+		switch event.Type {
+		case agent.ProgressTaskStart:
+			t := tracker.AddTask(event.Label)
+			activeTasks.Store(event.TaskID, t)
+		case agent.ProgressTaskDone:
+			if v, ok := activeTasks.Load(event.TaskID); ok {
+				v.(*ui.Task).DoneWithLabel(fmt.Sprintf("%s (%s)", event.Label, event.Message))
+			}
+		case agent.ProgressTaskFailed:
+			if v, ok := activeTasks.Load(event.TaskID); ok {
+				v.(*ui.Task).Fail(fmt.Errorf("%s", event.Message))
+			}
+		}
 	})
-	if err != nil {
-		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
-		tracker.Stop()
-		return fmt.Errorf("渲染 manifest 用户模板失败: %w", err)
-	}
-	manifestContent, err := GenerateSingleJSON(client, templates.InitScanManifestSystem, manifestUserMsg)
-	if err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return fmt.Errorf("生成 PROJECT_MANIFEST 失败: %w", err)
-	}
-	if err := writeJSONFile(filepath.Join(kontextDir, "PROJECT_MANIFEST.json"), manifestContent); err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return err
-	}
-	task.DoneWithLabel("PROJECT_MANIFEST.json 已保存")
 
-	// ── 阶段 2: 生成 ARCHITECTURE_MAP ──
-	task = tracker.AddTask("生成 ARCHITECTURE_MAP.json")
-	archUserMsg, err := RenderTemplate(templates.InitGenerateArchitectureUser, map[string]string{
-		"Summary":      summary,
-		"Conversation": conversation,
-		"Manifest":     manifestContent,
-	})
-	if err != nil {
-		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
-		tracker.Stop()
-		return fmt.Errorf("渲染 architecture 用户模板失败: %w", err)
+	opts := InitTaskOptions{
+		Summary:      summary,
+		Conversation: conversation,
+		KontextDir:   kontextDir,
 	}
-	archContent, err := GenerateSingleJSON(client, templates.InitScanArchitectureSystem, archUserMsg)
-	if err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return fmt.Errorf("生成 ARCHITECTURE_MAP 失败: %w", err)
-	}
-	if err := writeJSONFile(filepath.Join(kontextDir, "ARCHITECTURE_MAP.json"), archContent); err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return err
-	}
-	task.DoneWithLabel("ARCHITECTURE_MAP.json 已保存")
 
-	// ── 阶段 3: 生成 CONVENTIONS ──
-	task = tracker.AddTask("生成 CONVENTIONS.json")
-	convUserMsg, err := RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
-		"Summary":      summary,
-		"Manifest":     manifestContent,
-		"Architecture": archContent,
-	})
-	if err != nil {
-		task.Fail(fmt.Errorf("渲染模板失败: %v", err))
-		tracker.Stop()
-		return fmt.Errorf("渲染 conventions 用户模板失败: %w", err)
-	}
-	convContent, err := GenerateSingleJSON(client, templates.InitScanConventionsSystem, convUserMsg)
-	if err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return fmt.Errorf("生成 CONVENTIONS 失败: %w", err)
-	}
-	if err := writeJSONFile(filepath.Join(kontextDir, "CONVENTIONS.json"), convContent); err != nil {
-		task.Fail(err)
-		tracker.Stop()
-		return err
-	}
-	task.DoneWithLabel("CONVENTIONS.json 已保存")
+	// ── 阶段 1: 生成 manifest → architecture → conventions ──
+	phase1Tasks := BuildInitTasks(opts)
+	phase1Result := orch.Run(phase1Tasks)
 
-	// ── 阶段 4: 从 architecture 提取模块列表，逐个生成 CONTRACT ──
+	if len(phase1Result.Errors) > 0 {
+		tracker.Stop()
+		return phase1Result.Errors[0]
+	}
+
+	// ── 阶段 2: 从 architecture 提取模块列表，并行生成契约 ──
+	archContent := phase1Result.Results[TaskIDArchitecture].Content
+	manifestContent := phase1Result.Results[TaskIDManifest].Content
 	modules := extractModulesFromArchitecture(archContent)
+
 	if len(modules) == 0 {
 		tracker.Stop()
 		fmt.Println("\n.kontext/ 初始化完成！（未识别到模块，跳过契约生成）")
 		return nil
 	}
 
-	for i, mod := range modules {
-		task = tracker.AddTask(fmt.Sprintf("[%d/%d] 生成模块契约 %s", i+1, len(modules), mod))
-		contractUserMsg, err := RenderTemplate(templates.InitGenerateContractUser, map[string]string{
-			"Summary":      summary,
-			"Manifest":     manifestContent,
-			"Architecture": archContent,
-			"ModuleName":   mod,
-		})
-		if err != nil {
-			task.Fail(fmt.Errorf("渲染模板失败: %v", err))
-			continue
-		}
-
-		contract, err := GenerateModuleContractStream(client, templates.InitScanContractSystem, contractUserMsg, mod, nil)
-		if err != nil {
-			task.Fail(err)
-			continue
-		}
-
-		filename := schema.ContractFilename(mod)
-		contractPath := filepath.Join(kontextDir, "module_contracts", filename)
-		if err := writeContractFile(contractPath, contract.Content); err != nil {
-			task.Fail(err)
-			continue
-		}
-		task.DoneWithLabel(fmt.Sprintf("%s 已保存", filename))
-	}
+	contractTasks := BuildContractTasks(opts, modules, manifestContent, archContent)
+	phase2Result := orch.Run(contractTasks)
 
 	tracker.Stop()
+
+	if len(phase2Result.Errors) > 0 {
+		// 契约生成部分失败不阻断流程，打印警告
+		fmt.Printf("\n.kontext/ 初始化完成！（%d 个模块契约生成失败）\n", len(phase2Result.Errors))
+		return nil
+	}
+
 	fmt.Println("\n.kontext/ 初始化完成！")
 	return nil
 }

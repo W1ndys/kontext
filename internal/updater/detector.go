@@ -31,8 +31,12 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 		return nil, err
 	}
 
+	// 使用 ARCHITECTURE_MAP + 文件系统推导模块列表
+	archJSON, _ := json.Marshal(bundle.Architecture)
+	moduleNames := fileutil.ExtractModulesFromArchAndFiles(string(archJSON), allFiles)
+
 	packages := actualPackages(allFiles)
-	modules := actualModules(allFiles)
+	modules := mapFilesToModules(allFiles, moduleNames)
 	moduleSummaries := collectModuleSummaries(projectDir, modules)
 
 	report := &ChangeReport{
@@ -127,13 +131,10 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 	return report, nil
 }
 
-// actualPackages 从文件列表中提取所有包含源码文件的目录路径。
+// actualPackages 从文件列表中提取所有包含文件的目录路径（语言无关）。
 func actualPackages(files []string) map[string]bool {
 	result := make(map[string]bool)
 	for _, relPath := range files {
-		if !isSourceFile(relPath) {
-			continue
-		}
 		dir := filepath.ToSlash(filepath.Dir(relPath))
 		if dir == "." || dir == "" {
 			continue
@@ -143,21 +144,28 @@ func actualPackages(files []string) map[string]bool {
 	return result
 }
 
-// actualModules 从文件列表中提取模块名到文件列表的映射。
-func actualModules(files []string) map[string][]string {
+// mapFilesToModules 将文件列表按模块名归组。
+// 每个文件根据其路径前缀匹配到最长的模块名（基于 ARCHITECTURE_MAP + 文件系统提取的模块列表）。
+func mapFilesToModules(allFiles []string, moduleNames []string) map[string][]string {
+	// 按长度降序排列模块名，优先匹配最长前缀
+	sorted := make([]string, len(moduleNames))
+	copy(sorted, moduleNames)
+	sort.Slice(sorted, func(i, j int) bool {
+		return len(sorted[i]) > len(sorted[j])
+	})
+
 	result := make(map[string][]string)
-	for _, relPath := range files {
-		if !isSourceFile(relPath) {
-			continue
+	for _, f := range allFiles {
+		normalized := filepath.ToSlash(f)
+		for _, mod := range sorted {
+			if strings.HasPrefix(normalized, mod+"/") || normalized == mod {
+				result[mod] = append(result[mod], f)
+				break
+			}
 		}
-		moduleName := deriveModuleName(relPath)
-		if moduleName == "" {
-			continue
-		}
-		result[moduleName] = append(result[moduleName], relPath)
 	}
-	for moduleName := range result {
-		sort.Strings(result[moduleName])
+	for mod := range result {
+		sort.Strings(result[mod])
 	}
 	return result
 }
@@ -351,49 +359,6 @@ func containsFile(files []string, target string) bool {
 		}
 	}
 	return false
-}
-
-// 命名空间目录：子目录名即模块名（适用于多种语言的项目结构）。
-var namespaceDirectories = map[string]bool{
-	"internal": true, "pkg": true, "src": true, "lib": true,
-	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
-}
-
-// 直接模块目录：目录本身即模块名。
-var directModuleDirectories = map[string]bool{
-	"cmd": true, "bin": true, "scripts": true, "templates": true,
-}
-
-// deriveModuleName 从文件相对路径推导模块标识符（使用目录路径）。
-// 例如 internal/config/config.go → internal/config，cmd/root.go → cmd。
-func deriveModuleName(relPath string) string {
-	normalized := filepath.ToSlash(relPath)
-	parts := strings.Split(normalized, "/")
-	if len(parts) == 0 {
-		return ""
-	}
-	if directModuleDirectories[parts[0]] {
-		return parts[0]
-	}
-	if namespaceDirectories[parts[0]] && len(parts) > 1 {
-		return parts[0] + "/" + parts[1]
-	}
-	// 根目录下的源码文件归属 main 模块
-	if len(parts) == 1 && isSourceFile(normalized) {
-		return "main"
-	}
-	return ""
-}
-
-// isSourceFile 判断文件是否为源码文件。
-func isSourceFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".go", ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".rs", ".c", ".cpp", ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala":
-		return true
-	default:
-		return false
-	}
 }
 
 // sortedKeys 将 map 的键排序后返回切片。

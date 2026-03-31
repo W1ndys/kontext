@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/w1ndys/kontext/internal/agent"
+	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/templates"
 )
@@ -70,20 +71,21 @@ func BuildInitTasks(opts InitTaskOptions) []*agent.AgentTask {
 	}
 
 	conventionsTask := &agent.AgentTask{
-		ID:           TaskIDConventions,
-		DependsOn:    []string{TaskIDManifest, TaskIDArchitecture},
-		Label:        "生成 CONVENTIONS.json",
-		SystemPrompt: templates.InitScanConventionsSystem,
-		BuildUserMsg: func(resolved map[string]string) (string, error) {
-			return RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
+		ID:        TaskIDConventions,
+		DependsOn: []string{TaskIDManifest, TaskIDArchitecture},
+		Label:     "生成 CONVENTIONS.json",
+		CustomExecute: func(client llm.Client, resolved map[string]string) (string, error) {
+			userMsg, err := RenderTemplate(templates.InitGenerateConventionsUser, map[string]string{
 				"Summary":      opts.Summary,
 				"Manifest":     resolved[TaskIDManifest],
 				"Architecture": resolved[TaskIDArchitecture],
 			})
+			if err != nil {
+				return "", err
+			}
+			return GenerateConventionsInSections(client, userMsg, nil)
 		},
-		Validate:    ValidateJSON,
-		PostProcess: FormatJSON,
-		OutputPath:  filepath.Join(kontextDir, "CONVENTIONS.json"),
+		OutputPath: filepath.Join(kontextDir, "CONVENTIONS.json"),
 	}
 
 	return []*agent.AgentTask{manifestTask, architectureTask, conventionsTask}

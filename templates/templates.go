@@ -53,6 +53,9 @@ var InitScanArchitectureSystem string // InitScanArchitectureSystem 是分步生
 //go:embed init_scan_conventions_system.tmpl
 var InitScanConventionsSystem string // InitScanConventionsSystem 是分步生成 CONVENTIONS 的系统提示词
 
+//go:embed init_scan_conventions_section_system.tmpl
+var InitScanConventionsSectionSystem string // InitScanConventionsSectionSystem 是分 section 生成 CONVENTIONS 的系统提示词
+
 //go:embed init_scan_contract_system.tmpl
 var InitScanContractSystem string // InitScanContractSystem 是分步生成单个模块契约的系统提示词
 

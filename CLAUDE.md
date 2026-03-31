@@ -56,7 +56,7 @@ go test ./internal/packer/ -run TestCollector
 - 所有 LLM 交互使用 JSON Schema 结构化输出（参见 `invopop/jsonschema` 依赖和 `internal/llm/types.go` 中的响应类型）。
 - 提示词模板使用 Go `text/template` 语法，编译时嵌入二进制。
 - `.kontext/` 制品使用 JSON 格式存储，通过 `encoding/json` 处理。
-- 全局 LLM 配置（`~/.kontext/config.yaml`）仍使用 YAML 格式（通过 `gopkg.in/yaml.v3`）。
+- 全局 LLM 配置（`~/.kontext/config.json`）使用 JSON 格式（通过 `encoding/json`），首次加载时自动从旧版 `config.yaml` 迁移。
 - TUI 交互（交互式 init、config）使用 Bubble Tea（`charmbracelet/bubbletea`）。
 - 代码注释和用户可见字符串使用中文，保持此惯例。
 

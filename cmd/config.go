@@ -16,7 +16,7 @@ import (
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "管理全局 LLM 配置 / Manage global LLM configuration (~/.kontext/config.yaml)",
+	Short: "管理全局 LLM 配置 / Manage global LLM configuration (~/.kontext/config.json)",
 	Long: `管理 Kontext 的全局 LLM 配置。
 
 无参数时启动交互式配置引导：

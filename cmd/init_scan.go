@@ -582,6 +582,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		}
 
 		manifestTask.Done()
+		ui.Success("   ✓ 项目清单已生成")
 		logger.Info("scan stage completed",
 			"stage", 6,
 			"stage_name", "generate_manifest",
@@ -613,7 +614,9 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		var archErr, convErr error
 
 		archTask := ctx.tracker.AddTask("生成 ARCHITECTURE_MAP.json")
-		convTask := ctx.tracker.AddTask("生成 CONVENTIONS.json")
+
+		// 为 CONVENTIONS 的每个 section 创建 tracker 任务
+		convSectionTasks := make(map[int]*ui.Task)
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -630,12 +633,20 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		go func() {
 			defer wg.Done()
-			convContent, convErr = generator.GenerateSingleJSON(client, templates.InitScanConventionsSystem, convUserMsg)
-			if convErr != nil {
-				convTask.Fail(convErr)
-			} else {
-				convTask.Done()
-			}
+			var taskMu sync.Mutex
+			convContent, convErr = generator.GenerateConventionsInSections(client, convUserMsg, func(p generator.ConventionsSectionProgress) {
+				taskMu.Lock()
+				defer taskMu.Unlock()
+				if !p.Done {
+					convSectionTasks[p.SectionIndex] = ctx.tracker.AddTask(fmt.Sprintf("生成 CONVENTIONS/%s", p.SectionLabel))
+				} else if t, ok := convSectionTasks[p.SectionIndex]; ok {
+					if p.Err != nil {
+						t.Fail(p.Err)
+					} else {
+						t.Done()
+					}
+				}
+			})
 		}()
 
 		wg.Wait()
@@ -671,6 +682,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			logger.Error("write conventions failed", "stage", 7, "path", convPath, "error", err)
 			return nil, fmt.Errorf("写入 CONVENTIONS.json 失败: %w", err)
 		}
+		ui.Success("   ✓ 架构图与编码规范已生成")
 		logger.Info("scan stage completed",
 			"stage", 7,
 			"stage_name", "generate_architecture_and_conventions",

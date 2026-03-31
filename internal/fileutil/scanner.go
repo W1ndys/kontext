@@ -298,27 +298,3 @@ func sanitizePackagePath(pkg string) string {
 	return pkg
 }
 
-// FindGoFiles 递归查找 root 目录下所有 .go 文件，返回相对路径列表。
-func FindGoFiles(root string) ([]string, error) {
-	var goFiles []string
-
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		if info.IsDir() {
-			name := info.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(info.Name(), ".go") {
-			rel, _ := filepath.Rel(root, path)
-			goFiles = append(goFiles, rel)
-		}
-		return nil
-	})
-
-	return goFiles, err
-}

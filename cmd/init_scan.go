@@ -567,10 +567,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			return nil, fmt.Errorf("生成 PROJECT_MANIFEST.json 失败: %w", err)
 		}
 
-		if valErr := generator.ValidateJSON(manifestContent); valErr != nil {
-			manifestTask.Fail(valErr)
-			logger.Error("validate manifest json failed", "stage", 6, "error", valErr)
-			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.json 不合法: %w", valErr)
+		manifestContent, err = generator.FormatJSON(manifestContent)
+		if err != nil {
+			manifestTask.Fail(err)
+			logger.Error("format manifest json failed", "stage", 6, "error", err)
+			return nil, fmt.Errorf("生成的 PROJECT_MANIFEST.json 不合法: %w", err)
 		}
 
 		manifestPath := filepath.Join(kontextDir, "PROJECT_MANIFEST.json")
@@ -648,13 +649,15 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			return nil, fmt.Errorf("生成 CONVENTIONS.json 失败: %w", convErr)
 		}
 
-		if valErr := generator.ValidateJSON(archContent); valErr != nil {
-			logger.Error("validate architecture map json failed", "stage", 7, "error", valErr)
-			return nil, fmt.Errorf("生成的 ARCHITECTURE_MAP.json 不合法: %w", valErr)
+		archContent, archErr = generator.FormatJSON(archContent)
+		if archErr != nil {
+			logger.Error("format architecture map json failed", "stage", 7, "error", archErr)
+			return nil, fmt.Errorf("生成的 ARCHITECTURE_MAP.json 不合法: %w", archErr)
 		}
-		if valErr := generator.ValidateJSON(convContent); valErr != nil {
-			logger.Error("validate conventions json failed", "stage", 7, "error", valErr)
-			return nil, fmt.Errorf("生成的 CONVENTIONS.json 不合法: %w", valErr)
+		convContent, convErr = generator.FormatJSON(convContent)
+		if convErr != nil {
+			logger.Error("format conventions json failed", "stage", 7, "error", convErr)
+			return nil, fmt.Errorf("生成的 CONVENTIONS.json 不合法: %w", convErr)
 		}
 
 		archPath := filepath.Join(kontextDir, "ARCHITECTURE_MAP.json")

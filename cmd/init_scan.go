@@ -690,7 +690,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	}
 
 	// ===== 阶段 8/9：生成模块依赖关系图 =====
-	modules := extractModulesFromArch(archContent, allFiles)
+	modules := fileutil.ExtractModulesFromArchAndFiles(archContent, allFiles)
 	if startStage <= 8 {
 		if len(modules) == 0 {
 			logger.Info("scan stage skipped",
@@ -809,6 +809,12 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		successfulContracts := make(map[string]string)
 		failedModules := make(map[string]bool)
 
+		// 为每个模块创建 tracker 任务
+		trackerTasks := make(map[string]*ui.Task)
+		for _, mod := range modules {
+			trackerTasks[mod] = ctx.tracker.AddTask(fmt.Sprintf("生成 %s", schema.ContractFilename(mod)))
+		}
+
 		saveFinalContract := func(moduleName, content string) error {
 			normalized, err := schema.NormalizeContractJSON(content)
 			if err != nil {
@@ -853,9 +859,9 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 			}
 
 			if err := fileutil.WriteFile(partialPath(event.ModuleName), []byte(snapshot)); err != nil {
-				printMu.Lock()
-				fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filepath.Base(partialPath(event.ModuleName)), err)
-				printMu.Unlock()
+				ctx.tracker.Interject(func() {
+					fmt.Printf("   ⚠ 写入 %s 失败: %v\n", filepath.Base(partialPath(event.ModuleName)), err)
+				})
 				return
 			}
 
@@ -866,13 +872,16 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		onProgress := func(result generator.ModuleContractResult) {
 			printMu.Lock()
-			defer printMu.Unlock()
+			t := trackerTasks[result.ModuleName]
+			printMu.Unlock()
 
 			if result.Error != nil {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				ui.Error("   ✗ %s 失败: %v", schema.ContractFilename(result.ModuleName), result.Error)
+				if t != nil {
+					t.Fail(result.Error)
+				}
 				return
 			}
 
@@ -880,11 +889,15 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				ui.Error("   ✗ %s_CONTRACT.json 失败: %v", result.ModuleName, err)
+				if t != nil {
+					t.Fail(err)
+				}
 				return
 			}
 
-			ui.Success("   ✓ %s (%.1f 秒)", schema.ContractFilename(result.ModuleName), result.Duration)
+			if t != nil {
+				t.DoneWithLabel(fmt.Sprintf("%s (%.1f 秒)", schema.ContractFilename(result.ModuleName), result.Duration))
+			}
 		}
 
 		step9Start := time.Now()
@@ -912,7 +925,13 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		if len(retryModules) > 0 {
 			retryCount = len(retryModules)
-			ui.Warn("   ⚠ %d 个模块失败，正在重试...", len(retryModules))
+
+			// 为重试模块创建新的 tracker 任务
+			printMu.Lock()
+			for _, mod := range retryModules {
+				trackerTasks[mod] = ctx.tracker.AddTask(fmt.Sprintf("重试 %s", schema.ContractFilename(mod)))
+			}
+			printMu.Unlock()
 
 			_, retryErrors := generator.GenerateModuleContracts(
 				client,
@@ -943,10 +962,12 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 					"stage", 9,
 					"failed_count", len(finalFailures),
 				)
-				ui.Warn("   ⚠ %d 个模块最终生成失败", len(finalFailures))
-				for _, mod := range finalFailures {
-					ui.Error("      - %s", mod)
-				}
+				ctx.tracker.Interject(func() {
+					ui.Warn("   ⚠ %d 个模块最终生成失败", len(finalFailures))
+					for _, mod := range finalFailures {
+						ui.Error("      - %s", mod)
+					}
+				})
 			}
 		}
 
@@ -985,104 +1006,6 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	_ = cache.UpdateCheckpointStage(cp, 9)
 
 	return successfulContractFiles, nil
-}
-
-// archLayer 定义 ARCHITECTURE_MAP 中的层级结构
-type archLayer struct {
-	Name     string   `json:"name"`
-	Packages []string `json:"packages"`
-}
-
-// archMap 定义 ARCHITECTURE_MAP 的解析结构
-type archMap struct {
-	Layers []archLayer `json:"layers"`
-}
-
-// extractModulesFromArch 从 ARCHITECTURE_MAP 的 JSON 内容中解析模块列表。
-// 优先解析 ARCHITECTURE_MAP 的 layers.packages，解析失败时回退到目录规则扫描。
-func extractModulesFromArch(archContent string, allFiles []string) []string {
-	// 优先从 ARCHITECTURE_MAP 解析
-	var arch archMap
-	if err := json.Unmarshal([]byte(archContent), &arch); err == nil && len(arch.Layers) > 0 {
-		moduleSet := make(map[string]bool)
-		for _, layer := range arch.Layers {
-			for _, pkg := range layer.Packages {
-				name := normalizeModuleName(pkg)
-				if name != "" {
-					moduleSet[name] = true
-				}
-			}
-		}
-
-		if len(moduleSet) > 0 {
-			var modules []string
-			for mod := range moduleSet {
-				modules = append(modules, mod)
-			}
-			sort.Strings(modules)
-			return modules
-		}
-	}
-
-	// 解析失败时回退到目录规则扫描
-	return fallbackExtractModules(allFiles)
-}
-
-// normalizeModuleName 将包路径规范化为模块名。
-func normalizeModuleName(pkg string) string {
-	pkg = strings.TrimSpace(pkg)
-	pkg = filepath.ToSlash(pkg)
-	parts := strings.Split(pkg, "/")
-
-	excluded := map[string]bool{"testdata": true, "vendor": true}
-
-	for i := len(parts) - 1; i >= 0; i-- {
-		if parts[i] != "" && !excluded[parts[i]] {
-			return parts[i]
-		}
-	}
-	return ""
-}
-
-// 命名空间目录：子目录名即模块名（适用于多种语言的项目结构）
-var namespaceDirectories = map[string]bool{
-	"internal": true, "pkg": true, "src": true, "lib": true,
-	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
-}
-
-// 直接模块目录：目录本身即模块名
-var directModuleDirectories = map[string]bool{
-	"cmd": true, "bin": true, "scripts": true, "templates": true,
-}
-
-// fallbackExtractModules 使用目录规则扫描提取模块列表（作为回退方案）。
-func fallbackExtractModules(allFiles []string) []string {
-	moduleSet := make(map[string]bool)
-
-	for _, f := range allFiles {
-		parts := strings.Split(filepath.ToSlash(f), "/")
-		if len(parts) < 2 {
-			continue
-		}
-
-		if namespaceDirectories[parts[0]] && len(parts) >= 2 {
-			moduleSet[parts[1]] = true
-		}
-		if directModuleDirectories[parts[0]] {
-			moduleSet[parts[0]] = true
-		}
-	}
-
-	delete(moduleSet, "testdata")
-	delete(moduleSet, "vendor")
-
-	var modules []string
-	for mod := range moduleSet {
-		modules = append(modules, mod)
-	}
-	sort.Strings(modules)
-
-	return modules
 }
 
 // extractFailedModuleNames 从错误列表中提取失败的模块名。

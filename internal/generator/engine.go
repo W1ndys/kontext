@@ -198,10 +198,14 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 		return phase1Result.Errors[0]
 	}
 
-	// ── 阶段 2: 从 architecture 提取模块列表，并行生成契约 ──
+	// ── 阶段 2: 扫描项目目录获取模块列表，并行生成契约 ──
 	archContent := phase1Result.Results[TaskIDArchitecture].Content
 	manifestContent := phase1Result.Results[TaskIDManifest].Content
-	modules := extractModulesFromArchitecture(archContent)
+	modules, scanErr := fileutil.ScanProjectModules(".", archContent)
+	if scanErr != nil {
+		tracker.Stop()
+		return fmt.Errorf("扫描项目模块失败: %w", scanErr)
+	}
 
 	if len(modules) == 0 {
 		tracker.Stop()
@@ -262,34 +266,6 @@ func FormatJSON(content string) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
-}
-
-// extractModulesFromArchitecture 从 ARCHITECTURE_MAP JSON 中提取模块名列表。
-// 使用完整相对路径（/ 替换为 _）作为模块标识符，避免不同父目录下同名包冲突。
-// 例如 "internal/config" → "internal_config", "cmd" → "cmd"。
-func extractModulesFromArchitecture(archJSON string) []string {
-	var arch schema.ArchitectureMap
-	if err := json.Unmarshal([]byte(archJSON), &arch); err != nil {
-		return nil
-	}
-
-	seen := make(map[string]bool)
-	var modules []string
-	for _, layer := range arch.Layers {
-		for _, pkg := range layer.Packages {
-			pkg = strings.TrimRight(pkg, "/")
-			if pkg == "" {
-				continue
-			}
-			// 使用完整路径，将 / 替换为 _ 作为模块标识符
-			name := strings.ReplaceAll(pkg, "/", "_")
-			if !seen[name] {
-				seen[name] = true
-				modules = append(modules, name)
-			}
-		}
-	}
-	return modules
 }
 
 // WriteGeneratedContent 校验并写入生成的制品到 .kontext/ 目录。

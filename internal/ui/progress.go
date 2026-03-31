@@ -326,35 +326,28 @@ func (tr *Tracker) renderLocked() {
 }
 
 // visibleTasks 返回需要渲染的任务列表。
-// 已完成的任务如果后面还有未完成的任务则保持显示，
-// 否则只保留最后完成的任务供最终渲染。
+// 只要还有未完成的任务，就显示全部任务（含已完成的），
+// 确保快速完成的任务也能在进度列表中可见。
+// 所有任务都完成时，只保留最后一个供最终渲染。
 func (tr *Tracker) visibleTasks() []*taskState {
 	if len(tr.tasks) == 0 {
 		return nil
 	}
 
-	// 找到最后一个未完成的任务的索引
-	lastActive := -1
-	for i := len(tr.tasks) - 1; i >= 0; i-- {
-		if !tr.tasks[i].done {
-			lastActive = i
+	// 检查是否还有未完成的任务
+	hasActive := false
+	for _, t := range tr.tasks {
+		if !t.done {
+			hasActive = true
 			break
 		}
 	}
 
-	if lastActive == -1 {
+	if !hasActive {
 		// 所有任务都完成了，只显示最后一个
 		return tr.tasks[len(tr.tasks)-1:]
 	}
 
-	// 返回从第一个未完成任务到最后一个未完成任务的范围
-	firstActive := lastActive
-	for i := 0; i < lastActive; i++ {
-		if !tr.tasks[i].done {
-			firstActive = i
-			break
-		}
-	}
-
-	return tr.tasks[firstActive:]
+	// 还有活跃任务时，显示全部任务
+	return tr.tasks
 }

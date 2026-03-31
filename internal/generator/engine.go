@@ -154,7 +154,7 @@ func runInterview(client llm.Client, description string, input io.Reader, output
 func generateAndWrite(client llm.Client, summary, conversation string) error {
 	// 确保目录结构存在
 	kontextDir := ".kontext"
-	for _, d := range []string{kontextDir, filepath.Join(kontextDir, "module_contracts"), filepath.Join(kontextDir, "prompts")} {
+	for _, d := range []string{kontextDir, filepath.Join(kontextDir, "module_contracts")} {
 		if err := fileutil.EnsureDir(d); err != nil {
 			return fmt.Errorf("创建目录 %s 失败: %w", d, err)
 		}
@@ -292,7 +292,6 @@ func WriteGeneratedContent(generated *GeneratedContent) error {
 	dirs := []string{
 		kontextDir,
 		filepath.Join(kontextDir, "module_contracts"),
-		filepath.Join(kontextDir, "prompts"),
 	}
 	for _, d := range dirs {
 		if err := fileutil.EnsureDir(d); err != nil {

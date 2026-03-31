@@ -539,7 +539,6 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 	dirs := []string{
 		kontextDir,
 		filepath.Join(kontextDir, "module_contracts"),
-		filepath.Join(kontextDir, "prompts"),
 	}
 	for _, d := range dirs {
 		if err := fileutil.EnsureDir(d); err != nil {

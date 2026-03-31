@@ -120,7 +120,6 @@ func runStaticInitWithOverwrite() error {
 	dirs := []string{
 		defaultKontextDir,
 		filepath.Join(defaultKontextDir, "module_contracts"),
-		filepath.Join(defaultKontextDir, "prompts"),
 	}
 	for _, d := range dirs {
 		if err := fileutil.EnsureDir(d); err != nil {

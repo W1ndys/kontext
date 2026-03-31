@@ -265,7 +265,7 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 
 		filename := schema.ContractFilename(mod)
 		contractPath := filepath.Join(kontextDir, "module_contracts", filename)
-		if err := writeJSONFile(contractPath, contract.Content); err != nil {
+		if err := writeContractFile(contractPath, contract.Content); err != nil {
 			task.Fail(err)
 			continue
 		}
@@ -289,17 +289,32 @@ func writeJSONFile(path, content string) error {
 	return nil
 }
 
+// writeContractFile 将契约 JSON 通过结构体序列化确保字段顺序一致后写入文件。
+func writeContractFile(path, content string) error {
+	normalized, err := schema.NormalizeContractJSON(content)
+	if err != nil {
+		return fmt.Errorf("生成的 %s 不合法: %w", filepath.Base(path), err)
+	}
+	if err := fileutil.WriteFile(path, []byte(normalized)); err != nil {
+		return fmt.Errorf("写入 %s 失败: %w", path, err)
+	}
+	return nil
+}
+
 // FormatJSON 通过 unmarshal → marshal 标准化 JSON 格式。
 func FormatJSON(content string) (string, error) {
 	var data interface{}
 	if err := json.Unmarshal([]byte(content), &data); err != nil {
 		return "", err
 	}
-	out, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(data); err != nil {
 		return "", err
 	}
-	return string(out) + "\n", nil
+	return buf.String(), nil
 }
 
 // extractModulesFromArchitecture 从 ARCHITECTURE_MAP JSON 中提取模块名列表。
@@ -383,7 +398,7 @@ func WriteGeneratedContent(generated *GeneratedContent) error {
 		for name, content := range generated.ModuleContracts {
 			filename := schema.ContractFilename(name)
 			path := filepath.Join(kontextDir, "module_contracts", filename)
-			if err := writeJSONFile(path, content); err != nil {
+			if err := writeContractFile(path, content); err != nil {
 				return fmt.Errorf("写入 %s 失败: %w", path, err)
 			}
 			fmt.Printf("    已创建: %s\n", path)

@@ -802,10 +802,11 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 		failedModules := make(map[string]bool)
 
 		saveFinalContract := func(moduleName, content string) error {
-			if err := generator.ValidateJSON(content); err != nil {
+			normalized, err := schema.NormalizeContractJSON(content)
+			if err != nil {
 				return fmt.Errorf("JSON 校验失败: %w", err)
 			}
-			if err := fileutil.WriteFile(finalPath(moduleName), []byte(content)); err != nil {
+			if err := fileutil.WriteFile(finalPath(moduleName), []byte(normalized)); err != nil {
 				return fmt.Errorf("写入正式文件失败: %w", err)
 			}
 			_ = os.Remove(partialPath(moduleName))

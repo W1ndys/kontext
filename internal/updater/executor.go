@@ -1,6 +1,7 @@
 package updater
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -565,6 +566,15 @@ func (e *Executor) applyAction(targetPath string, action UpdateAction, content s
 		return nil
 	}
 
+	// 契约类型使用结构体序列化确保字段顺序一致
+	if strings.HasPrefix(action.Target, "contract:") {
+		normalized, err := schema.NormalizeContractJSON(content)
+		if err != nil {
+			return fmt.Errorf("生成的契约 JSON 格式不合法: %w", err)
+		}
+		return fileutil.WriteFile(targetPath, []byte(normalized))
+	}
+
 	formatted, err := generator.FormatJSON(content)
 	if err != nil {
 		return fmt.Errorf("生成的 JSON 格式不合法: %w", err)
@@ -737,11 +747,14 @@ func mergeJSONObjects(content string) (string, error) {
 		return content, fmt.Errorf("内容不包含多个 JSON 对象")
 	}
 
-	result, err := json.MarshalIndent(merged, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(merged); err != nil {
 		return "", fmt.Errorf("合并后序列化失败: %w", err)
 	}
-	return string(result), nil
+	return buf.String(), nil
 }
 
 // validateGeneratedContent 校验生成的 JSON 内容是否合法且符合对应结构。

@@ -10,7 +10,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/openai/openai-go/v3 v3.29.0
 	github.com/spf13/cobra v1.8.1
-	go.yaml.in/yaml/v4 v4.0.0-rc.4
 )
 
 require (

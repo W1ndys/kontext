@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/w1ndys/kontext/internal/config"
+	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/llm"
 	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/internal/updater"
@@ -53,6 +55,10 @@ func init() {
 func runUpdate() error {
 	logger := namedLogger(commandPathUpdate)
 	logger.Info("update started", "force", updateForce, "targets", updateTargets)
+
+	if !fileutil.DirExists(defaultKontextDir) || !fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json")) {
+		return fmt.Errorf("当前项目尚未初始化 .kontext 目录，请先执行 `kontext init` 生成项目物料")
+	}
 
 	report, err := updater.DetectChanges(defaultKontextDir, defaultProjectDir)
 	if err != nil {

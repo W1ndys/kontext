@@ -1,6 +1,9 @@
 package schema
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ModuleContract 定义模块的职责边界和依赖关系。
 type ModuleContract struct {
@@ -58,4 +61,19 @@ func (c ModuleContract) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ContractFilename 将模块路径转换为契约文件名。
+// 例如 "internal/config" → "internal_config.json"，"cmd" → "cmd.json"。
+func ContractFilename(modulePath string) string {
+	return strings.ReplaceAll(modulePath, "/", "_") + ".json"
+}
+
+// ContractModuleKey 从契约中提取用于匹配的模块标识符。
+// 优先使用 Module.Path，回退到 Module.Name，两者均空时返回空字符串。
+func ContractModuleKey(c ModuleContract) string {
+	if c.Module.Path != "" {
+		return c.Module.Path
+	}
+	return c.Module.Name
 }

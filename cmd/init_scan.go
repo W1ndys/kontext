@@ -16,6 +16,7 @@ import (
 	"github.com/w1ndys/kontext/internal/fileutil"
 	"github.com/w1ndys/kontext/internal/generator"
 	"github.com/w1ndys/kontext/internal/llm"
+	"github.com/w1ndys/kontext/internal/schema"
 	"github.com/w1ndys/kontext/internal/ui"
 	"github.com/w1ndys/kontext/templates"
 )
@@ -776,10 +777,10 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 
 		moduleContractDir := filepath.Join(kontextDir, "module_contracts")
 		partialPath := func(moduleName string) string {
-			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.json.partial", moduleName))
+			return filepath.Join(moduleContractDir, schema.ContractFilename(moduleName)+".partial")
 		}
 		finalPath := func(moduleName string) string {
-			return filepath.Join(moduleContractDir, fmt.Sprintf("%s_CONTRACT.json", moduleName))
+			return filepath.Join(moduleContractDir, schema.ContractFilename(moduleName))
 		}
 
 		type partialSnapshotState struct {
@@ -862,7 +863,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				resultMu.Lock()
 				failedModules[result.ModuleName] = true
 				resultMu.Unlock()
-				ui.Error("   ✗ %s_CONTRACT.json 失败: %v", result.ModuleName, result.Error)
+				ui.Error("   ✗ %s 失败: %v", schema.ContractFilename(result.ModuleName), result.Error)
 				return
 			}
 
@@ -874,7 +875,7 @@ func executeScanStages6to9(ctx *scanPipelineContext) ([]string, error) {
 				return
 			}
 
-			ui.Success("   ✓ %s_CONTRACT.json (%.1f 秒)", result.ModuleName, result.Duration)
+			ui.Success("   ✓ %s (%.1f 秒)", schema.ContractFilename(result.ModuleName), result.Duration)
 		}
 
 		step9Start := time.Now()

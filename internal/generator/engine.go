@@ -263,13 +263,13 @@ func generateAndWrite(client llm.Client, summary, conversation string) error {
 			continue
 		}
 
-		filename := fmt.Sprintf("%s_CONTRACT.json", mod)
+		filename := schema.ContractFilename(mod)
 		contractPath := filepath.Join(kontextDir, "module_contracts", filename)
 		if err := writeJSONFile(contractPath, contract.Content); err != nil {
 			task.Fail(err)
 			continue
 		}
-		task.DoneWithLabel(fmt.Sprintf("%s_CONTRACT.json 已保存", mod))
+		task.DoneWithLabel(fmt.Sprintf("%s 已保存", filename))
 	}
 
 	tracker.Stop()
@@ -345,7 +345,7 @@ func WriteGeneratedContent(generated *GeneratedContent) error {
 
 	for name, content := range generated.ModuleContracts {
 		if _, err := FormatJSON(content); err != nil {
-			return fmt.Errorf("生成的 %s_CONTRACT.json 不合法: %w", name, err)
+			return fmt.Errorf("生成的 %s 不合法: %w", schema.ContractFilename(name), err)
 		}
 	}
 
@@ -381,7 +381,7 @@ func WriteGeneratedContent(generated *GeneratedContent) error {
 		fmt.Println()
 		fmt.Printf("  模块契约 (%d 个):\n", len(generated.ModuleContracts))
 		for name, content := range generated.ModuleContracts {
-			filename := fmt.Sprintf("%s_CONTRACT.json", name)
+			filename := schema.ContractFilename(name)
 			path := filepath.Join(kontextDir, "module_contracts", filename)
 			if err := writeJSONFile(path, content); err != nil {
 				return fmt.Errorf("写入 %s 失败: %w", path, err)
@@ -787,13 +787,8 @@ func FilterFilesByModule(files map[string]string, moduleName string) map[string]
 	return result
 }
 
-// namespaceDirectories 是命名空间目录：子目录名即模块名（适用于多种语言的项目结构）。
-var namespaceDirectories = map[string]bool{
-	"internal": true, "pkg": true, "src": true, "lib": true,
-	"app": true, "packages": true, "apps": true, "modules": true, "crates": true,
-}
-
 // BelongsToModule 判断文件路径是否属于指定模块。
+// moduleName 为目录路径格式，如 "internal/config"、"cmd"、"templates"。
 func BelongsToModule(filePath, moduleName string) bool {
 	normalized := filepath.ToSlash(filePath)
 	parts := strings.Split(normalized, "/")
@@ -802,14 +797,17 @@ func BelongsToModule(filePath, moduleName string) bool {
 		return false
 	}
 
-	// 顶层目录匹配（如 cmd/xxx → 属于 cmd 模块）
-	if parts[0] == moduleName {
-		return true
+	// moduleName 可能包含 /（如 internal/config），也可能不包含（如 cmd）
+	moduleParts := strings.Split(moduleName, "/")
+
+	if len(moduleParts) == 1 {
+		// 单段模块名：顶层目录匹配（如 cmd/xxx → cmd）
+		return parts[0] == moduleName
 	}
 
-	// 命名空间目录匹配（如 internal/config/xxx → 属于 config 模块，src/auth/xxx → 属于 auth 模块）
-	if len(parts) >= 2 && namespaceDirectories[parts[0]] {
-		return parts[1] == moduleName
+	if len(moduleParts) == 2 && len(parts) >= 2 {
+		// 两段模块名：命名空间匹配（如 internal/config/xxx → internal/config）
+		return parts[0] == moduleParts[0] && parts[1] == moduleParts[1]
 	}
 
 	return false

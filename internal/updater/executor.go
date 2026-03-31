@@ -136,6 +136,31 @@ func (e *Executor) executeContractBatch(report *ChangeReport, actions []UpdateAc
 			continue
 		}
 
+		// 已删除模块直接删除文件，无需调用 LLM
+		if action.ChangeType == "deleted_module" {
+			e.emitProgress(ProgressEvent{
+				Stage:      ProgressActionStart,
+				Action:     action,
+				Index:      globalIndex,
+				Total:      total,
+				TargetPath: targetPath,
+			})
+			_ = e.backupIfExists(targetPath)
+			if fileutil.FileExists(targetPath) {
+				_ = os.Remove(targetPath)
+			}
+			e.emitProgress(ProgressEvent{
+				Stage:      ProgressActionDone,
+				Action:     action,
+				Index:      globalIndex,
+				Total:      total,
+				TargetPath: targetPath,
+				Message:    "已删除",
+			})
+			results <- actionResult{index: globalIndex, targetPath: targetPath}
+			continue
+		}
+
 		// 按顺序发出启动日志，保证日志序号有序
 		e.emitProgress(ProgressEvent{
 			Stage:      ProgressActionStart,
@@ -606,7 +631,7 @@ func (e *Executor) targetPath(action UpdateAction) (string, error) {
 		return filepath.Join(e.kontextDir, "PROJECT_MANIFEST.json"), nil
 	default:
 		if strings.HasPrefix(action.Target, "contract:") {
-			return filepath.Join(e.kontextDir, "module_contracts", fmt.Sprintf("%s_CONTRACT.json", action.Module)), nil
+			return filepath.Join(e.kontextDir, "module_contracts", schema.ContractFilename(action.Module)), nil
 		}
 	}
 	return "", fmt.Errorf("未知目标: %s", action.Target)

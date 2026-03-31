@@ -146,7 +146,7 @@ func runStaticInitWithOverwrite() error {
 
 	// 写入默认模块契约文件
 	contractFiles := map[string]string{
-		filepath.Join(defaultKontextDir, "module_contracts", "example_CONTRACT.json"): defaultContract,
+		filepath.Join(defaultKontextDir, "module_contracts", "example.json"): defaultContract,
 	}
 
 	fmt.Println()
@@ -165,7 +165,7 @@ func runStaticInitWithOverwrite() error {
 	fmt.Println("  1. 编辑 .kontext/PROJECT_MANIFEST.json 填写项目信息")
 	fmt.Println("  2. 编辑 .kontext/ARCHITECTURE_MAP.json 填写架构信息")
 	fmt.Println("  3. 编辑 .kontext/CONVENTIONS.json 填写编码规范")
-	fmt.Println("  4. 为每个核心模块创建 .kontext/module_contracts/<模块名>_CONTRACT.json")
+	fmt.Println("  4. 为每个核心模块创建 .kontext/module_contracts/<模块路径>.json")
 	fmt.Println("  5. 运行 'kontext validate' 校验配置是否正确")
 	fmt.Println()
 	fmt.Println("提示: 使用 'kontext init --scan' 可自动扫描项目源码生成完整配置")

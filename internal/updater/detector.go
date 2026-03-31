@@ -1,7 +1,9 @@
 package updater
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +18,9 @@ const detectScanDepth = 8
 
 // DetectChanges 检测当前代码与 .kontext 物料之间的偏差。
 func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
+	// 迁移旧版 *_CONTRACT.json 文件到新命名格式
+	migrateContractFileNames(kontextDir)
+
 	bundle, err := schema.LoadBundle(kontextDir)
 	if err != nil {
 		return nil, err
@@ -63,7 +68,17 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 
 	existingContracts := make(map[string]schema.ModuleContract, len(bundle.Contracts))
 	for _, contract := range bundle.Contracts {
-		existingContracts[contract.Module.Name] = contract
+		key := schema.ContractModuleKey(contract)
+		if key == "" {
+			// 契约的 module.path 和 module.name 均为空，标记为过期需修复
+			report.ContractChanges = append(report.ContractChanges, ContractChange{
+				Module:  key,
+				Type:    "stale_contract",
+				Details: "契约的 module.path 和 module.name 均为空，需要重新生成",
+			})
+			continue
+		}
+		existingContracts[key] = contract
 	}
 
 	for moduleName := range modules {
@@ -77,7 +92,7 @@ func DetectChanges(kontextDir, projectDir string) (*ChangeReport, error) {
 			continue
 		}
 
-		contractPath := filepath.Join(kontextDir, "module_contracts", moduleName+"_CONTRACT.json")
+		contractPath := filepath.Join(kontextDir, "module_contracts", schema.ContractFilename(moduleName))
 		contractFresh := isContractFresherThanSource(contractPath, projectDir, modules[moduleName])
 
 		if details := detectStaleContract(contract, moduleSummaries[moduleName], contractFresh); details != "" {
@@ -349,7 +364,8 @@ var directModuleDirectories = map[string]bool{
 	"cmd": true, "bin": true, "scripts": true, "templates": true,
 }
 
-// deriveModuleName 从文件相对路径推导模块名。
+// deriveModuleName 从文件相对路径推导模块标识符（使用目录路径）。
+// 例如 internal/config/config.go → internal/config，cmd/root.go → cmd。
 func deriveModuleName(relPath string) string {
 	normalized := filepath.ToSlash(relPath)
 	parts := strings.Split(normalized, "/")
@@ -360,7 +376,7 @@ func deriveModuleName(relPath string) string {
 		return parts[0]
 	}
 	if namespaceDirectories[parts[0]] && len(parts) > 1 {
-		return parts[1]
+		return parts[0] + "/" + parts[1]
 	}
 	// 根目录下的源码文件归属 main 模块
 	if len(parts) == 1 && isSourceFile(normalized) {
@@ -402,4 +418,64 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
+}
+
+// migrateContractFileNames 将旧版 *_CONTRACT.json 命名迁移为新的路径格式命名。
+// 读取每个文件的 module.path，计算新文件名，执行重命名。
+func migrateContractFileNames(kontextDir string) {
+	contractsDir := filepath.Join(kontextDir, "module_contracts")
+	if !fileutil.DirExists(contractsDir) {
+		return
+	}
+
+	files, err := fileutil.ScanDirectoryTree(contractsDir, 1)
+	if err != nil {
+		return
+	}
+
+	for _, f := range files {
+		if filepath.Ext(f) != ".json" {
+			continue
+		}
+		// 仅处理旧格式文件（包含 _CONTRACT 后缀）
+		if !strings.Contains(f, "_CONTRACT.json") {
+			continue
+		}
+
+		oldPath := filepath.Join(contractsDir, f)
+		data, err := fileutil.ReadFile(oldPath)
+		if err != nil {
+			continue
+		}
+
+		var c schema.ModuleContract
+		if err := json.Unmarshal(data, &c); err != nil {
+			continue
+		}
+
+		key := schema.ContractModuleKey(c)
+		if key == "" {
+			slog.Warn("迁移跳过：契约文件的 module.path 和 module.name 均为空", "file", f)
+			continue
+		}
+
+		newFilename := schema.ContractFilename(key)
+		if newFilename == f {
+			continue
+		}
+
+		newPath := filepath.Join(contractsDir, newFilename)
+		// 如果目标文件已存在，跳过（避免覆盖）
+		if fileutil.FileExists(newPath) {
+			// 删除旧文件（新文件已存在说明已迁移）
+			_ = os.Remove(oldPath)
+			continue
+		}
+
+		if err := os.Rename(oldPath, newPath); err != nil {
+			slog.Warn("迁移契约文件失败", "from", f, "to", newFilename, "error", err)
+			continue
+		}
+		slog.Info("已迁移契约文件", "from", f, "to", newFilename)
+	}
 }

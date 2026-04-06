@@ -196,7 +196,8 @@ $env:KONTEXT_LLM_MAX_TOKENS = "16384"
 | `kontext validate` | 校验 `.kontext/` 下的 JSON 文件 |
 | `kontext update` | 检测代码与物料偏差，确认后调用 LLM 更新 |
 | `kontext update --force` | 强制更新所有物料，无视变更检测 |
-| `kontext update -t <target>` | 指定更新目标（可多次使用） |
+| `kontext update -m <模块路径>` | 只更新指定模块（可多次使用） |
+| `kontext update -e <目录>` | 排除指定目录，更新其余物料（可多次使用） |
 | `kontext config` | 交互式配置向导 |
 | `kontext config set <key> <value>` | 设置配置项 |
 | `kontext config get <key>` | 获取配置项 |
@@ -285,32 +286,46 @@ kontext update -f
 
 无视变更检测结果，强制更新所有物料（架构图、全部模块契约、项目清单）。适用于首次迁移或需要全量刷新的场景。
 
-#### 指定目标更新
+#### 指定模块更新
 
 ```bash
-kontext update -t <target>
+kontext update -m <模块路径>
 ```
 
-只更新指定的目标，可多次使用 `-t` 指定多个目标。支持以下目标格式：
-
-| 目标格式 | 说明 |
-|---------|------|
-| `architecture` | 架构图（`ARCHITECTURE_MAP.json`） |
-| `manifest` | 项目清单（`PROJECT_MANIFEST.json`） |
-| `contract:<模块路径>` | 指定模块的契约（如 `contract:internal/config`） |
+只更新指定模块的契约，可多次使用 `-m` 指定多个模块。使用此参数时，architecture 和 manifest 不会被更新。
 
 示例：
 
 ```bash
-# 只更新 config 模块契约
-kontext update -t contract:internal/config
+# 只更新 database 模块契约
+kontext update -m internal/database
 
-# 同时更新架构图和项目清单
-kontext update -t architecture -t manifest
+# 同时更新多个模块契约
+kontext update -m internal/api -m internal/core
 
-# 更新多个模块契约
-kontext update -t contract:internal/config -t contract:internal/schema
+# 强制更新指定模块
+kontext update --force -m internal/database
 ```
+
+#### 排除目录更新
+
+```bash
+kontext update -e <目录>
+```
+
+排除指定目录下的模块，更新其余物料。可多次使用 `-e` 指定多个排除目录。非契约类型（architecture、manifest）始终保留。
+
+示例：
+
+```bash
+# 排除 vendor 目录，更新其余物料
+kontext update -e vendor
+
+# 排除多个目录
+kontext update -e vendor -e third_party
+```
+
+> 注意：`-m` 和 `-e` 不能同时使用。
 
 ## 最小可用示例
 
@@ -381,6 +396,7 @@ kontext validate
 - 使用模板系统统一组织 Prompt
 - `init --scan` 具备阶段缓存和断点恢复能力
 - 生成的上下文制品可被 Claude Code、Codex 等 AI 编程工具直接读取
+- 每次运行命令时自动检查版本更新，有新版本时提示升级
 
 
 ## 参考

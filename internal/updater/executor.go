@@ -428,28 +428,9 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 		return "", nil
 	}
 
-	// Part 2a: public_interface
-	part2aPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2a, map[string]any{
-		"ModuleName":  moduleName,
-		"Part1JSON":   part1Content,
-		"CurrentJSON": fallbackJSON(currentJSON),
-		"CodeSummary": codeSummary,
-	})
-	if err != nil {
-		return "", fmt.Errorf("渲染 Part2a 模板失败: %w", err)
-	}
-
-	e.emitProgress(ProgressEvent{
-		Stage:      ProgressLLMStart,
-		Action:     action,
-		Index:      index,
-		Total:      total,
-		TargetPath: targetPath,
-		Message:    "生成契约第 2/3 部分",
-	})
-
-	part2aContent, err := e.generateContractPartWithCorrection(
-		templates.UpdateSystem, part2aPrompt, action, index, total, targetPath,
+	// Part 2a: public_interface（直接按源文件分批生成，避免大模块单次输出超限）
+	part2aContent, err := e.generatePublicInterfaceInBatches(
+		moduleName, part1Content, currentJSON, codeSummary, action, index, total, targetPath,
 	)
 	if err != nil {
 		return "", fmt.Errorf("生成契约 Part2a 失败: %w", err)
@@ -501,6 +482,124 @@ func (e *Executor) generateContractInParts(report *ChangeReport, action UpdateAc
 	}
 
 	return merged, nil
+}
+
+// generatePublicInterfaceInBatches 将代码摘要按源文件拆分为多批，
+// 每批单独调用 LLM 生成 public_interface 条目，最后合并所有结果。
+// 当 Part2a 整体生成因 token 限制截断时作为降级方案使用。
+func (e *Executor) generatePublicInterfaceInBatches(
+	moduleName, part1Content, currentJSON, codeSummary string,
+	action UpdateAction, index, total int, targetPath string,
+) (string, error) {
+	batches := splitCodeSummaryIntoBatches(codeSummary)
+	if len(batches) == 0 {
+		batches = []string{codeSummary}
+	}
+
+	var allItems []schema.InterfaceItem
+
+	for i, batch := range batches {
+		batchPrompt, err := generator.RenderTemplate(templates.UpdateContractPart2aBatch, map[string]any{
+			"ModuleName":   moduleName,
+			"Part1JSON":    part1Content,
+			"CurrentJSON":  fallbackJSON(currentJSON),
+			"BatchSummary": batch,
+			"BatchIndex":   i + 1,
+			"BatchTotal":   len(batches),
+		})
+		if err != nil {
+			return "", fmt.Errorf("渲染 Part2a 分批模板（第 %d/%d 批）失败: %w", i+1, len(batches), err)
+		}
+
+		e.emitProgress(ProgressEvent{
+			Stage:      ProgressLLMStart,
+			Action:     action,
+			Index:      index,
+			Total:      total,
+			TargetPath: targetPath,
+			Message:    fmt.Sprintf("分批生成 public_interface（第 %d/%d 批）", i+1, len(batches)),
+		})
+
+		batchContent, err := e.generateContractPartWithCorrection(
+			templates.UpdateSystem, batchPrompt, action, index, total, targetPath,
+		)
+		if err != nil {
+			return "", fmt.Errorf("分批生成 Part2a（第 %d/%d 批）失败: %w", i+1, len(batches), err)
+		}
+
+		// 解析本批次的 public_interface 条目
+		var partial struct {
+			PublicInterface []schema.InterfaceItem `json:"public_interface"`
+		}
+		if err := json.Unmarshal([]byte(batchContent), &partial); err != nil {
+			// 尝试提取 JSON
+			trimmed := strings.TrimSpace(batchContent)
+			if err2 := json.Unmarshal([]byte(trimmed), &partial); err2 != nil {
+				return "", fmt.Errorf("解析第 %d/%d 批 public_interface 失败: %w", i+1, len(batches), err)
+			}
+		}
+		allItems = append(allItems, partial.PublicInterface...)
+	}
+
+	// 序列化合并后的 public_interface
+	result := struct {
+		PublicInterface []schema.InterfaceItem `json:"public_interface"`
+	}{
+		PublicInterface: allItems,
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&result); err != nil {
+		return "", fmt.Errorf("序列化合并后的 public_interface 失败: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// splitCodeSummaryIntoBatches 将代码摘要按 "## filename" 分隔符拆分为多批。
+// 每批包含 1-3 个文件的摘要，确保单批内容不会过长。
+func splitCodeSummaryIntoBatches(codeSummary string) []string {
+	// 按 "## " 标记拆分为独立的文件摘要段
+	sections := splitBySectionHeaders(codeSummary)
+	if len(sections) <= 1 {
+		return []string{codeSummary}
+	}
+
+	// 每批最多 3 个文件摘要
+	const maxPerBatch = 3
+	var batches []string
+	for i := 0; i < len(sections); i += maxPerBatch {
+		end := i + maxPerBatch
+		if end > len(sections) {
+			end = len(sections)
+		}
+		batches = append(batches, strings.Join(sections[i:end], "\n\n"))
+	}
+	return batches
+}
+
+// splitBySectionHeaders 按 "## " 开头的行将文本拆分为多段，
+// 每段保留其 "## " 标题行。
+func splitBySectionHeaders(text string) []string {
+	lines := strings.Split(text, "\n")
+	var sections []string
+	var current []string
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "## ") && len(current) > 0 {
+			sections = append(sections, strings.Join(current, "\n"))
+			current = nil
+		}
+		current = append(current, line)
+	}
+	if len(current) > 0 {
+		section := strings.TrimSpace(strings.Join(current, "\n"))
+		if section != "" {
+			sections = append(sections, strings.Join(current, "\n"))
+		}
+	}
+	return sections
 }
 
 // generateContractPartWithCorrection 调用 LLM 生成契约的某一段 JSON，

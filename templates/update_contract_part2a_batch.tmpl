@@ -1,0 +1,32 @@
+目标模块：{{.ModuleName}}
+
+已生成的契约前半部分（module、owns、not_responsible_for、depends_on）：
+{{.Part1JSON}}
+
+当前契约 JSON（完整版，供参考）：
+{{.CurrentJSON}}
+
+以下是该模块部分源文件的代码摘要（第 {{.BatchIndex}}/{{.BatchTotal}} 批）：
+{{.BatchSummary}}
+
+请基于以上代码摘要，只为这些源文件中的导出函数和类型生成 `public_interface` 条目。
+不要生成 module、owns、not_responsible_for、depends_on、modification_rules。
+不要为其他文件中的符号生成条目——其他文件将在后续批次中处理。
+description 字段请保持简洁，不超过一行。
+
+以 JSON 格式返回，结构为 {"content": "部分 CONTRACT JSON 文本"}。content 字段的值必须严格符合以下 schema：
+
+{
+  "public_interface": [
+    {
+      "name": "对外暴露的函数或类型名",
+      "signature": "完整签名或类型定义",
+      "description": "功能描述（简洁，不超过一行）"
+    }
+  ]
+}
+
+注意：
+- 必须使用 `public_interface`，不能改成 `key_functions`
+- 只输出 public_interface，不要输出其他字段
+- 只为本批次代码摘要中出现的符号生成条目

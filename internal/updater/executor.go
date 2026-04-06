@@ -225,6 +225,11 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 		return e.generateContractInParts(report, action, index, total, targetPath)
 	}
 
+	// architecture 类型使用分段生成策略，避免大项目输出截断
+	if action.Target == "architecture" {
+		return e.generateArchitectureInParts(report, action, index, total, targetPath)
+	}
+
 	currentPath, err := e.targetPath(action)
 	if err != nil {
 		return "", err
@@ -284,6 +289,91 @@ func (e *Executor) generateContent(report *ChangeReport, action UpdateAction, in
 	}
 
 	return "", fmt.Errorf("LLM 返回的内容仍不合法: %w", lastValidationErr)
+}
+
+// generateArchitectureInParts 分两段生成 ARCHITECTURE_MAP JSON，避免单次输出过长被截断。
+// Part 1: layers（层级与包列表，通常是输出的主体部分）
+// Part 2: rules（架构规则，基于 Part 1 的层级结构生成）
+// 每段均支持语义修正重试：若 LLM 返回的 JSON 解析失败，将错误追加到对话让 LLM 修正。
+func (e *Executor) generateArchitectureInParts(report *ChangeReport, action UpdateAction, index, total int, targetPath string) (string, error) {
+	currentPath, err := e.targetPath(action)
+	if err != nil {
+		return "", err
+	}
+	currentJSON := readTextIfExists(currentPath)
+	changes := formatDirectoryChanges(report.DirectoryChanges)
+	packages := strings.Join(report.PackagePaths, "\n")
+
+	// Part 1: layers
+	part1Prompt, err := generator.RenderTemplate(templates.UpdateArchitecturePart1, map[string]any{
+		"CurrentJSON": fallbackJSON(currentJSON),
+		"Changes":     changes,
+		"Packages":    packages,
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染 Architecture Part1 模板失败: %w", err)
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    "生成架构第 1/2 部分（layers）",
+	})
+
+	part1Content, err := e.generateContractPartWithCorrection(
+		templates.UpdateSystem, part1Prompt, action, index, total, targetPath,
+	)
+	if err != nil {
+		return "", fmt.Errorf("生成 Architecture Part1（layers）失败: %w", err)
+	}
+
+	// Part 2: rules
+	part2Prompt, err := generator.RenderTemplate(templates.UpdateArchitecturePart2, map[string]any{
+		"LayersJSON":  part1Content,
+		"CurrentJSON": fallbackJSON(currentJSON),
+		"Changes":     changes,
+	})
+	if err != nil {
+		return "", fmt.Errorf("渲染 Architecture Part2 模板失败: %w", err)
+	}
+
+	e.emitProgress(ProgressEvent{
+		Stage:      ProgressLLMStart,
+		Action:     action,
+		Index:      index,
+		Total:      total,
+		TargetPath: targetPath,
+		Message:    "生成架构第 2/2 部分（rules）",
+	})
+
+	part2Content, err := e.generateContractPartWithCorrection(
+		templates.UpdateSystem, part2Prompt, action, index, total, targetPath,
+	)
+	if err != nil {
+		return "", fmt.Errorf("生成 Architecture Part2（rules）失败: %w", err)
+	}
+
+	// 拼接两段 JSON 并校验
+	merged := strings.TrimRight(part1Content, "\n") + "\n\n" +
+		strings.TrimLeft(part2Content, "\n")
+
+	// 尝试直接校验拼接结果
+	if validateErr := validateGeneratedContent(action, merged); validateErr != nil {
+		// 拼接结果不合法，尝试将多个 JSON 对象合并为一个
+		mergedJSON, mergeErr := mergeJSONObjects(merged)
+		if mergeErr != nil {
+			return "", fmt.Errorf("分段拼接后的架构校验失败: %w", validateErr)
+		}
+		if validateErr2 := validateGeneratedContent(action, mergedJSON); validateErr2 != nil {
+			return "", fmt.Errorf("分段拼接后的架构校验失败: %w", validateErr2)
+		}
+		return mergedJSON, nil
+	}
+
+	return merged, nil
 }
 
 // generateContractInParts 分三段生成模块契约 JSON，避免单次输出过长被截断。

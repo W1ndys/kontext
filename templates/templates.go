@@ -80,6 +80,12 @@ var UpdateSystem string // UpdateSystem 是 update 命令的系统提示词
 //go:embed update_architecture.tmpl
 var UpdateArchitecture string // UpdateArchitecture 是更新 ARCHITECTURE_MAP 的用户提示词
 
+//go:embed update_architecture_part1.tmpl
+var UpdateArchitecturePart1 string // UpdateArchitecturePart1 是分段更新 ARCHITECTURE_MAP 的第一部分（仅 layers）
+
+//go:embed update_architecture_part2.tmpl
+var UpdateArchitecturePart2 string // UpdateArchitecturePart2 是分段更新 ARCHITECTURE_MAP 的第二部分（仅 rules）
+
 //go:embed update_contract.tmpl
 var UpdateContract string // UpdateContract 是更新模块契约的用户提示词
 

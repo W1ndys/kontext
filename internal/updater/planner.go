@@ -2,6 +2,7 @@ package updater
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -100,41 +101,59 @@ func PlanForceUpdateAll(report *ChangeReport) []UpdateAction {
 	return actions
 }
 
-// PlanTargetUpdate 为指定的目标生成更新动作。
-// target 格式：architecture、manifest、contract:internal/config。
-func PlanTargetUpdate(target string) ([]UpdateAction, error) {
-	switch {
-	case target == "architecture":
-		return []UpdateAction{{
-			Target:   "architecture",
-			Reason:   "用户指定更新",
-			Priority: 1,
-		}}, nil
-	case target == "manifest":
-		return []UpdateAction{{
-			Target:   "manifest",
-			Reason:   "用户指定更新",
-			Priority: 3,
-		}}, nil
-	case strings.HasPrefix(target, "contract:"):
-		modulePath := strings.TrimPrefix(target, "contract:")
-		if modulePath == "" {
-			return nil, fmt.Errorf("请指定模块路径，例如 contract:internal/config")
-		}
-		return []UpdateAction{{
-			Target:     target,
-			Reason:     "用户指定更新",
-			Priority:   2,
-			Module:     modulePath,
-			ChangeType: "stale_contract",
-		}}, nil
-	default:
-		// 检查是否直接输入了模块路径（不带 contract: 前缀）
-		if !strings.Contains(target, ":") {
-			return nil, fmt.Errorf("未知的更新目标: %s\n支持的格式: architecture, manifest, contract:<模块路径>\n例如: contract:internal/config", target)
-		}
-		return nil, fmt.Errorf("未知的更新目标: %s", target)
+// FilterActionsByModules 过滤更新动作，只保留指定模块的契约更新。
+// 非契约类型（architecture、manifest）在指定模块时不包含。
+func FilterActionsByModules(actions []UpdateAction, modules []string) []UpdateAction {
+	moduleSet := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		moduleSet[filepath.ToSlash(strings.TrimSpace(m))] = true
 	}
+
+	var filtered []UpdateAction
+	for _, action := range actions {
+		if action.Module == "" {
+			// 非契约类型（architecture/manifest），跳过
+			continue
+		}
+		if moduleSet[filepath.ToSlash(action.Module)] {
+			filtered = append(filtered, action)
+		}
+	}
+	return filtered
+}
+
+// FilterActionsExcluding 过滤更新动作，排除指定目录下的模块契约更新。
+// 非契约类型（architecture、manifest）始终保留。
+// 排除逻辑：若模块路径以任一排除目录为前缀，则排除该契约更新。
+func FilterActionsExcluding(actions []UpdateAction, excludes []string) []UpdateAction {
+	normalized := make([]string, 0, len(excludes))
+	for _, e := range excludes {
+		p := filepath.ToSlash(strings.TrimSpace(e))
+		if p != "" {
+			normalized = append(normalized, p)
+		}
+	}
+
+	var filtered []UpdateAction
+	for _, action := range actions {
+		if action.Module == "" {
+			// 非契约类型（architecture/manifest），始终保留
+			filtered = append(filtered, action)
+			continue
+		}
+		modulePath := filepath.ToSlash(action.Module)
+		excluded := false
+		for _, exc := range normalized {
+			if modulePath == exc || strings.HasPrefix(modulePath, exc+"/") {
+				excluded = true
+				break
+			}
+		}
+		if !excluded {
+			filtered = append(filtered, action)
+		}
+	}
+	return filtered
 }
 
 // ListAvailableTargets 列出所有可更新的目标。

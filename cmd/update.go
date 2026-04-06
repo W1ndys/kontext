@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	updateForce   bool
-	updateTargets []string
+	updateForce    bool
+	updateModules  []string
+	updateExcludes []string
 )
 
 var updateCmd = &cobra.Command{
@@ -28,19 +29,16 @@ var updateCmd = &cobra.Command{
 默认模式：自动检测变更并更新受影响的物料。
 
 标志：
-  --force, -f    强制更新所有物料，无视变更检测
-  --target, -t   指定更新目标（可多次使用）
-
-目标格式：
-  architecture           架构图
-  manifest               项目清单
-  contract:<模块路径>    模块契约（如 contract:internal/config）
+  --force, -f      强制更新所有物料，无视变更检测
+  --module, -m     只更新指定模块（可多次使用）
+  --exclude, -e    排除指定目录，更新其余物料（可多次使用）
 
 示例：
-  kontext update                              # 自动检测并更新
-  kontext update --force                      # 强制更新所有物料
-  kontext update -t contract:internal/config  # 只更新 config 模块契约
-  kontext update -t architecture -t manifest  # 只更新架构图和清单`,
+  kontext update                                    # 自动检测并更新
+  kontext update --force                            # 强制更新所有物料
+  kontext update -m internal/database               # 只更新 database 模块契约
+  kontext update -m internal/api -m internal/core   # 只更新指定的多个模块
+  kontext update -e vendor -e third_party           # 排除指定目录，更新其余物料`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runUpdate()
@@ -49,12 +47,18 @@ var updateCmd = &cobra.Command{
 
 func init() {
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "强制更新所有物料 / Force update all materials")
-	updateCmd.Flags().StringArrayVarP(&updateTargets, "target", "t", nil, "指定更新目标 / Specify update target (repeatable)")
+	updateCmd.Flags().StringArrayVarP(&updateModules, "module", "m", nil, "只更新指定模块 / Only update specified modules (repeatable)")
+	updateCmd.Flags().StringArrayVarP(&updateExcludes, "exclude", "e", nil, "排除指定目录 / Exclude specified directories (repeatable)")
 }
 
 func runUpdate() error {
 	logger := namedLogger(commandPathUpdate)
-	logger.Info("update started", "force", updateForce, "targets", updateTargets)
+	logger.Info("update started", "force", updateForce, "modules", updateModules, "excludes", updateExcludes)
+
+	// --module 和 --exclude 互斥
+	if len(updateModules) > 0 && len(updateExcludes) > 0 {
+		return fmt.Errorf("--module 和 --exclude 不能同时使用")
+	}
 
 	if !fileutil.DirExists(defaultKontextDir) || !fileutil.FileExists(filepath.Join(defaultKontextDir, "PROJECT_MANIFEST.json")) {
 		return fmt.Errorf("当前项目尚未初始化 .kontext 目录，请先执行 `kontext init` 生成项目物料")
@@ -74,21 +78,17 @@ func runUpdate() error {
 	var actions []updater.UpdateAction
 
 	switch {
-	case len(updateTargets) > 0:
-		// 指定目标更新
-		for _, target := range updateTargets {
-			targetActions, err := updater.PlanTargetUpdate(target)
-			if err != nil {
-				return err
-			}
-			actions = append(actions, targetActions...)
-		}
 	case updateForce:
-		// 强制更新所有
 		actions = updater.PlanForceUpdateAll(report)
 	default:
-		// 默认：检测变更
 		actions = updater.PlanUpdates(report)
+	}
+
+	// 按 --module 或 --exclude 过滤
+	if len(updateModules) > 0 {
+		actions = updater.FilterActionsByModules(actions, updateModules)
+	} else if len(updateExcludes) > 0 {
+		actions = updater.FilterActionsExcluding(actions, updateExcludes)
 	}
 
 	logger.Info("update plan created", "planned_actions", len(actions))

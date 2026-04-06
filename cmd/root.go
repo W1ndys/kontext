@@ -48,6 +48,11 @@ Kontext compiles project knowledge into high-quality Markdown prompt documents f
 			return nil
 		}
 
+		// 检查是否有新版本可用
+		if latest := checkLatestVersion(Version); latest != "" {
+			printVersionHint(latest)
+		}
+
 		logger.Info("command started",
 			"command", cmd.CommandPath(),
 			"arg_count", len(args),

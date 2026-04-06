@@ -69,8 +69,10 @@ func checkLatestVersion(currentVersion string) string {
 
 // printVersionHint 在终端输出新版本提示。
 func printVersionHint(latestVersion string) {
-	ui.Warn("发现新版本 v%s（当前 v%s），请访问 https://github.com/W1ndys/kontext/releases 更新",
+	ui.Warn("发现新版本 v%s（当前 v%s），可通过以下命令更新：",
 		latestVersion, normalizeVersion(Version))
+	ui.Plain("  go install github.com/w1ndys/kontext@v%s", latestVersion)
+	ui.Plain("  更多安装方式请参阅 https://github.com/W1ndys/kontext#readme")
 	fmt.Println()
 }
 

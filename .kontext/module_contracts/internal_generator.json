@@ -9,12 +9,17 @@
     "交互式初始化的分阶段生成流程（generateAndWrite）：按依赖顺序生成 manifest → architecture → conventions → contracts，每个制品生成后立即写入磁盘",
     "自动扫描初始化流程（RunScanInit）：扫描项目目录树 → LLM 分析文件分类 → 选择重点文件 → 读取源码 → 分步生成所有制品",
     "InterviewResponse 结构化解析：将 LLM 返回的 JSON 解析为 question/done 两种状态",
-    "GeneratedContent / SingleFileContent / ModuleContractContent 等响应类型定义",
+    "GeneratedContent / SingleFileContent / ModuleContractContent / AnalyzedFiles / SelectedFiles / ModuleDependencyGraph / ModuleDep 等响应类型定义",
     "模块依赖图分析（ModuleDependencyGraph）：通过 LLM 分析模块间依赖关系，为 CONTRACT 生成提供上下文",
     "构建 AgentTask DAG 任务声明（BuildInitTasks / BuildContractTasks）：将制品生成编排为有向无环图交给 agent.Orchestrator 执行",
     "LLM prompt 模板渲染（RenderTemplate）：使用 text/template 渲染 init 相关的各种 system/user prompt",
-    "源码解析与文件摘要提取（parser.go）：调用 fileutil 扫描项目目录，生成文件概要供 LLM 分析",
-    "编码规范生成（conventions.go）：调用 LLM 生成 CONVENTIONS 制品",
+    "LLM 响应清洗与 JSON 提取（stripThinkingTokens / stripCodeBlock / extractJSONFromRawResponse / firstValidJSONCandidate）：去除 thinking tokens、代码块标记，提取有效 JSON",
+    "LLM 响应解析函数族（ParseInterviewResponse / ParseGeneratedJSON / ParseAnalyzedFiles / ParseSelectedFiles / ParseSingleFileJSON / ParseModuleContractJSON）：解析各类 LLM 结构化输出",
+    "JSON 格式化与校验（FormatJSON / ValidateJSON）：对生成的 JSON 内容做格式化和合法性校验",
+    "编码规范分段生成（GenerateConventionsInSections）：将 CONVENTIONS 按 section 并发生成并合并",
+    "模块契约流式生成（GenerateModuleContractStream）与批量生成（GenerateModuleContracts）",
+    "文件归属判断（BelongsToModule / FilterFilesByModule）：根据模块路径过滤相关源码文件",
+    "任务 ID 常量定义（TaskIDManifest / TaskIDArchitecture / TaskIDConventions / ContractTaskID）",
     "静态模板初始化：当用户未提供描述时，写入默认模板文件"
   ],
   "not_responsible_for": [
@@ -31,7 +36,7 @@
   "depends_on": [
     {
       "module": "internal/agent",
-      "reason": "使用 agent.NewOrchestrator 和 agent.AgentTask 构建 DAG 编排制品生成任务，实现 manifest/architecture/conventions 的依赖驱动并行生成"
+      "reason": "使用 agent.AgentTask 构建 DAG 编排制品生成任务，实现 manifest/architecture/conventions 的依赖驱动并行生成"
     },
     {
       "module": "internal/llm",
@@ -43,7 +48,7 @@
     },
     {
       "module": "internal/schema",
-      "reason": "引用 schema.ArchitectureMap 等类型解析 LLM 生成的制品内容，从已生成的 architecture 中提取模块列表用于 CONTRACT 生成"
+      "reason": "引用 schema.ArchitectureMap / schema.ConventionItem 等类型解析 LLM 生成的制品内容，从已生成的 architecture 中提取模块列表用于 CONTRACT 生成"
     },
     {
       "module": "internal/ui",
@@ -56,29 +61,149 @@
   ],
   "public_interface": [
     {
+      "name": "GenerateConventionsInSections",
+      "signature": "func GenerateConventionsInSections(client llm.Client, userMsg string, onProgress func(ConventionsSectionProgress)) (string, error)",
+      "description": "按 section 并发生成 CONVENTIONS 制品，通过回调报告各 section 进度，最终合并返回完整 JSON"
+    },
+    {
       "name": "RunInteractiveInit",
       "signature": "func RunInteractiveInit(client llm.Client, description string) error",
       "description": "执行 AI 交互式初始化的完整两阶段流程：先通过多轮对话澄清需求，再分阶段生成所有 .kontext/ JSON 制品"
     },
     {
-      "name": "RunScanInit",
-      "signature": "func RunScanInit(client llm.Client, opts ScanOptions) error",
-      "description": "执行自动扫描初始化流程：扫描项目目录树，通过 LLM 分析文件、选择重点源码，分步生成 manifest/architecture/conventions/contracts"
+      "name": "FormatJSON",
+      "signature": "func FormatJSON(content string) (string, error)",
+      "description": "对 JSON 字符串进行格式化缩进，返回美化后的 JSON 文本"
+    },
+    {
+      "name": "WriteGeneratedContent",
+      "signature": "func WriteGeneratedContent(generated *GeneratedContent) error",
+      "description": "将 GeneratedContent 中的所有制品内容写入 .kontext/ 目录下对应文件"
+    },
+    {
+      "name": "ValidateJSON",
+      "signature": "func ValidateJSON(content string) error",
+      "description": "校验给定字符串是否为合法 JSON"
+    },
+    {
+      "name": "GenerateStructuredContent",
+      "signature": "func GenerateStructuredContent(client llm.Client, systemPrompt, userMsg string) (*GeneratedContent, error)",
+      "description": "通过 LLM 生成完整的结构化制品内容集合"
+    },
+    {
+      "name": "AnalyzeProjectFiles",
+      "signature": "func AnalyzeProjectFiles(client llm.Client, systemPrompt, userMsg string) (*AnalyzedFiles, error)",
+      "description": "调用 LLM 分析项目文件列表，返回配置文件与源码文件的分类结果"
+    },
+    {
+      "name": "SelectKeyFiles",
+      "signature": "func SelectKeyFiles(client llm.Client, systemPrompt, userMsg string) (*SelectedFiles, error)",
+      "description": "调用 LLM 从文件列表中选择重点文件及选择理由"
+    },
+    {
+      "name": "GenerateDependencyGraph",
+      "signature": "func GenerateDependencyGraph(client llm.Client, systemPrompt, userMsg string) (*ModuleDependencyGraph, error)",
+      "description": "调用 LLM 分析模块间依赖关系，返回模块依赖图"
+    },
+    {
+      "name": "ParseModuleDependencyGraph",
+      "signature": "func ParseModuleDependencyGraph(content string) (*ModuleDependencyGraph, error)",
+      "description": "解析 LLM 返回的模块依赖图 JSON 字符串"
     },
     {
       "name": "RenderTemplate",
-      "signature": "func RenderTemplate(tmplStr string, data interface{}) (string, error)",
+      "signature": "func RenderTemplate(tmpl string, data interface{}) (string, error)",
       "description": "使用 text/template 渲染给定的模板字符串和数据，返回渲染结果"
     },
     {
+      "name": "GenerateSingleJSON",
+      "signature": "func GenerateSingleJSON(client llm.Client, systemPrompt, userMsg string) (string, error)",
+      "description": "调用 LLM 生成单个 JSON 制品内容并返回清洗后的 JSON 字符串"
+    },
+    {
+      "name": "GenerateModuleContract",
+      "signature": "func GenerateModuleContract(client llm.Client, systemPrompt, userMsg string, moduleName string) (*ModuleContractContent, error)",
+      "description": "调用 LLM 为指定模块生成单个模块契约"
+    },
+    {
+      "name": "FilterFilesByModule",
+      "signature": "func FilterFilesByModule(files map[string]string, moduleName string) map[string]string",
+      "description": "根据模块路径从文件映射中过滤出属于该模块的文件"
+    },
+    {
+      "name": "BelongsToModule",
+      "signature": "func BelongsToModule(filePath, moduleName string) bool",
+      "description": "判断给定文件路径是否属于指定模块"
+    },
+    {
+      "name": "GenerateModuleContractStream",
+      "signature": "func GenerateModuleContractStream(...)",
+      "description": "以流式方式调用 LLM 生成单个模块契约，支持实时输出"
+    },
+    {
+      "name": "GenerateModuleContracts",
+      "signature": "func GenerateModuleContracts(...)",
+      "description": "批量生成多个模块的契约文件"
+    },
+    {
+      "name": "ParseInterviewResponse",
+      "signature": "func ParseInterviewResponse(raw string) (*InterviewResponse, error)",
+      "description": "解析 LLM 返回的对话阶段结构化 JSON 为 InterviewResponse"
+    },
+    {
+      "name": "ParseGeneratedJSON",
+      "signature": "func ParseGeneratedJSON(raw string) (*GeneratedContent, error)",
+      "description": "解析 LLM 返回的制品生成 JSON 为 GeneratedContent"
+    },
+    {
+      "name": "ParseAnalyzedFiles",
+      "signature": "func ParseAnalyzedFiles(raw string) (*AnalyzedFiles, error)",
+      "description": "解析 LLM 返回的文件分类 JSON 为 AnalyzedFiles"
+    },
+    {
+      "name": "ParseSelectedFiles",
+      "signature": "func ParseSelectedFiles(raw string) (*SelectedFiles, error)",
+      "description": "解析 LLM 返回的重点文件选择 JSON 为 SelectedFiles"
+    },
+    {
+      "name": "ParseSingleFileJSON",
+      "signature": "func ParseSingleFileJSON(raw string) (*SingleFileContent, error)",
+      "description": "解析 LLM 返回的单文件制品 JSON 为 SingleFileContent"
+    },
+    {
+      "name": "ParseModuleContractJSON",
+      "signature": "func ParseModuleContractJSON(raw string) (*ModuleContractContent, error)",
+      "description": "解析 LLM 返回的模块契约 JSON 为 ModuleContractContent"
+    },
+    {
+      "name": "TaskIDManifest",
+      "signature": "const TaskIDManifest = \"manifest\"",
+      "description": "manifest 生成任务的 ID 常量"
+    },
+    {
+      "name": "TaskIDArchitecture",
+      "signature": "const TaskIDArchitecture = \"architecture\"",
+      "description": "architecture 生成任务的 ID 常量"
+    },
+    {
+      "name": "TaskIDConventions",
+      "signature": "const TaskIDConventions = \"conventions\"",
+      "description": "conventions 生成任务的 ID 常量"
+    },
+    {
+      "name": "ContractTaskID",
+      "signature": "func ContractTaskID(moduleName string) string",
+      "description": "根据模块名返回对应模块契约任务的 ID"
+    },
+    {
       "name": "BuildInitTasks",
-      "signature": "func BuildInitTasks(opts InitTaskOptions) []agent.AgentTask",
-      "description": "根据交互式初始化选项构建第一阶段（manifest/architecture/conventions）的 AgentTask DAG 任务列表"
+      "signature": "func BuildInitTasks(opts InitTaskOptions) []*agent.AgentTask",
+      "description": "根据初始化选项构建第一阶段（manifest/architecture/conventions）的 AgentTask DAG 任务列表"
     },
     {
       "name": "BuildContractTasks",
-      "signature": "func BuildContractTasks(opts ContractTaskOptions) []agent.AgentTask",
-      "description": "根据已生成的 architecture 中的模块列表，为每个模块构建 CONTRACT 生成的 AgentTask 任务"
+      "signature": "func BuildContractTasks(opts InitTaskOptions, modules []string, manifestContent, archContent string) []*agent.AgentTask",
+      "description": "根据模块列表和已生成的 manifest/architecture 内容，为每个模块构建 CONTRACT 生成的 AgentTask 任务"
     },
     {
       "name": "InterviewResponse",
@@ -91,34 +216,9 @@
       "description": "LLM 在生成阶段返回的配置文件内容集合"
     },
     {
-      "name": "SingleFileContent",
-      "signature": "type SingleFileContent struct { Content string `json:\"content\"` }",
-      "description": "分步生成单个制品文件时的 LLM 响应结构"
-    },
-    {
-      "name": "ModuleContractContent",
-      "signature": "type ModuleContractContent struct { ModuleName string `json:\"module_name\"`; Content string `json:\"content\"` }",
-      "description": "单个模块契约生成的 LLM 响应结构，包含模块名和 JSON 内容"
-    },
-    {
       "name": "AnalyzedFiles",
       "signature": "type AnalyzedFiles struct { ConfigFiles []string `json:\"config_files\"`; SourceFiles []string `json:\"source_files\"` }",
       "description": "LLM 在扫描阶段识别出的配置文件和源码文件分类列表"
-    },
-    {
-      "name": "SelectedFiles",
-      "signature": "type SelectedFiles struct { KeyFiles []string `json:\"key_files\"`; Reasons map[string]string `json:\"reasons\"` }",
-      "description": "LLM 选择的重点文件列表及选择理由"
-    },
-    {
-      "name": "ModuleDependencyGraph",
-      "signature": "type ModuleDependencyGraph struct { Modules []ModuleDep `json:\"modules\"` }",
-      "description": "模块间依赖关系图，由 LLM 分析生成，用于确定 CONTRACT 生成顺序和提供依赖上下文"
-    },
-    {
-      "name": "ModuleDep",
-      "signature": "type ModuleDep struct { Name string `json:\"name\"`; Path string `json:\"path\"`; Purpose string `json:\"purpose\"`; DependsOn []string `json:\"depends_on\"` }",
-      "description": "单个模块的依赖关系信息，包含模块名、路径、用途描述和依赖列表"
     }
   ],
   "modification_rules": [
@@ -149,6 +249,18 @@
     {
       "rule": "修改 prompt 模板引用时，必须确认对应的 .tmpl 文件存在于 templates/ 目录且在 templates.go 中已注册为包级变量",
       "reason": "模板通过 Go embed 编译时打包，运行时无法动态加载缺失的模板文件"
+    },
+    {
+      "rule": "新增或修改 LLM 响应清洗函数（stripThinkingTokens / stripCodeBlock / extractJSONFromRawResponse 等）时，必须同步更新对应的单元测试用例覆盖边界情况",
+      "reason": "LLM 输出格式不稳定，清洗逻辑是正确解析的关键路径，回归测试防止引入解析失败"
+    },
+    {
+      "rule": "GenerateConventionsInSections 的并发 section 生成失败时必须返回错误而非静默忽略，不得产生部分残缺的 CONVENTIONS 制品",
+      "reason": "残缺的 CONVENTIONS 会导致下游 pack 命令生成不完整的上下文，影响 AI 编码质量"
+    },
+    {
+      "rule": "修改 FilterFilesByModule / BelongsToModule 的路径匹配逻辑时，必须兼容 Unix 和 Windows 路径分隔符",
+      "reason": "项目可能在不同操作系统上运行，路径匹配不一致会导致模块文件过滤遗漏或误匹配"
     }
   ]
 }

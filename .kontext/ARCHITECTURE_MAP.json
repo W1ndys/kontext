@@ -1,14 +1,7 @@
 {
   "layers": [
     {
-      "description": "应用程序入口点，仅负责调用 cmd.Execute() 启动 CLI",
-      "name": "入口层",
-      "packages": [
-        "main.go"
-      ]
-    },
-    {
-      "description": "基于 Cobra 框架的 CLI 命令定义与编排层。每个文件对应一个子命令（init/pack/validate/update/config），负责参数解析、用户交互（stdin/stdout）、调用内部模块完成业务逻辑，以及统一的日志和错误处理。root.go 注册所有子命令并在 PersistentPreRunE 中初始化日志。",
+      "description": "基于 Cobra 框架的 CLI 命令定义与编排层。每个文件对应一个子命令（init/pack/validate/update/config），负责参数解析、用户交互（stdin/stdout）、调用内部模块完成业务逻辑，以及统一的日志和错误处理。root.go 注册所有子命令并在 PersistentPreRunE 中初始化日志。程序入口 main.go 位于项目根目录，仅负责调用 cmd.Execute() 启动 CLI。",
       "name": "命令层",
       "packages": [
         "cmd"
@@ -92,12 +85,19 @@
       "packages": [
         "templates"
       ]
+    },
+    {
+      "description": "项目文档目录，存放用户指南、设计文档等非代码文档资源。",
+      "name": "文档层",
+      "packages": [
+        "docs"
+      ]
     }
   ],
   "rules": [
     {
-      "reason": "main.go 保持极简，仅作为程序入口，所有逻辑由命令层分发",
-      "rule": "入口层只能调用命令层的 Execute() 函数，不得直接引用任何 internal 包"
+      "reason": "命令层描述中已说明 main.go 位于项目根目录仅调用 cmd.Execute()，入口层已合并到命令层描述中，该规则调整为对 main.go 入口文件的约束",
+      "rule": "项目入口 main.go 只能调用命令层的 Execute() 函数，不得直接引用任何 internal 包"
     },
     {
       "reason": "命令层是用户交互的边界，负责组装依赖并调用引擎；引擎通过回调函数（OnProgress/OnWarn）向上层报告状态，而非直接引用 cmd 包",
@@ -158,6 +158,10 @@
     {
       "reason": "update 是独立的增量更新流程，有自己的检测-规划-执行三阶段设计，不复用 init 或 pack 的引擎",
       "rule": "internal/updater 依赖 internal/schema 加载现有制品、internal/llm 调用模型重新生成，并通过 git 命令检测变更，但不依赖 internal/generator 或 internal/packer"
+    },
+    {
+      "reason": "docs 目录存放用户指南和设计文档等非代码资源，不参与编译和运行时逻辑",
+      "rule": "docs 目录仅包含文档资源，不得包含可执行代码或被任何 Go 包引用"
     }
   ]
 }

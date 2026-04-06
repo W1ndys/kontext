@@ -1,0 +1,30 @@
+目标文件：ARCHITECTURE_MAP.json
+
+已生成的 layers 部分：
+{{.LayersJSON}}
+
+当前完整 JSON（供参考）：
+{{.CurrentJSON}}
+
+检测到的目录/包变更：
+{{.Changes}}
+
+请基于以上信息，只生成 `rules` 这一个顶级字段。
+不要生成 `layers`。
+请在现有规则基础上做最小修改。如果层级结构发生了变化，相关规则也需要相应调整。
+
+以 JSON 格式返回，结构为 {"content": "部分 ARCHITECTURE_MAP JSON 文本"}。content 字段的值必须严格符合以下 schema：
+
+{
+  "rules": [
+    {
+      "rule": "架构规则描述",
+      "reason": "规则原因"
+    }
+  ]
+}
+
+注意：
+- 必须使用 `rules`，不能改名
+- 只输出 rules，不要输出 layers
+- 保留现有规则，除非层级变化导致规则需要调整

@@ -1,0 +1,34 @@
+目标文件：ARCHITECTURE_MAP.json
+
+当前完整 JSON：
+{{.CurrentJSON}}
+
+检测到的目录/包变更：
+{{.Changes}}
+
+当前项目包列表：
+{{.Packages}}
+
+请在现有内容基础上做最小修改，只生成 `layers` 这一个顶级字段。
+不要生成 `rules`（将在下一步单独生成）。
+
+更新层级中的 packages，并在必要时补充或移除相关目录描述。
+如果某个新增的包不属于任何现有层级，请创建合适的新层级。
+如果某个层级的所有包都被删除了，可以移除该层级。
+
+以 JSON 格式返回，结构为 {"content": "部分 ARCHITECTURE_MAP JSON 文本"}。content 字段的值必须严格符合以下 schema：
+
+{
+  "layers": [
+    {
+      "name": "层级名称",
+      "description": "层级描述",
+      "packages": ["包路径"]
+    }
+  ]
+}
+
+注意：
+- 必须使用 `layers`，不能改名
+- 只输出 layers，不要输出 rules
+- 保留现有层级的名称和描述，除非有明确理由修改
